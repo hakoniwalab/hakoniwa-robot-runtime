@@ -54,7 +54,7 @@ Robot Pack / Application
 - Gamepad frontend
 - ロボット固有の追加 Controller
 
-現在は [`hakoniwa-robot-arm-pack`](https://github.com/hakoniwalab/hakoniwa-robot-arm-pack) から共通 Runtime として利用されています。
+本 Runtime は、これらの Robot Pack / Application から共通実行層として利用することを想定しています。
 
 ## 設計上の重要点
 
