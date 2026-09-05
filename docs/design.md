@@ -2,15 +2,11 @@
 
 この文書は、`hakoniwa-robot-runtime` の設計と責務境界を説明する正本です。
 
-本 Runtime は、特定のロボット機種を実装するためのパッケージではありません。Robot Pack や Application から与えられたモデル・設定・外部I/Oを組み合わせ、箱庭上でアクチュエータ型ロボットを実行するための共通実行層です。
+本 Runtime は、特定のロボット機種を実装するためのパッケージではありません。Robot Pack や Application から与えられたモデル・設定・外部 I/O を組み合わせ、箱庭上でアクチュエータ型ロボットを実行するための共通実行層です。
 
 現在の実装はロボットアームで検証されていますが、設計上の中心は「Arm」ではなく、**Command を actuator へ適用し、physical state を返す Runtime** です。
 
----
-
 ## 1. Runtime の位置づけ
-
-全体構造は次のように捉えます。
 
 ```text
 Robot Pack / Application
@@ -19,7 +15,6 @@ Robot Pack / Application
         v
 +-----------------------------+
 | ManifestFactory             |
-|                             |
 | - top-level document        |
 | - path resolution           |
 | - concrete composition      |
@@ -53,8 +48,6 @@ Robot Pack / Application
 Runtime 固有の manifest semantics は `RuntimeFactory` へ委譲し、transport / physics backend / Runner implementation の具体選択は `ManifestFactory` 側で行います。
 
 独立した巨大な `Config` / `ManifestLoader` layer は置きません。
-
----
 
 ## 2. Runtime core の5責務
 
@@ -106,7 +99,7 @@ CommandSource input、現在の `RobotState`、`RuntimeStepContext` から `Actu
 - time-based trajectory は preempt 後に古い軌道を暗黙継続しない
 - control handoff 時の position target continuity を維持する
 
-`ManualController` と `HoldController` は、必要に応じて previous selected position command を継承します。これにより control handoff 時に target が不必要に実測位置へ飛ぶことを避けます。
+`ManualController` と `HoldController` は、必要に応じて previous selected position command を継承します。
 
 ### 2.3 Arbiter
 
@@ -130,7 +123,7 @@ selected ActuatorCommand[*]
 - logical control 単位で選択する
 - physical safety validation はしない
 
-現在の標準的な priority は次です。
+現在の標準 priority は次です。
 
 ```text
 Manual          20
@@ -170,7 +163,7 @@ Plant 入口で最終的に guard するもの:
 - NaN / Inf
 - actuator limit
 
-基本 fallback は次です。
+基本 fallback:
 
 - position: current position
 - velocity: 0
@@ -193,8 +186,6 @@ physical step 完了後の `RobotState` を外部表現へ変換して送信し�
 - rate limiting は simulation time で行う
 - transport 固有 write は adapter へ委譲する
 - publish failure によって完了済み physical step を rollback しない
-
----
 
 ## 3. ActuatorRuntime
 
@@ -237,8 +228,6 @@ publish_state(next_state, next_context, ...);
 
 Runtime 自身は `simulation_time += delta` のような独立 clock update を行いません。
 
----
-
 ## 4. Time Model
 
 Runtime の時間設計では、physical backend の時刻を Asset-local な Source of Truth とします。
@@ -261,10 +250,6 @@ MuJoCo backend では:
 - Runtime は独立した Clock object を持たない
 - 同じ delta で Hakoniwa Asset / Conductor を構成する
 - wall-clock pacing は Runner 側の責務
-
-これにより Runtime 内部に「Hakoniwa timeとは別の独自 simulation clock」を作りません。
-
----
 
 ## 5. RuntimeFactory
 
@@ -306,10 +291,6 @@ RuntimeFactory
 - Runner implementation の選択
 - top-level Application lifecycle
 
-Runtime 固有 manifest parser は責務別に分割し、一つの巨大 parser へ戻さない方針です。
-
----
-
 ## 6. ManifestFactory
 
 `ManifestFactory` は、manifest path から application-facing `IRunner` までを構成する最上位 composition root です。
@@ -326,17 +307,11 @@ ManifestFactory
   └─ RunnerFactory -> IRunner
 ```
 
-`ManifestFactory` が知るのは、具体的な技術をどの組み合わせで使うかです。
-
-一方、Runtime step の control policy や Hakoniwa C callback の詳細をここへ持ち込みません。
-
 公開入口:
 
 ```text
 include/hakoniwa/robot_runtime/factory/manifest_factory.hpp
 ```
-
----
 
 ## 7. Adapter Boundary
 
@@ -354,19 +329,11 @@ src/adapters/
         └── MujocoActuatorPlant
 ```
 
-### Endpoint Adapter
-
-Hakoniwa PDU Endpoint と Runtime の reader / writer seam を接続します。
+Endpoint adapter は Hakoniwa PDU Endpoint と Runtime の reader / writer seam を接続します。
 
 Runtime core は SHM / TCP など transport の違いを直接扱いません。transport 差分は Endpoint / Bridge 側へ閉じ込めます。
 
-### Physics Adapter
-
-`IActuatorPlant` と具体 physics backend を接続します。
-
-現在は MuJoCo を実装していますが、Runtime core 自体は `IActuatorPlant` を通して physical backend と接続します。
-
----
+Physics adapter は `IActuatorPlant` と具体 physics backend を接続します。現在は MuJoCo を実装しています。
 
 ## 8. Runner Boundary
 
@@ -393,15 +360,7 @@ HakoniwaRunner
 
 `HakoniwaAssetDriver` は Hakoniwa C Asset API の low-level helper で、callback wiring と manual timing loop を隔離します。
 
-将来 Hakoniwa Asset を使わない standalone execution を追加する場合は、Runtime core を変更するのではなく別 Runner implementation として追加する方針です。
-
-### 現在の注意点
-
-現行 `IRunner` は Viewer 連携のため `mjModel*` / `mjData*` accessor を持っています。そのため application-facing Runner interface には現在 MuJoCo 依存が一部残っています。
-
-これは Runtime core の必須依存ではなく、将来別 physics / presentation backend を導入する場合は view capability を Runner execution contract から分離できる設計余地として扱います。
-
----
+現行 `IRunner` は Viewer 連携のため `mjModel*` / `mjData*` accessor を持っています。そのため application-facing Runner interface には現在 MuJoCo 依存が一部残っています。将来別 physics / presentation backend を導入する場合は、view capability を execution contract から分離する余地があります。
 
 ## 9. External Interface
 
@@ -449,11 +408,7 @@ MuJoCo
 
 ROS 2 bridge、Gamepad frontend、Launcher は本 Runtime の外側です。
 
----
-
 ## 10. Source Layout
-
-現在の source layout は次です。
 
 ```text
 include/hakoniwa/robot_runtime/
@@ -485,8 +440,6 @@ src/
 
 `src/runtime/` 内の interface / class は Runtime 内部契約です。Application は可能な限り `ManifestFactory` と `IRunner` を入口として利用します。
 
----
-
 ## 11. Robot Pack との責務分離
 
 `hakoniwa-robot-runtime` は共通実行層です。Robot Pack はロボット固有の構成を所有します。
@@ -499,47 +452,41 @@ hakoniwa-robot-runtime
   - Runner
   - Endpoint / MuJoCo adapters
 
-Robot Pack
+Robot Pack / Application
   - robot model
-  - actuator config
-  - controller config
-  - PDU definition
-  - manifest
-  - Recipe
+  - robot-specific actuator / controller config
+  - PDU definition / endpoint config
+  - Recipe / Launcher
   - demo / frontend
   - robot-specific controller
 ```
 
-現在の主要 consumer は `hakoniwa-robot-arm-pack` です。
+この分離により、個別ロボットや個別ユースケースで作成するモデル・Recipe・設定と、共通 Runtime 実装を独立して保守できます。
 
-この分離により、個別案件・個別ロボットで作成するモデルや Recipe と、箱庭ラボが共通資産として保守する Runtime 実装を分離します。
+## 12. 現在のスコープ
 
----
+現在の Runtime は joint / scalar actuator を中心とした実装です。
 
-## 12. 現在のスコープと拡張方針
+実装済みの代表機能:
 
-現在の正本は joint / scalar actuator を中心とする Runtime です。
+- scalar actuator command
+- JointTrajectory command
+- Joy manual control
+- Hold control
+- priority arbitration
+- Plant-side command guard
+- MuJoCo physical update
+- JointState output
+- Hakoniwa Asset Runner
 
-検証済みの中心はロボットアームですが、Runtime の core pipeline は特定機種名や Arm 専用 API を前提にしていません。
+特定のロボット機種、運動学 solver、歩容生成、移動ロボットの navigation などは Runtime core の責務ではありません。
 
-ただし、「どのロボットにもそのまま対応済み」という意味ではありません。車輪型・脚型・ハンド等へ展開する場合、次を Robot Pack または新しい共通 Component として追加する必要があります。
-
-- robot-specific actuator / state binding
-- control semantics
-- kinematics / locomotion specific Controller
-- model / sensor configuration
--必要に応じた新しい Publisher / Adapter
-
-共通化するときは、まず Robot Pack 側で具体的な要求と実装を成立させ、その後、複数ロボットで再利用可能と確認できた責務だけを Runtime へ昇格させます。
-
-**先に抽象化範囲を広げるのではなく、実利用で共通性が確認できた境界を共通 Runtime に取り込む**ことを基本方針とします。
-
----
+車輪型・脚型などへ展開する場合も、まず既存の `ActuatorCommand` / `IActuatorPlant` / Controller 境界で表現できるかを確認し、必要な拡張だけを追加します。
 
 ## 13. Build / Integration の現状
 
-現在 `hakoniwa-robot-runtime` は source ownership を持ちますが、top-level CMake composition は consumer 側から行っています。
+現在 `hakoniwa-robot-runtime` は source ownership を持ちますが、top-level CMake composition は consumer 側から行う構成です。
 
-`hakoniwa-robot-arm-pack` では sibling checkout の `hakoniwa-robot-runtime` を参照し、このリポジトリの source / public header を build target に組み込んでいます。
+consumer は本リポジトリの source / public header を build target に組み込み、Robot Pack / Application 側のモデル・設定・Recipeと組み合わせて利用します。
 
-将来 Runtime 側が独立した CMake target / package export を持つ場合でも、上記の Runtime / Adapter / Runner / Factory の責務境界は維持します。
+将来 Runtime 側が独立した CMake target / package export を持つ場合でも、Runtime / Adapter / Runner / Factory の責務境界は維持します。
