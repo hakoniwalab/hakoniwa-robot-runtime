@@ -45,7 +45,9 @@ asset-manifest.json
 
 ## 2. Asset Manifest
 
-### 2.1 必須 top-level fields
+<a id="21-必須-top-level-fields"></a>
+
+### 2.1 基本項目
 
 現在の Runtime は次の項目を必須とします。
 
@@ -62,7 +64,11 @@ asset-manifest.json
 
 `$schema`、`schema_version`、`description` 等の metadata を付与しても構いませんが、現在の Runtime 実装が直接意味解釈する必須 field は上表です。
 
-### 2.2 `components[]`
+<a id="22-components"></a>
+
+### 2.2 `components[]` の共通項目
+
+`kind` と `type` の組合せでコンポーネントの種類を指定し、`config` にその種類に対応する設定ファイルを指定します。
 
 各 component は少なくとも次を持ちます。
 
@@ -78,62 +84,28 @@ asset-manifest.json
 
 `id` は manifest 内で重複できません。
 
-### 2.3 現在の標準 component type
+<a id="23-現在の標準-component-type"></a>
+
+### 2.3 `kind` / `type` 一覧
 
 Runtime が現在標準で解釈する主な component は次です。
 
-| kind | type | 役割 |
+| `kind` | `type` | 設定の詳細 |
 | --- | --- | --- |
-| `actuator` | `joint_position_actuator` | position command を受ける scalar joint actuator |
-| `actuator` | `joint_velocity_actuator` | velocity command を受ける scalar joint actuator |
-| `actuator` | `joint_torque_actuator` | effort / torque command を受ける scalar joint actuator |
-| `controller` | `joint_trajectory_controller` | `trajectory_msgs/JointTrajectory` を scalar actuator 群へ展開 |
-| `controller` | `joy_manual_controller` | `sensor_msgs/Joy` を manual joint command へ変換 |
-| `state_output` | `joint_state` | physical state を `sensor_msgs/JointState` として出力 |
+| `actuator` | `joint_position_actuator` | [3.1 actuator](#31-actuator) |
+| `actuator` | `joint_velocity_actuator` | [3.1 actuator](#31-actuator) |
+| `actuator` | `joint_torque_actuator` | [3.1 actuator](#31-actuator) |
+| `controller` | `joint_trajectory_controller` | [3.2.1 joint_trajectory_controller](#321-joint_trajectory_controller) |
+| `controller` | `joy_manual_controller` | [3.2.2 joy_manual_controller](#322-joy_manual_controller) |
+| `state_output` | `joint_state` | [3.3.1 joint_state](#331-joint_state) |
 
 Robot Pack 固有の component type は上位側で追加できますが、Runtime core の標準 contract とは分けて管理します。
 
-## 3. Runtime Config
+## 3. Component Config — `components[].config` の内容
 
-Runtime common config は Asset Manifest の `runtime_config` から参照します。
+<a id="4-scalar-joint-actuator-config"></a>
 
-現在の標準形式は次です。
-
-```json
-{
-  "$schema": "https://hakoniwa.dev/schemas/robot-arm-actuator-runtime.schema.json",
-  "actuators": {
-    "joint1": { "command_timeout_sec": 0.1 },
-    "joint2": { "command_timeout_sec": 0.1 }
-  }
-}
-```
-
-### 3.1 `actuators`
-
-`actuators` は actuator component ID を key とする object です。
-
-各 scalar actuator について `command_timeout_sec` が必要です。
-
-```text
-components[].id
-      |
-      +--------------------------+
-                                 v
-runtime_config.actuators.<id>.command_timeout_sec
-```
-
-`command_timeout_sec` は command の有効期限を simulation time で表します。正の有限値で、Runtime 内部の microsecond 表現へ変換可能である必要があります。
-
-Runtime は独立した wall-clock を Source of Truth とせず、Plant の simulation time に基づいて command expiration を判定します。
-
-Schema:
-
-```text
-schemas/runtime/actuator-runtime.schema.json
-```
-
-## 4. Scalar Joint Actuator Config
+### 3.1 `actuator`
 
 標準 scalar actuator config は次の3領域を持ちます。
 
@@ -155,7 +127,9 @@ schemas/runtime/actuator-runtime.schema.json
 }
 ```
 
-### 4.1 `spec`
+<a id="41-spec"></a>
+
+#### `spec`
 
 | field | 意味 |
 | --- | --- |
@@ -175,7 +149,9 @@ position の `lower < upper`、velocity / effort の magnitude は正の有限�
 
 同じ physical `joint_name` に複数の標準 scalar actuator component を割り当てることはできません。
 
-### 4.2 `mjcf_binding`
+<a id="42-mjcf_binding"></a>
+
+#### `mjcf_binding`
 
 `mjcf_binding.actuator_name` は Runtime actuator と MuJoCo actuator を対応付けます。
 
@@ -183,7 +159,9 @@ position の `lower < upper`、velocity / effort の magnitude は正の有限�
 
 この field の意味は現在の MuJoCo adapter に依存します。Runtime core 自体の logical actuator ID と physical backend の binding は分離されています。
 
-### 4.3 `pdu_config`
+<a id="43-pdu_config"></a>
+
+#### `pdu_config`
 
 標準 scalar actuator command は `std_msgs/Float64` を使用します。
 
@@ -197,7 +175,9 @@ Runtime は PDU definition と照合し、対象 channel の存在、message typ
 
 現在 scalar `Float64` channel は 32 byte 以上を要求します。
 
-### 4.4 JSON Schema の配置
+<a id="44-json-schema-の配置"></a>
+
+#### JSON Schema の配置
 
 Joint actuator schema は現在 `hakoniwa-mujoco-robots` 側にも既存 contract として配置されています。
 
@@ -207,7 +187,11 @@ config/actuator/schema/joint-actuator.schema.json
 
 Runtime が実際に解釈する actuator semantics と cross-reference validation は本 Runtime の contract です。Schema ownership / 配置の整理は別途段階的に行います。
 
-## 5. JointTrajectory Controller Config
+### 3.2 `controller`
+
+<a id="5-jointtrajectory-controller-config"></a>
+
+#### 3.2.1 `joint_trajectory_controller`
 
 標準 JointTrajectory Controller の例:
 
@@ -226,7 +210,9 @@ Runtime が実際に解釈する actuator semantics と cross-reference validati
 }
 ```
 
-### 5.1 `input`
+<a id="51-input"></a>
+
+##### `input`
 
 | field | contract |
 | --- | --- |
@@ -234,7 +220,9 @@ Runtime が実際に解釈する actuator semantics と cross-reference validati
 | `message_type` | `trajectory_msgs/JointTrajectory` |
 | `update_rate_hz` | 正の有限値 |
 
-### 5.2 `joints`
+<a id="52-joints"></a>
+
+##### `joints`
 
 各 entry は外部から見える joint 名と actuator component ID を結びます。
 
@@ -264,7 +252,9 @@ Schema:
 schemas/components/joint-trajectory-controller.schema.json
 ```
 
-## 6. Joy Manual Controller Config
+<a id="6-joy-manual-controller-config"></a>
+
+#### 3.2.2 `joy_manual_controller`
 
 標準 Joy Manual Controller は、logical Joy layout と joint binding を組み合わせます。
 
@@ -309,7 +299,9 @@ scalar actuator
 }
 ```
 
-### 6.1 `joy_layout`
+<a id="61-joy_layout"></a>
+
+##### `joy_layout`
 
 `joy_layout` の相対 path は **Manual Controller config 自身のディレクトリ** を基準に解決します。
 
@@ -320,7 +312,9 @@ scalar actuator
 - `buttons`: string の配列
 - axis 名 / button 名は空文字不可・重複不可
 
-### 6.2 `input`
+<a id="62-input"></a>
+
+##### `input`
 
 | field | contract |
 | --- | --- |
@@ -331,7 +325,9 @@ scalar actuator
 
 Runtime は Joy layout の axis / button 数から必要最小 PDU size を算出して PDU definition と照合します。
 
-### 6.3 `spec`
+<a id="63-spec"></a>
+
+##### `spec`
 
 - `manual_enable_button` は Joy layout の既知 button
 - `quit_button` は Joy layout の既知 button
@@ -356,7 +352,11 @@ Schema:
 schemas/components/joy-manual-controller.schema.json
 ```
 
-## 7. JointState Output Config
+### 3.3 `state_output`
+
+<a id="7-jointstate-output-config"></a>
+
+#### 3.3.1 `joint_state`
 
 標準 state output は `sensor_msgs/JointState` を publish します。
 
@@ -383,13 +383,17 @@ schemas/components/joy-manual-controller.schema.json
 }
 ```
 
-### 7.1 `spec.joints`
+<a id="71-specjoints"></a>
+
+##### `spec.joints`
 
 - 1件以上
 - output joint name は重複不可
 - 各 output joint は最終的に既知 scalar actuator の physical joint と対応する必要があります
 
-### 7.2 `mjcf_binding.joints`
+<a id="72-mjcf_bindingjoints"></a>
+
+##### `mjcf_binding.joints`
 
 任意です。
 
@@ -409,7 +413,9 @@ output name
 
 binding が無い joint は、output `name` と physical joint 名が同一であるものとして解釈します。
 
-### 7.3 `pdu_config`
+<a id="73-pdu_config"></a>
+
+##### `pdu_config`
 
 | field | contract |
 | --- | --- |
@@ -421,9 +427,57 @@ Runtime は PDU definition 上の channel の存在と type を照合します�
 
 JointState output schema は現在 `hakoniwa-mujoco-robots` 側にも既存 schema として配置されています。Runtime semantics と cross-reference validation は本 Runtime が所有します。
 
-## 8. PDU Contract
+<a id="3-runtime-config"></a>
 
-### 8.1 PDU definition format の所有者
+## 4. Runtime Config — `runtime_config` の内容
+
+Runtime common config は Asset Manifest の `runtime_config` から参照します。
+
+現在の標準形式は次です。
+
+```json
+{
+  "$schema": "https://hakoniwa.dev/schemas/robot-arm-actuator-runtime.schema.json",
+  "actuators": {
+    "joint1": { "command_timeout_sec": 0.1 },
+    "joint2": { "command_timeout_sec": 0.1 }
+  }
+}
+```
+
+<a id="31-actuators"></a>
+
+### 4.1 `actuators`
+
+`actuators` は actuator component ID を key とする object です。
+
+各 scalar actuator について `command_timeout_sec` が必要です。
+
+```text
+components[].id
+      |
+      +--------------------------+
+                                 v
+runtime_config.actuators.<id>.command_timeout_sec
+```
+
+`command_timeout_sec` は command の有効期限を simulation time で表します。正の有限値で、Runtime 内部の microsecond 表現へ変換可能である必要があります。
+
+Runtime は独立した wall-clock を Source of Truth とせず、Plant の simulation time に基づいて command expiration を判定します。
+
+Schema:
+
+```text
+schemas/runtime/actuator-runtime.schema.json
+```
+
+<a id="8-pdu-contract"></a>
+
+## 5. PDU Contract
+
+<a id="81-pdu-definition-format-の所有者"></a>
+
+### 5.1 PDU definition format の所有者
 
 PDU definition / PDU types の構文そのものは `hakoniwa-pdu-endpoint` 側で管理します。
 
@@ -436,7 +490,9 @@ Schema directory:
 - `pdudef.schema.json`
 - `pdutypes.schema.json`
 
-### 8.2 Robot Runtime が要求する contract
+<a id="82-robot-runtime-が要求する-contract"></a>
+
+### 5.2 Robot Runtime が要求する contract
 
 `hakoniwa-pdu-endpoint` の schema は legacy / compact の双方を扱いますが、**現在の Robot Runtime の RuntimeFactory は compact PDU definition を要求します**。
 
@@ -479,9 +535,13 @@ Runtime は component config の `pdu_robot` / `pdu_name` と PDU definition を
 
 PDU format 自体の完全な仕様は `hakoniwa-pdu-endpoint` の schema を正本とし、本 Runtime ではここに複製しません。
 
-## 9. Endpoint Contract
+<a id="9-endpoint-contract"></a>
 
-### 9.1 Endpoint config format の所有者
+## 6. Endpoint Contract
+
+<a id="91-endpoint-config-format-の所有者"></a>
+
+### 6.1 Endpoint config format の所有者
 
 Endpoint / Cache / Comm の構文と transport-specific semantics は `hakoniwa-pdu-endpoint` の責務です。
 
@@ -498,7 +558,9 @@ Schema directory:
 - `pdudef.schema.json`
 - `pdutypes.schema.json`
 
-### 9.2 Robot Runtime 側の扱い
+<a id="92-robot-runtime-側の扱い"></a>
+
+### 6.2 Robot Runtime 側の扱い
 
 Asset Manifest の `endpoint` は Endpoint config file を指します。
 
@@ -523,7 +585,9 @@ hakoniwa::pdu::Endpoint::open()
 
 Robot Runtime は Endpoint 内部設定を独自に再定義しません。
 
-## 10. Path Resolution Rules
+<a id="10-path-resolution-rules"></a>
+
+## 7. Path Resolution Rules
 
 Runtime と関連 subsystem の相対 path 基準をまとめます。
 
@@ -538,9 +602,13 @@ Runtime と関連 subsystem の相対 path 基準をまとめます。
 | compact PDU definition の `paths[].path` | PDU definition directory |
 | Endpoint config の `cache` / `comm` / `pdu_def_path` | Endpoint config directory。詳細は `hakoniwa-pdu-endpoint` schema |
 
-## 11. Validation Boundary
+<a id="11-validation-boundary"></a>
 
-### 11.1 JSON Schema が担当するもの
+## 8. Validation Boundary
+
+<a id="111-json-schema-が担当するもの"></a>
+
+### 8.1 JSON Schema が担当するもの
 
 - JSON structure
 - field type
@@ -548,7 +616,9 @@ Runtime と関連 subsystem の相対 path 基準をまとめます。
 - primitive range
 - `additionalProperties` 制約等
 
-### 11.2 Runtime semantic validation が担当するもの
+<a id="112-runtime-semantic-validation-が担当するもの"></a>
+
+### 8.2 Runtime semantic validation が担当するもの
 
 - referenced file existence
 - component ID uniqueness
@@ -565,7 +635,9 @@ Runtime と関連 subsystem の相対 path 基準をまとめます。
 
 Schema validation が通っても Runtime semantic validation が失敗する場合があります。
 
-## 12. 最小構成例
+<a id="12-最小構成例"></a>
+
+## 9. 最小構成例
 
 ```text
 robot/
