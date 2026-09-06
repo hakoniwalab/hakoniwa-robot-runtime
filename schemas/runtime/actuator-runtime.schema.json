@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hakoniwa.dev/schemas/robot-arm-actuator-runtime.schema.json",
+  "title": "Hakoniwa Robot Arm Actuator Runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["actuators"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "actuators": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command_timeout_sec"],
+        "properties": {
+          "command_timeout_sec": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Command lifetime measured only in simulation time."
+          }
+        }
+      }
+    }
+  }
+}
