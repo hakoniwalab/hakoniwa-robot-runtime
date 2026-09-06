@@ -44,17 +44,26 @@ Robot Pack / Application
 - Hakoniwa PDU Endpoint adapter
 - MuJoCo Plant adapter
 - Manifest から Runtime / Adapter / Runner を組み立てる ManifestFactory
+- Asset Manifest / Runtime config / actuator / controller / state-output の **format / semantics / cross-reference validation**
 
 一方、次は Robot Pack や上位アプリケーション側の責務です。
 
 - ロボット固有の MuJoCo モデル
-- actuator / controller / PDU の設定
+- Runtime contract に従う **具体的な config instance / robot-specific value**
 - Recipe / demo / Launcher 構成
 - ROS 2 bridge
 - Gamepad frontend
 - ロボット固有の追加 Controller
 
+PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint` 側の contract を利用します。本 Runtime は、それらを独自に再定義せず、Runtime component から見た binding 条件だけを定義・検証します。
+
 本 Runtime は、これらの Robot Pack / Application から共通実行層として利用することを想定しています。
+
+## Documentation
+
+- [docs/design.md](docs/design.md) — Runtime architecture / responsibility boundary
+- [docs/configuration.md](docs/configuration.md) — Asset Manifest、Runtime config、actuator / controller / state-output、PDU / Endpoint contract
+- [schemas/README.md](schemas/README.md) — Runtime-owned JSON Schemas
 
 ## 設計上の重要点
 
@@ -64,8 +73,6 @@ Robot Pack / Application
 - Arbiter は AUTO / MANUAL / HOLD のような mode state を保持せず、現在 step の logical control を選択します。
 - command type / expiration / finite value / limit / fallback などの最終 guard は Plant 入口で行います。
 - transport、physics backend、execution policy は Runtime core から分離します。
-
-詳細は [docs/design.md](docs/design.md) を参照してください。
 
 ## 現在のスコープ
 
