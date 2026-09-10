@@ -51,12 +51,13 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
     auto resources_factory =
         [definition = std::move(runtime_definition),
          endpoint_path = manifest.endpoint_path,
-         endpoint_name = std::move(config.endpoint_name)]() mutable
+         endpoint_name = std::move(config.endpoint_name),
+         asset_name]() mutable
         -> runner::HakoniwaRunnerResources {
         auto endpoint = std::make_unique<::hakoniwa::pdu::Endpoint>(
             endpoint_name,
             HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
-        if (endpoint->open(endpoint_path) != HAKO_PDU_ERR_OK) {
+        if (endpoint->open(endpoint_path, asset_name.c_str()) != HAKO_PDU_ERR_OK) {
             throw std::runtime_error(
                 "failed to open Runtime endpoint: " + endpoint_path);
         }
@@ -79,25 +80,25 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 [&](const runtime::RuntimeStateOutputConfig& output) {
                     return std::make_shared<
                         adapters::hakoniwa::JointStatePduWriter>(
-                        *endpoint,
-                        output.pdu_robot,
-                        output.pdu_name);
+                            *endpoint,
+                            output.pdu_robot,
+                            output.pdu_name);
                 },
                 [&](const runtime::RuntimeTrajectoryControllerConfig& controller) {
                     auto reader = std::make_shared<
                         adapters::hakoniwa::JointTrajectoryPduEventReader>(
-                        *endpoint,
-                        controller.pdu_robot,
-                        controller.pdu_name);
+                            *endpoint,
+                            controller.pdu_robot,
+                            controller.pdu_name);
                     reader->subscribe();
                     return reader;
                 },
                 [&](const runtime::RuntimeManualControllerConfig& controller) {
                     auto reader = std::make_shared<
                         adapters::hakoniwa::JoyPduEventReader>(
-                        *endpoint,
-                        controller.pdu_robot,
-                        controller.pdu_name);
+                            *endpoint,
+                            controller.pdu_robot,
+                            controller.pdu_name);
                     reader->subscribe();
                     return reader;
                 });
