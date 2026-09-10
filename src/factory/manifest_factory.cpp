@@ -80,25 +80,25 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 [&](const runtime::RuntimeStateOutputConfig& output) {
                     return std::make_shared<
                         adapters::hakoniwa::JointStatePduWriter>(
-                            *endpoint,
-                            output.pdu_robot,
-                            output.pdu_name);
+                        *endpoint,
+                        output.pdu_robot,
+                        output.pdu_name);
                 },
                 [&](const runtime::RuntimeTrajectoryControllerConfig& controller) {
                     auto reader = std::make_shared<
                         adapters::hakoniwa::JointTrajectoryPduEventReader>(
-                            *endpoint,
-                            controller.pdu_robot,
-                            controller.pdu_name);
+                        *endpoint,
+                        controller.pdu_robot,
+                        controller.pdu_name);
                     reader->subscribe();
                     return reader;
                 },
                 [&](const runtime::RuntimeManualControllerConfig& controller) {
                     auto reader = std::make_shared<
                         adapters::hakoniwa::JoyPduEventReader>(
-                            *endpoint,
-                            controller.pdu_robot,
-                            controller.pdu_name);
+                        *endpoint,
+                        controller.pdu_robot,
+                        controller.pdu_name);
                     reader->subscribe();
                     return reader;
                 });
