@@ -3,10 +3,12 @@
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/publisher/joint_state_publisher.hpp"
+#include "runtime/publisher/multi_dof_joint_state_publisher.hpp"
 #include "runtime/runtime_definition.hpp"
 #include "runtime/source/joint_trajectory_command_source.hpp"
 #include "runtime/source/joy_command_source.hpp"
 #include "runtime/source/scalar_pdu_command_source.hpp"
+#include "runtime/source/ackermann_drive_command_source.hpp"
 
 #include <functional>
 #include <memory>
@@ -17,11 +19,17 @@ using Float64EventReaderFactory = std::function<
     std::shared_ptr<IFloat64EventReader>(const RuntimeActuatorConfig&)>;
 using JointStateWriterFactory = std::function<
     std::shared_ptr<IJointStateWriter>(const RuntimeStateOutputConfig&)>;
+using MultiDofJointStateWriterFactory = std::function<
+    std::shared_ptr<IMultiDofJointStateWriter>(
+        const RuntimeMultiDofStateOutputConfig&)>;
 using JointTrajectoryEventReaderFactory = std::function<
     std::shared_ptr<IJointTrajectoryEventReader>(
         const RuntimeTrajectoryControllerConfig&)>;
 using JoyEventReaderFactory = std::function<
     std::shared_ptr<IJoyEventReader>(const RuntimeManualControllerConfig&)>;
+using AckermannDriveEventReaderFactory = std::function<
+    std::shared_ptr<IAckermannDriveEventReader>(
+        const RuntimeAckermannControllerConfig&)>;
 
 /**
  * Builds one ActuatorRuntime from an already-resolved RuntimeDefinition and
@@ -38,6 +46,8 @@ using JoyEventReaderFactory = std::function<
     const Float64EventReaderFactory& reader_factory,
     const JointStateWriterFactory& writer_factory = {},
     const JointTrajectoryEventReaderFactory& trajectory_reader_factory = {},
-    const JoyEventReaderFactory& joy_reader_factory = {});
+    const JoyEventReaderFactory& joy_reader_factory = {},
+    const AckermannDriveEventReaderFactory& ackermann_reader_factory = {},
+    const MultiDofJointStateWriterFactory& multi_dof_writer_factory = {});
 
 } // namespace hakoniwa::robot_runtime::runtime

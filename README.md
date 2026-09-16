@@ -76,7 +76,7 @@ PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint
 
 ## 現在のスコープ
 
-現在の実装は joint / scalar actuator を中心とした Runtime を正本としています。ロボットアームで実運用・検証されていますが、Runtime 自体は特定のロボット機種やアーム専用 API を前提にしない構造です。
+現在の実装は joint / scalar actuator を中心とした Runtime を正本としています。ロボットアームで実運用・検証され、opt-inのmobile-base拡張としてAckermann controllerとMultiDOF body-state outputも提供します。Runtime 自体は特定のロボット機種やアーム専用 API を前提にしない構造です。
 
 車輪型・脚型などへの展開は可能な設計ですが、各ロボット固有の運動学・制御方式・モデル構成まで本 Runtime が提供するものではありません。
 

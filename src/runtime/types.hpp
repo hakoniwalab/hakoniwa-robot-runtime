@@ -69,10 +69,33 @@ struct ActuatorState {
     std::uint64_t simulation_time_usec {0};
 };
 
+struct Vector3State {
+    double x {0.0};
+    double y {0.0};
+    double z {0.0};
+};
+
+struct QuaternionState {
+    double x {0.0};
+    double y {0.0};
+    double z {0.0};
+    double w {1.0};
+};
+
+struct BodyState {
+    std::string body_id;
+    Vector3State position;
+    QuaternionState orientation;
+    Vector3State linear_velocity;
+    Vector3State angular_velocity;
+    std::uint64_t simulation_time_usec {0};
+};
+
 /** Physical-state snapshot observed at the Plant's `sample_time_usec`. */
 struct RobotState {
     std::vector<ActuatorState> actuators;
     std::uint64_t sample_time_usec {0};
+    std::vector<BodyState> bodies;
 };
 
 /** Inclusive scalar command limits in the unit selected by command type. */

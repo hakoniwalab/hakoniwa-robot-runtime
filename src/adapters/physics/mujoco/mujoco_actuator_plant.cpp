@@ -79,6 +79,13 @@ public:
         int actuator_id {-1};
     };
 
+    struct BodyBinding {
+        std::string state_id;
+        int joint_id {-1};
+        int qpos_address {-1};
+        int body_id {-1};
+    };
+
     explicit Impl(const runtime::RuntimeDefinition& definition)
         : world(std::make_shared<hako::robots::physics::impl::WorldImpl>())
     {
@@ -125,6 +132,31 @@ public:
                 bindings.size());
             bindings.push_back(std::move(binding));
         }
+        std::unordered_set<std::string> body_state_ids;
+        for (const auto& output : definition.multi_dof_state_outputs) {
+            for (const auto& config : output.bodies) {
+                if (!body_state_ids.insert(config.state_id).second) {
+                    throw std::invalid_argument(
+                        "duplicate body state ID: " + config.state_id);
+                }
+                const int joint_id = require_named_id(
+                    model,
+                    mjOBJ_JOINT,
+                    config.mjcf_freejoint,
+                    "body state freejoint");
+                if (model->jnt_type[joint_id] != mjJNT_FREE) {
+                    throw std::invalid_argument(
+                        "body state binding is not a freejoint: "
+                        + config.mjcf_freejoint);
+                }
+                body_bindings.push_back({
+                    config.state_id,
+                    joint_id,
+                    model->jnt_qposadr[joint_id],
+                    model->jnt_bodyid[joint_id],
+                });
+            }
+        }
     }
 
     runtime::RobotState state() const
@@ -140,6 +172,23 @@ public:
                 data->qpos[binding.qpos_address],
                 data->qvel[binding.qvel_address],
                 data->actuator_force[binding.actuator_id],
+                sample_time_usec,
+            });
+        }
+        state.bodies.reserve(body_bindings.size());
+        for (const auto& binding : body_bindings) {
+            const int qpos = binding.qpos_address;
+            mjtNum velocity[6] {};
+            mj_objectVelocity(
+                world->getModel(), data, mjOBJ_BODY,
+                binding.body_id, velocity, 0);
+            state.bodies.push_back({
+                binding.state_id,
+                {data->qpos[qpos], data->qpos[qpos + 1], data->qpos[qpos + 2]},
+                {data->qpos[qpos + 4], data->qpos[qpos + 5],
+                    data->qpos[qpos + 6], data->qpos[qpos + 3]},
+                {velocity[3], velocity[4], velocity[5]},
+                {velocity[0], velocity[1], velocity[2]},
                 sample_time_usec,
             });
         }
@@ -179,6 +228,7 @@ public:
 
     std::shared_ptr<hako::robots::physics::impl::WorldImpl> world;
     std::vector<Binding> bindings;
+    std::vector<BodyBinding> body_bindings;
     std::unordered_map<std::string, std::size_t> binding_by_id;
     std::uint64_t delta_time_usec {0};
 };

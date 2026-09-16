@@ -6,6 +6,8 @@
 #include <fstream>
 #include <string_view>
 #include <utility>
+#include <algorithm>
+#include <cctype>
 
 namespace hakoniwa::robot_runtime::factory::detail {
 namespace {
@@ -81,6 +83,24 @@ bool regular_file(
     return true;
 }
 
+bool supported_model_file(
+    const fs::path& path,
+    std::string* error)
+{
+    std::string extension = path.extension().string();
+    std::transform(
+        extension.begin(), extension.end(), extension.begin(),
+        [](const unsigned char value) {
+            return static_cast<char>(std::tolower(value));
+        });
+    if (extension == ".xml" || extension == ".mjb") {
+        return true;
+    }
+    return fail(error,
+        "manifest model must be a MuJoCo .xml or .mjb file: "
+        + path.string());
+}
+
 } // namespace
 
 bool resolve_manifest(
@@ -142,6 +162,7 @@ bool resolve_manifest(
         resolve(base, runtime_config);
 
     if (!regular_file(model_path, error_message)
+        || !supported_model_file(model_path, error_message)
         || !regular_file(pdu_definition_path, error_message)
         || !regular_file(endpoint_path, error_message)
         || !regular_file(runtime_config_path, error_message)) {

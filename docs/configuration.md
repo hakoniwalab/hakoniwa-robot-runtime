@@ -62,6 +62,15 @@ asset-manifest.json
 
 `model` / `pdu_def` / `endpoint` / `runtime_config` の相対 path は **Asset Manifest 自身のディレクトリ** を基準に解決します。参照先は通常ファイルとして存在する必要があります。
 
+`model` はMuJoCo XML (`.xml`) またはコンパイル済みMuJoCo Binary
+(`.mjb`)を指定できます。大規模な都市モデルなど、起動時のXML解析コストが
+大きい場合はMJBを推奨します。MJBは生成に使用したMuJoCoと実行時MuJoCoの
+互換性が必要です。したがってApplication/Recipeは、実行バイナリがリンクする
+MuJoCoでXMLをMJBへ変換し、同じライブラリで再ロード検証したartifactを
+manifestへ設定してください。Runtimeは拡張子とファイル存在を起動準備時に
+検証し、MuJoCo adapterは`.xml`を`mj_loadXML()`、`.mjb`を`mj_loadModel()`で
+読み込みます。
+
 `$schema`、`schema_version`、`description` 等の metadata を付与しても構いませんが、現在の Runtime 実装が直接意味解釈する必須 field は上表です。
 
 <a id="22-components"></a>
@@ -97,9 +106,17 @@ Runtime が現在標準で解釈する主な component は次です。
 | `actuator` | `joint_torque_actuator` | [3.1 actuator](#31-actuator) |
 | `controller` | `joint_trajectory_controller` | [3.2.1 joint_trajectory_controller](#321-joint_trajectory_controller) |
 | `controller` | `joy_manual_controller` | [3.2.2 joy_manual_controller](#322-joy_manual_controller) |
+| `controller` | `ackermann_controller` | [3.2.3 ackermann_controller](#323-ackermann_controller) |
 | `state_output` | `joint_state` | [3.3.1 joint_state](#331-joint_state) |
+| `state_output` | `multi_dof_joint_state` | [3.3.2 multi_dof_joint_state](#332-multi_dof_joint_state) |
 
 Robot Pack 固有の component type は上位側で追加できますが、Runtime core の標準 contract とは分けて管理します。
+
+`ackermann_controller` と `multi_dof_joint_state` の実装は mobile-base
+extensionです。これらを使うApplicationのビルドだけが
+`HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE=1` を定義し、対応するsourceと
+PDU adapterをリンクします。定義しない既存Applicationには、Ackermann固有の
+link dependencyやmanifest解釈を追加しません。
 
 ## 3. Component Config — `components[].config` の内容
 
@@ -352,6 +369,42 @@ Schema:
 schemas/components/joy-manual-controller.schema.json
 ```
 
+<a id="323-ackermann_controller"></a>
+
+#### 3.2.3 `ackermann_controller`
+
+`ackermann_msgs/AckermannDrive` の速度と中央操舵角を、左右の steering
+position actuator と左右の drive velocity actuator へ変換します。車両寸法と
+4つの actuator component ID は controller config が保持します。
+
+```json
+{
+  "input": {
+    "pdu_name": "ackermann_command",
+    "message_type": "ackermann_msgs/AckermannDrive",
+    "update_rate_hz": 50.0,
+    "timeout_sec": 0.25
+  },
+  "geometry": {
+    "wheelbase_m": 1.55,
+    "track_width_m": 1.04,
+    "wheel_radius_m": 0.25,
+    "max_steering_angle_rad": 0.70,
+    "max_wheel_angular_velocity_rad_s": 20.0
+  },
+  "actuators": {
+    "steering_left": "car_1_steering_left",
+    "steering_right": "car_1_steering_right",
+    "drive_left": "car_1_drive_left",
+    "drive_right": "car_1_drive_right"
+  }
+}
+```
+
+複数の Ackermann controller は同じ Runtime control group に属します。車両間で
+actuator ID が重複しなければ、各controllerのcommandは同時に選択され、1回の
+MuJoCo world stepで全車両が更新されます。
+
 ### 3.3 `state_output`
 
 <a id="7-jointstate-output-config"></a>
@@ -426,6 +479,39 @@ binding が無い joint は、output `name` と physical joint 名が同一で�
 Runtime は PDU definition 上の channel の存在と type を照合します。
 
 JointState output schema は現在 `hakoniwa-mujoco-robots` 側にも既存 schema として配置されています。Runtime semantics と cross-reference validation は本 Runtime が所有します。
+
+<a id="332-multi_dof_joint_state"></a>
+
+#### 3.3.2 `multi_dof_joint_state`
+
+1個以上のMuJoCo freejointから位置、Quaternion姿勢、world-frameの並進速度・
+角速度を取得し、`sensor_msgs/MultiDOFJointState` の可変長配列としてpublishします。
+
+```json
+{
+  "spec": {
+    "frame_id": "world",
+    "bodies": [
+      {"name": "Car-1/base_link"},
+      {"name": "Car-2/base_link"}
+    ]
+  },
+  "mjcf_binding": {
+    "bodies": [
+      {"name": "Car-1/base_link", "mjcf_freejoint": "car_1_base_freejoint"},
+      {"name": "Car-2/base_link", "mjcf_freejoint": "car_2_base_freejoint"}
+    ]
+  },
+  "pdu_config": {
+    "pdu_name": "visual_body_states",
+    "message_type": "sensor_msgs/MultiDOFJointState",
+    "update_rate_hz": 60.0
+  }
+}
+```
+
+PDUは車両種別を持ちません。名前とPDU channelからモデルを選択する責務は
+Three.js等のapplication側に残します。
 
 <a id="3-runtime-config"></a>
 

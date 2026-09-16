@@ -38,6 +38,22 @@ struct RuntimeStateOutputConfig {
     std::vector<RuntimeJointStateBinding> joints;
 };
 
+struct RuntimeMultiDofBodyBinding {
+    std::string name;
+    std::string state_id;
+    std::string mjcf_freejoint;
+};
+
+struct RuntimeMultiDofStateOutputConfig {
+    std::string component_id;
+    std::string config_path;
+    std::string pdu_robot;
+    std::string pdu_name;
+    std::string frame_id;
+    double update_rate_hz {0.0};
+    std::vector<RuntimeMultiDofBodyBinding> bodies;
+};
+
 struct RuntimeTrajectoryBinding {
     std::string joint_name;
     std::string actuator_id;
@@ -81,6 +97,32 @@ struct RuntimeManualControllerConfig {
     std::vector<RuntimeManualBankConfig> banks;
 };
 
+struct RuntimeAckermannGeometry {
+    double wheelbase_m {0.0};
+    double track_width_m {0.0};
+    double wheel_radius_m {0.0};
+    double max_steering_angle_rad {0.0};
+    double max_wheel_angular_velocity_rad_s {0.0};
+};
+
+struct RuntimeAckermannActuatorBindings {
+    std::string steering_left;
+    std::string steering_right;
+    std::string drive_left;
+    std::string drive_right;
+};
+
+struct RuntimeAckermannControllerConfig {
+    std::string component_id;
+    std::string config_path;
+    std::string pdu_robot;
+    std::string pdu_name;
+    std::uint64_t input_timeout_usec {0};
+    double update_rate_hz {0.0};
+    RuntimeAckermannGeometry geometry;
+    RuntimeAckermannActuatorBindings actuators;
+};
+
 /**
  * Resolved Runtime-local definition produced from the declarative manifest.
  *
@@ -92,8 +134,10 @@ struct RuntimeDefinition {
     std::string model_path;
     std::vector<RuntimeActuatorConfig> actuators;
     std::vector<RuntimeStateOutputConfig> state_outputs;
+    std::vector<RuntimeMultiDofStateOutputConfig> multi_dof_state_outputs;
     std::vector<RuntimeTrajectoryControllerConfig> trajectory_controllers;
     std::vector<RuntimeManualControllerConfig> manual_controllers;
+    std::vector<RuntimeAckermannControllerConfig> ackermann_controllers;
 };
 
 } // namespace hakoniwa::robot_runtime::runtime

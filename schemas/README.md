@@ -6,6 +6,8 @@ Current Runtime-owned schemas:
 
 - `components/joint-trajectory-controller.schema.json`
 - `components/joy-manual-controller.schema.json`
+- `components/ackermann-controller.schema.json`
+- `components/multi-dof-joint-state-output.schema.json`
 - `input/logical-joy-layout.schema.json`
 - `runtime/actuator-runtime.schema.json`
 

@@ -61,6 +61,10 @@ struct RuntimeParseContext {
     RuntimeParseContext& context,
     RuntimeDefinition& definition,
     std::string* error);
+[[nodiscard]] bool load_ackermann_definitions(
+    RuntimeParseContext& context,
+    RuntimeDefinition& definition,
+    std::string* error);
 [[nodiscard]] bool load_state_output_definitions(
     RuntimeParseContext& context,
     RuntimeDefinition& definition,

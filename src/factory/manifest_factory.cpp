@@ -5,6 +5,10 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/joint_state_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/joint_trajectory_pdu_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/joy_pdu_event_reader.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+#include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_pdu_event_reader.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/multi_dof_joint_state_pdu_writer.hpp"
+#endif
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "runner/runner_factory.hpp"
@@ -101,7 +105,27 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         controller.pdu_name);
                     reader->subscribe();
                     return reader;
-                });
+                }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+                ,
+                [&](const runtime::RuntimeAckermannControllerConfig& controller) {
+                    auto reader = std::make_shared<
+                        adapters::hakoniwa::AckermannDrivePduEventReader>(
+                        *endpoint,
+                        controller.pdu_robot,
+                        controller.pdu_name);
+                    reader->subscribe();
+                    return reader;
+                },
+                [&](const runtime::RuntimeMultiDofStateOutputConfig& output) {
+                    return std::make_shared<
+                        adapters::hakoniwa::MultiDofJointStatePduWriter>(
+                        *endpoint,
+                        output.pdu_robot,
+                        output.pdu_name);
+                }
+#endif
+                );
 
             return {
                 std::move(runtime_instance),

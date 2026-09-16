@@ -255,6 +255,10 @@ bool resolve_runtime_definition(
             context, definition, error_message)
         || !detail::load_manual_definitions(
             context, definition, error_message)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+        || !detail::load_ackermann_definitions(
+            context, definition, error_message)
+#endif
         || !detail::load_state_output_definitions(
             context, definition, error_message)) {
         return false;

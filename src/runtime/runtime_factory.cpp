@@ -5,6 +5,10 @@
 #include "runtime/controller/joint_trajectory_controller.hpp"
 #include "runtime/controller/manual_controller.hpp"
 #include "runtime/controller/scalar_pdu_command_controller.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+#include "runtime/controller/ackermann_controller.hpp"
+#include "runtime/publisher/multi_dof_joint_state_publisher.hpp"
+#endif
 
 #include <stdexcept>
 #include <unordered_map>
@@ -19,7 +23,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     const Float64EventReaderFactory& reader_factory,
     const JointStateWriterFactory& writer_factory,
     const JointTrajectoryEventReaderFactory& trajectory_reader_factory,
-    const JoyEventReaderFactory& joy_reader_factory)
+    const JoyEventReaderFactory& joy_reader_factory,
+    const AckermannDriveEventReaderFactory& ackermann_reader_factory,
+    const MultiDofJointStateWriterFactory& multi_dof_writer_factory)
 {
     if (plant == nullptr) {
         throw std::invalid_argument("Actuator Plant must be provided");
@@ -32,6 +38,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         throw std::invalid_argument(
             "joint state writer factory is required by the Runtime definition");
     }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+    if (!definition.multi_dof_state_outputs.empty() && !multi_dof_writer_factory) {
+        throw std::invalid_argument(
+            "MultiDOF state writer factory is required by the Runtime definition");
+    }
+#endif
     if (!definition.trajectory_controllers.empty()
         && !trajectory_reader_factory) {
         throw std::invalid_argument(
@@ -41,6 +53,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         throw std::invalid_argument(
             "Joy event reader factory is required by the Runtime definition");
     }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+    if (!definition.ackermann_controllers.empty() && !ackermann_reader_factory) {
+        throw std::invalid_argument(
+            "Ackermann event reader factory is required by the Runtime definition");
+    }
+#endif
     if (definition.manual_controllers.size() > 1) {
         throw std::invalid_argument(
             "only one arm Manual Controller is supported");
@@ -54,6 +72,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         definition.actuators.size()
         + definition.manual_controllers.size()
         + definition.trajectory_controllers.size()
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+        + definition.ackermann_controllers.size()
+#endif
         + 1);
     priorities.reserve(controllers.capacity());
 
@@ -202,6 +223,27 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         priorities.push_back({trajectory_config.component_id, 10, {}});
     }
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+    constexpr const char* ackermann_control_group = "ackermann-pdu-direct";
+    for (const auto& config : definition.ackermann_controllers) {
+        auto reader = ackermann_reader_factory(config);
+        if (reader == nullptr) {
+            throw std::invalid_argument(
+                "Ackermann reader factory returned null: "
+                + config.component_id);
+        }
+        const std::string source_id = "ackermann-pdu:" + config.component_id;
+        sources.push_back(std::make_shared<AckermannDriveCommandSource>(
+            source_id,
+            config.input_timeout_usec,
+            std::move(reader)));
+        controllers.push_back(std::make_shared<AckermannController>(config));
+        priorities.push_back({config.component_id, 10, ackermann_control_group});
+    }
+#else
+    (void)ackermann_reader_factory;
+#endif
+
     std::vector<std::shared_ptr<IStatePublisher>> publishers;
     publishers.reserve(definition.state_outputs.size());
     for (const auto& output : definition.state_outputs) {
@@ -225,6 +267,29 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
             output.update_rate_hz,
             std::move(writer)));
     }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+    for (const auto& output : definition.multi_dof_state_outputs) {
+        auto writer = multi_dof_writer_factory(output);
+        if (writer == nullptr) {
+            throw std::invalid_argument(
+                "writer factory returned null for MultiDOF output: "
+                + output.component_id);
+        }
+        std::vector<MultiDofOutputBinding> bindings;
+        bindings.reserve(output.bodies.size());
+        for (const auto& body : output.bodies) {
+            bindings.push_back({body.name, body.state_id});
+        }
+        publishers.push_back(std::make_shared<MultiDofJointStatePublisher>(
+            output.component_id,
+            output.frame_id,
+            std::move(bindings),
+            output.update_rate_hz,
+            std::move(writer)));
+    }
+#else
+    (void)multi_dof_writer_factory;
+#endif
 
     auto arbiter = std::make_shared<PriorityCommandArbiter>(
         std::move(priorities));

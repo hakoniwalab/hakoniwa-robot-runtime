@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hakoniwa.dev/schemas/ackermann-controller.schema.json",
+  "title": "Hakoniwa Ackermann controller component",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input", "geometry", "actuators"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pdu_name", "message_type", "update_rate_hz", "timeout_sec"],
+      "properties": {
+        "pdu_name": {"type": "string", "minLength": 1},
+        "message_type": {"const": "ackermann_msgs/AckermannDrive"},
+        "update_rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "timeout_sec": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wheelbase_m", "track_width_m", "wheel_radius_m", "max_steering_angle_rad", "max_wheel_angular_velocity_rad_s"],
+      "properties": {
+        "wheelbase_m": {"type": "number", "exclusiveMinimum": 0},
+        "track_width_m": {"type": "number", "exclusiveMinimum": 0},
+        "wheel_radius_m": {"type": "number", "exclusiveMinimum": 0},
+        "max_steering_angle_rad": {"type": "number", "exclusiveMinimum": 0},
+        "max_wheel_angular_velocity_rad_s": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "actuators": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steering_left", "steering_right", "drive_left", "drive_right"],
+      "properties": {
+        "steering_left": {"type": "string", "minLength": 1},
+        "steering_right": {"type": "string", "minLength": 1},
+        "drive_left": {"type": "string", "minLength": 1},
+        "drive_right": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
