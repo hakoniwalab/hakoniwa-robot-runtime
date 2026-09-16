@@ -401,6 +401,12 @@ position actuator と左右の drive velocity actuator へ変換します。車�
 }
 ```
 
+`update_rate_hz` は入力producerに期待する公称レートを記録し、設定値が正の有限値
+であることを検証するためのcontractです。Ackermann source/controllerをその周波数へ
+rate-limitする値ではありません。Runtimeは各physics stepで最新入力をpollし、最後に
+受信したcommandを`timeout_sec`まで有効として扱います。実際の送信周期はproducer側、
+physics周期とwall-clock pacingはPlant/Runner側がそれぞれ所有します。
+
 複数の Ackermann controller は同じ Runtime control group に属します。車両間で
 actuator ID が重複しなければ、各controllerのcommandは同時に選択され、1回の
 MuJoCo world stepで全車両が更新されます。
