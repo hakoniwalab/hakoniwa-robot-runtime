@@ -5,6 +5,11 @@
 #include "runtime/controller/joint_trajectory_controller.hpp"
 #include "runtime/controller/manual_controller.hpp"
 #include "runtime/controller/scalar_pdu_command_controller.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#include "runtime/controller/mirror_body_controller.hpp"
+#include "runtime/publisher/impulse_collision_publisher.hpp"
+#include "runtime/source/mirror_body_state_source.hpp"
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
 #include "runtime/controller/ackermann_controller.hpp"
 #include "runtime/publisher/multi_dof_joint_state_publisher.hpp"
@@ -25,7 +30,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     const JointTrajectoryEventReaderFactory& trajectory_reader_factory,
     const JoyEventReaderFactory& joy_reader_factory,
     const AckermannDriveEventReaderFactory& ackermann_reader_factory,
-    const MultiDofJointStateWriterFactory& multi_dof_writer_factory)
+    const MultiDofJointStateWriterFactory& multi_dof_writer_factory
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    , const MirrorBodyStateReaderFactory& mirror_reader_factory
+    , const ImpulseCollisionWriterFactory& impulse_writer_factory
+#endif
+    )
 {
     if (plant == nullptr) {
         throw std::invalid_argument("Actuator Plant must be provided");
@@ -42,6 +52,16 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     if (!definition.multi_dof_state_outputs.empty() && !multi_dof_writer_factory) {
         throw std::invalid_argument(
             "MultiDOF state writer factory is required by the Runtime definition");
+    }
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    if (!definition.mirror_bodies.empty() && !mirror_reader_factory) {
+        throw std::invalid_argument(
+            "Mirror state reader factory is required by the Runtime definition");
+    }
+    if (!definition.impulse_collision_outputs.empty() && !impulse_writer_factory) {
+        throw std::invalid_argument(
+            "Impulse writer factory is required by the Runtime definition");
     }
 #endif
     if (!definition.trajectory_controllers.empty()
@@ -67,7 +87,11 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     std::vector<std::shared_ptr<ICommandSource>> sources;
     std::vector<std::shared_ptr<IController>> controllers;
     std::vector<ControllerPriority> priorities;
-    sources.reserve(definition.actuators.size());
+    sources.reserve(definition.actuators.size()
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+        + definition.mirror_bodies.size()
+#endif
+        );
     controllers.reserve(
         definition.actuators.size()
         + definition.manual_controllers.size()
@@ -77,6 +101,10 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
         + 1);
     priorities.reserve(controllers.capacity());
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers;
+    mirror_controllers.reserve(definition.mirror_bodies.size());
+#endif
 
     constexpr const char* scalar_control_group = "scalar-pdu-direct";
 
@@ -102,6 +130,24 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
             actuator_config.command_type));
         priorities.push_back({controller_id, 0, scalar_control_group});
     }
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    for (const auto& mirror : definition.mirror_bodies) {
+        auto reader = mirror_reader_factory(mirror);
+        if (reader == nullptr) {
+            throw std::invalid_argument(
+                "Mirror reader factory returned null: " + mirror.component_id);
+        }
+        const std::string source_id = "mirror-pdu:" + mirror.component_id;
+        sources.push_back(std::make_shared<MirrorBodyStateSource>(
+            source_id, std::move(reader)));
+        mirror_controllers.push_back(std::make_shared<MirrorBodyController>(
+            mirror.component_id,
+            source_id,
+            mirror.mirror_id,
+            mirror.velocity_frame));
+    }
+#endif
 
     std::unordered_map<std::string, const RuntimeActuatorConfig*> actuator_by_id;
     for (const auto& actuator : definition.actuators) {
@@ -245,7 +291,11 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
 
     std::vector<std::shared_ptr<IStatePublisher>> publishers;
-    publishers.reserve(definition.state_outputs.size());
+    publishers.reserve(definition.state_outputs.size()
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+        + definition.impulse_collision_outputs.size()
+#endif
+        );
     for (const auto& output : definition.state_outputs) {
         auto writer = writer_factory(output);
         if (writer == nullptr) {
@@ -291,6 +341,25 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     (void)multi_dof_writer_factory;
 #endif
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    for (const auto& output : definition.impulse_collision_outputs) {
+        auto writer = impulse_writer_factory(output);
+        if (writer == nullptr) {
+            throw std::invalid_argument(
+                "Impulse writer factory returned null: " + output.component_id);
+        }
+        publishers.push_back(std::make_shared<ImpulseCollisionPublisher>(
+            output.component_id,
+            output.mirror_id,
+            ImpulseCollisionPolicy {
+                output.restitution_coefficient,
+                output.relative_normal_speed_threshold_mps,
+                output.cooldown_usec,
+            },
+            std::move(writer)));
+    }
+#endif
+
     auto arbiter = std::make_shared<PriorityCommandArbiter>(
         std::move(priorities));
     return std::make_unique<ActuatorRuntime>(
@@ -298,7 +367,11 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         std::move(controllers),
         std::move(arbiter),
         std::move(plant),
-        std::move(publishers));
+        std::move(publishers)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+        , std::move(mirror_controllers)
+#endif
+        );
 }
 
 } // namespace hakoniwa::robot_runtime::runtime

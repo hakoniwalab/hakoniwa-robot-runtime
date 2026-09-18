@@ -34,12 +34,19 @@ ActuatorRuntime::ActuatorRuntime(
     std::vector<std::shared_ptr<IController>> controllers,
     std::shared_ptr<ICommandArbiter> arbiter,
     std::shared_ptr<IActuatorPlant> plant,
-    std::vector<std::shared_ptr<IStatePublisher>> publishers)
+    std::vector<std::shared_ptr<IStatePublisher>> publishers
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    , std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers
+#endif
+    )
     : sources_(std::move(sources))
     , controllers_(std::move(controllers))
     , arbiter_(std::move(arbiter))
     , plant_(std::move(plant))
     , publishers_(std::move(publishers))
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    , mirror_controllers_(std::move(mirror_controllers))
+#endif
 {
     require_non_null(arbiter_, "command arbiter");
     require_non_null(plant_, "actuator plant");
@@ -81,6 +88,25 @@ ActuatorRuntime::ActuatorRuntime(
             throw std::invalid_argument("publisher IDs must be non-empty and unique");
         }
     }
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    std::unordered_set<std::string_view> mirror_controller_ids;
+    mirror_controller_ids.reserve(mirror_controllers_.size());
+    for (const auto& controller : mirror_controllers_) {
+        require_non_null(controller, "Mirror Controller");
+        if (controller->id().empty()
+            || controller_ids.contains(controller->id())
+            || !mirror_controller_ids.emplace(controller->id()).second) {
+            throw std::invalid_argument(
+                "Mirror Controller IDs must be non-empty and globally unique");
+        }
+        if (!source_ids.contains(controller->source_id())) {
+            throw std::invalid_argument(
+                "Mirror Controller references an unknown source: "
+                + std::string(controller->source_id()));
+        }
+    }
+#endif
 }
 
 RobotState ActuatorRuntime::read_current_state() const
@@ -164,10 +190,46 @@ std::vector<ControllerOutput> ActuatorRuntime::update_controllers(
 }
 
 RobotState ActuatorRuntime::step_plant(
-    const std::vector<ActuatorCommand>& commands)
+    const std::vector<ActuatorCommand>& commands
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    , const std::vector<MirrorBodyCommand>& mirror_commands
+#endif
+    )
 {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    return plant_->step(commands, mirror_commands);
+#else
     return plant_->step(commands);
+#endif
 }
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+std::vector<MirrorBodyCommand> ActuatorRuntime::update_mirror_controllers(
+    const ControllerInputMap& inputs,
+    const RuntimeStepContext& context,
+    std::vector<ComponentStatus>& statuses)
+{
+    std::vector<MirrorBodyCommand> commands;
+    commands.reserve(mirror_controllers_.size());
+    statuses.reserve(mirror_controllers_.size());
+    for (const auto& controller : mirror_controllers_) {
+        auto input = inputs.at(controller->source_id());
+        if (input != nullptr && !controller->accepts(*input)) {
+            input.reset();
+        }
+        auto output = controller->update(std::move(input), context);
+        if (output.controller_id != controller->id()) {
+            throw std::runtime_error(
+                "Mirror Controller output ID does not match controller ID");
+        }
+        statuses.push_back(output.status);
+        if (output.command.has_value()) {
+            commands.push_back(std::move(*output.command));
+        }
+    }
+    return commands;
+}
+#endif
 
 RuntimeStepContext ActuatorRuntime::complete_step(
     const RobotState& next_state,
@@ -210,11 +272,23 @@ RuntimeStepReport ActuatorRuntime::step()
     const auto outputs = update_controllers(
         inputs, current_state, context, report.controller_statuses);
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    // Mirror Controllers use a distinct output type. Their commands therefore
+    // cannot enter the arbitration input below.
+    report.mirror_commands = update_mirror_controllers(
+        inputs, context, report.mirror_controller_statuses);
+#endif
+
     // 5. Select one logical control strategy for this step.
     report.arbitration = arbiter_->arbitrate(outputs, current_state, context);
 
     // 6. Guard and apply the selected commands, then advance MuJoCo one step.
-    const auto next_state = step_plant(report.arbitration.selected_commands);
+    const auto next_state = step_plant(
+        report.arbitration.selected_commands
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+        , report.mirror_commands
+#endif
+        );
 
     // 7. Carry selection feedback forward. The next time comes from Plant state.
     report.next_step = complete_step(next_state, report.arbitration);
@@ -236,6 +310,11 @@ RobotState ActuatorRuntime::reset(const std::uint64_t simulation_time_usec)
     for (const auto& controller : controllers_) {
         controller->reset(state);
     }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    for (const auto& controller : mirror_controllers_) {
+        controller->reset();
+    }
+#endif
     for (const auto& publisher : publishers_) {
         publisher->reset();
     }

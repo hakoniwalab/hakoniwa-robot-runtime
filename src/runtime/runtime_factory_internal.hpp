@@ -69,5 +69,11 @@ struct RuntimeParseContext {
     RuntimeParseContext& context,
     RuntimeDefinition& definition,
     std::string* error);
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+[[nodiscard]] bool load_mirror_definitions(
+    RuntimeParseContext& context,
+    RuntimeDefinition& definition,
+    std::string* error);
+#endif
 
 } // namespace hakoniwa::robot_runtime::runtime::detail

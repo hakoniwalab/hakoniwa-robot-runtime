@@ -107,8 +107,10 @@ Runtime が現在標準で解釈する主な component は次です。
 | `controller` | `joint_trajectory_controller` | [3.2.1 joint_trajectory_controller](#321-joint_trajectory_controller) |
 | `controller` | `joy_manual_controller` | [3.2.2 joy_manual_controller](#322-joy_manual_controller) |
 | `controller` | `ackermann_controller` | [3.2.3 ackermann_controller](#323-ackermann_controller) |
+| `controller` | `mirror_body` | [3.2.4 mirror_body](#324-mirror_body) |
 | `state_output` | `joint_state` | [3.3.1 joint_state](#331-joint_state) |
 | `state_output` | `multi_dof_joint_state` | [3.3.2 multi_dof_joint_state](#332-multi_dof_joint_state) |
+| `state_output` | `impulse_collision` | [3.3.3 impulse_collision](#333-impulse_collision) |
 
 Robot Pack 固有の component type は上位側で追加できますが、Runtime core の標準 contract とは分けて管理します。
 
@@ -117,6 +119,11 @@ extensionです。これらを使うApplicationのビルドだけが
 `HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE=1` を定義し、対応するsourceと
 PDU adapterをリンクします。定義しない既存Applicationには、Ackermann固有の
 link dependencyやmanifest解釈を追加しません。
+
+`mirror_body` と `impulse_collision` も同様のopt-in extensionです。
+利用するApplicationだけが
+`HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR=1` を定義し、Mirror用source、
+controller、publisher、Endpoint adapterをリンクします。
 
 ## 3. Component Config — `components[].config` の内容
 
@@ -411,6 +418,56 @@ physics周期とwall-clock pacingはPlant/Runner側がそれぞれ所有しま�
 actuator ID が重複しなければ、各controllerのcommandは同時に選択され、1回の
 MuJoCo world stepで全車両が更新されます。
 
+<a id="324-mirror_body"></a>
+
+#### 3.2.4 `mirror_body`
+
+外部Plantが所有するbodyのpose / velocityを、本RuntimeのMuJoCo
+freejointへ反映します。Mirror commandはArbiterを経由しません。
+
+```json
+{
+  "$schema": "https://hakoniwa.dev/schemas/mirror-body-controller.schema.json",
+  "schema_version": 1,
+  "spec": {
+    "mirror_id": "Drone-1"
+  },
+  "input": {
+    "pose": {
+      "pdu_name": "pos",
+      "message_type": "geometry_msgs/Twist"
+    },
+    "velocity": {
+      "pdu_name": "velocity",
+      "message_type": "geometry_msgs/Twist",
+      "frame": "body"
+    }
+  },
+  "mjcf_binding": {
+    "freejoint": "drone_1_freejoint",
+    "contact_bodies": [
+      {"body_id": "Car-1", "mjcf_freejoint": "car_1_base_freejoint"}
+    ]
+  }
+}
+```
+
+- `pose` は必須です。`Twist.linear` をposition、`Twist.angular` を
+  XYZ Euler angleとして扱います。
+- `velocity` は任意です。指定時は `frame` に `world` または `body` を
+  明示します。外部Droneとの標準契約、およびDrone Core / Proの `velocity`
+  PDUは `body` です。Runtimeは
+  MuJoCo freejoint用のworld-frame並進速度 / body-frame角速度へ正規化します。
+  省略時はposeのPlant simulation-time差分から並進・角速度を推定します。
+- `contact_bodies` はImpulse対象となるlocal physical bodyを明示します。
+  ここに無いEnvironmentや他Mirrorとの接触はImpulse対象になりません。
+
+Schema:
+
+```text
+schemas/components/mirror-body-controller.schema.json
+```
+
 ### 3.3 `state_output`
 
 <a id="7-jointstate-output-config"></a>
@@ -518,6 +575,42 @@ JointState output schema は現在 `hakoniwa-mujoco-robots` 側にも既存 sche
 
 PDUは車両種別を持ちません。名前とPDU channelからモデルを選択する責務は
 Three.js等のapplication側に残します。
+
+<a id="333-impulse_collision"></a>
+
+#### 3.3.3 `impulse_collision`
+
+`mirror_body` が検出したlocal physical bodyとの接触を
+`hako_msgs/ImpulseCollision` として外部Plantへ送信します。
+
+```json
+{
+  "$schema": "https://hakoniwa.dev/schemas/impulse-collision-output.schema.json",
+  "schema_version": 1,
+  "spec": {
+    "mirror_component": "drone-1-mirror"
+  },
+  "pdu_config": {
+    "pdu_name": "impulse",
+    "message_type": "hako_msgs/ImpulseCollision"
+  },
+  "policy": {
+    "restitution_coefficient": 0.3,
+    "relative_normal_speed_threshold_mps": 0.2,
+    "cooldown_sec": 0.1
+  }
+}
+```
+
+`spec.mirror_component` は同じManifestの `controller/mirror_body` component IDを
+参照します。Impulseは接触開始時に1回だけ送信し、接触継続中は
+再送信しません。`cooldown_sec` はPlant simulation timeで判定します。
+
+Schema:
+
+```text
+schemas/components/impulse-collision-output.schema.json
+```
 
 <a id="3-runtime-config"></a>
 

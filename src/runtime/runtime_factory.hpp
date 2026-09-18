@@ -9,6 +9,10 @@
 #include "runtime/source/joy_command_source.hpp"
 #include "runtime/source/scalar_pdu_command_source.hpp"
 #include "runtime/source/ackermann_drive_command_source.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#include "runtime/publisher/impulse_collision_publisher.hpp"
+#include "runtime/source/mirror_body_state_source.hpp"
+#endif
 
 #include <functional>
 #include <memory>
@@ -30,6 +34,13 @@ using JoyEventReaderFactory = std::function<
 using AckermannDriveEventReaderFactory = std::function<
     std::shared_ptr<IAckermannDriveEventReader>(
         const RuntimeAckermannControllerConfig&)>;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+using MirrorBodyStateReaderFactory = std::function<
+    std::shared_ptr<IMirrorBodyStateReader>(const RuntimeMirrorBodyConfig&)>;
+using ImpulseCollisionWriterFactory = std::function<
+    std::shared_ptr<IImpulseCollisionWriter>(
+        const RuntimeImpulseCollisionOutputConfig&)>;
+#endif
 
 /**
  * Builds one ActuatorRuntime from an already-resolved RuntimeDefinition and
@@ -48,6 +59,11 @@ using AckermannDriveEventReaderFactory = std::function<
     const JointTrajectoryEventReaderFactory& trajectory_reader_factory = {},
     const JoyEventReaderFactory& joy_reader_factory = {},
     const AckermannDriveEventReaderFactory& ackermann_reader_factory = {},
-    const MultiDofJointStateWriterFactory& multi_dof_writer_factory = {});
+    const MultiDofJointStateWriterFactory& multi_dof_writer_factory = {}
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    , const MirrorBodyStateReaderFactory& mirror_reader_factory = {}
+    , const ImpulseCollisionWriterFactory& impulse_writer_factory = {}
+#endif
+    );
 
 } // namespace hakoniwa::robot_runtime::runtime

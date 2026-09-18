@@ -123,6 +123,37 @@ struct RuntimeAckermannControllerConfig {
     RuntimeAckermannActuatorBindings actuators;
 };
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+struct RuntimeMirrorContactBodyBinding {
+    std::string body_id;
+    std::string mjcf_freejoint;
+};
+
+struct RuntimeMirrorBodyConfig {
+    std::string component_id;
+    std::string config_path;
+    std::string mirror_id;
+    std::string pdu_robot;
+    std::string pose_pdu_name;
+    std::optional<std::string> velocity_pdu_name;
+    MirrorVelocityFrame velocity_frame {MirrorVelocityFrame::World};
+    std::string mjcf_freejoint;
+    std::vector<RuntimeMirrorContactBodyBinding> contact_bodies;
+};
+
+struct RuntimeImpulseCollisionOutputConfig {
+    std::string component_id;
+    std::string config_path;
+    std::string mirror_component_id;
+    std::string mirror_id;
+    std::string pdu_robot;
+    std::string pdu_name;
+    double restitution_coefficient {0.3};
+    double relative_normal_speed_threshold_mps {0.2};
+    std::uint64_t cooldown_usec {100'000};
+};
+#endif
+
 /**
  * Resolved Runtime-local definition produced from the declarative manifest.
  *
@@ -138,6 +169,10 @@ struct RuntimeDefinition {
     std::vector<RuntimeTrajectoryControllerConfig> trajectory_controllers;
     std::vector<RuntimeManualControllerConfig> manual_controllers;
     std::vector<RuntimeAckermannControllerConfig> ackermann_controllers;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    std::vector<RuntimeMirrorBodyConfig> mirror_bodies;
+    std::vector<RuntimeImpulseCollisionOutputConfig> impulse_collision_outputs;
+#endif
 };
 
 } // namespace hakoniwa::robot_runtime::runtime

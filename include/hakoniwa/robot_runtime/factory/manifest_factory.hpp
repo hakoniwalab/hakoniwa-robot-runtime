@@ -13,6 +13,8 @@ struct ManifestFactoryConfig {
     std::string asset_name;
     std::string endpoint_name;
     std::uint64_t realtime_sync_cycle_msec {0};
+    /** True for standalone assets; false when another asset owns Conductor. */
+    bool owns_conductor {true};
 };
 
 /**

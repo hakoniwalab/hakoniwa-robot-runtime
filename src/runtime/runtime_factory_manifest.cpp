@@ -260,7 +260,12 @@ bool resolve_runtime_definition(
             context, definition, error_message)
 #endif
         || !detail::load_state_output_definitions(
-            context, definition, error_message)) {
+            context, definition, error_message)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+        || !detail::load_mirror_definitions(
+            context, definition, error_message)
+#endif
+        ) {
         return false;
     }
 

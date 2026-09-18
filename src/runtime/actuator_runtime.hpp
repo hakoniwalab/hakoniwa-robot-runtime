@@ -5,6 +5,9 @@
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/publisher/state_publisher.hpp"
 #include "runtime/source/command_source.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#include "runtime/controller/mirror_body_controller.hpp"
+#endif
 
 #include <memory>
 #include <optional>
@@ -22,6 +25,10 @@ struct RuntimeStepReport {
     std::vector<ComponentStatus> controller_statuses;
     ArbitrationResult arbitration;
     std::vector<ComponentStatus> publisher_statuses;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    std::vector<ComponentStatus> mirror_controller_statuses;
+    std::vector<MirrorBodyCommand> mirror_commands;
+#endif
 };
 
 /**
@@ -35,7 +42,11 @@ public:
         std::vector<std::shared_ptr<IController>> controllers,
         std::shared_ptr<ICommandArbiter> arbiter,
         std::shared_ptr<IActuatorPlant> plant,
-        std::vector<std::shared_ptr<IStatePublisher>> publishers);
+        std::vector<std::shared_ptr<IStatePublisher>> publishers
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+        , std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers = {}
+#endif
+        );
 
     /** Runs exactly one Source -> Controller -> Arbiter -> Plant -> Publish step. */
     [[nodiscard]] RuntimeStepReport step();
@@ -63,7 +74,17 @@ private:
         const RuntimeStepContext& context,
         std::vector<ComponentStatus>& statuses);
     [[nodiscard]] RobotState step_plant(
-        const std::vector<ActuatorCommand>& commands);
+        const std::vector<ActuatorCommand>& commands
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+        , const std::vector<MirrorBodyCommand>& mirror_commands
+#endif
+        );
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    [[nodiscard]] std::vector<MirrorBodyCommand> update_mirror_controllers(
+        const ControllerInputMap& inputs,
+        const RuntimeStepContext& context,
+        std::vector<ComponentStatus>& statuses);
+#endif
     [[nodiscard]] RuntimeStepContext complete_step(
         const RobotState& next_state,
         const ArbitrationResult& arbitration);
@@ -77,6 +98,9 @@ private:
     std::shared_ptr<ICommandArbiter> arbiter_;
     std::shared_ptr<IActuatorPlant> plant_;
     std::vector<std::shared_ptr<IStatePublisher>> publishers_;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers_;
+#endif
     std::optional<std::string> previous_selected_control_id_;
     std::vector<ActuatorCommand> previous_selected_commands_;
 };

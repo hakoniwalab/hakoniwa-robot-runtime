@@ -206,9 +206,11 @@ int HakoniwaRunner::start()
         return 1;
     }
 
-    const auto delta_time_usec = impl_->resources.plant->delta_time_usec();
-    hako_conductor_start(static_cast<hako_time_t>(delta_time_usec), 100000);
-    impl_->conductor_started = true;
+    if (impl_->config.owns_conductor) {
+        const auto delta_time_usec = impl_->resources.plant->delta_time_usec();
+        hako_conductor_start(static_cast<hako_time_t>(delta_time_usec), 100000);
+        impl_->conductor_started = true;
+    }
 
     if (impl_->driver->register_asset() != 0) {
         std::cerr << "[ERROR] Failed to register Hakoniwa Asset." << std::endl;

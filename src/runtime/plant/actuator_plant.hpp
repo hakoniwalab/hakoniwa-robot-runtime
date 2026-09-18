@@ -39,6 +39,20 @@ public:
     [[nodiscard]] virtual RobotState step(
         const std::vector<ActuatorCommand>& commands) = 0;
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    /**
+     * Applies the structurally separate Mirror path before advancing physics.
+     * The default keeps non-Mirror Plant implementations source-compatible.
+     */
+    [[nodiscard]] virtual RobotState step(
+        const std::vector<ActuatorCommand>& commands,
+        const std::vector<MirrorBodyCommand>& mirror_commands)
+    {
+        (void)mirror_commands;
+        return step(commands);
+    }
+#endif
+
     /**
      * Resets physical state while setting the backend's actual simulation time.
      * Core reset uses zero; local Viewer reset may preserve the current Asset time.

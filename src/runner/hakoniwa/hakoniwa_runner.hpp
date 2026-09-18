@@ -25,6 +25,8 @@ struct HakoniwaRunnerConfig {
     std::string asset_name;
     std::string pdu_definition_path;
     std::uint64_t realtime_sync_cycle_msec {0};
+    /** Start/stop a local Conductor. False joins an externally owned one. */
+    bool owns_conductor {true};
 };
 
 /** Runs one pre-composed ActuatorRuntime as a Hakoniwa Asset. */

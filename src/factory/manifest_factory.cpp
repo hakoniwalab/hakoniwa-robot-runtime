@@ -5,6 +5,10 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/joint_state_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/joint_trajectory_pdu_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/joy_pdu_event_reader.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#include "hakoniwa/robot_runtime/adapters/endpoint/impulse_collision_pdu_writer.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/mirror_body_twist_pdu_reader.hpp"
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_pdu_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/multi_dof_joint_state_pdu_writer.hpp"
@@ -124,6 +128,26 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         output.pdu_robot,
                         output.pdu_name);
                 }
+#elif defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+                , {}, {}
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+                ,
+                [&](const runtime::RuntimeMirrorBodyConfig& mirror) {
+                    return std::make_shared<
+                        adapters::hakoniwa::MirrorBodyTwistPduReader>(
+                        *endpoint,
+                        mirror.pdu_robot,
+                        mirror.pose_pdu_name,
+                        mirror.velocity_pdu_name);
+                },
+                [&](const runtime::RuntimeImpulseCollisionOutputConfig& output) {
+                    return std::make_shared<
+                        adapters::hakoniwa::ImpulseCollisionPduWriter>(
+                        *endpoint,
+                        output.pdu_robot,
+                        output.pdu_name);
+                }
 #endif
                 );
 
@@ -144,6 +168,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             asset_name,
             manifest.pdu_definition_path,
             config.realtime_sync_cycle_msec,
+            config.owns_conductor,
         });
 }
 

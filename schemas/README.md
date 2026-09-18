@@ -8,6 +8,8 @@ Current Runtime-owned schemas:
 - `components/joy-manual-controller.schema.json`
 - `components/ackermann-controller.schema.json`
 - `components/multi-dof-joint-state-output.schema.json`
+- `components/mirror-body-controller.schema.json`
+- `components/impulse-collision-output.schema.json`
 - `input/logical-joy-layout.schema.json`
 - `runtime/actuator-runtime.schema.json`
 

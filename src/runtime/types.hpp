@@ -82,6 +82,46 @@ struct QuaternionState {
     double w {1.0};
 };
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+struct EulerState {
+    double roll {0.0};
+    double pitch {0.0};
+    double yaw {0.0};
+};
+
+enum class MirrorVelocityFrame {
+    World,
+    Body,
+};
+
+/** Backend-independent state command for one externally owned Mirror body. */
+struct MirrorBodyCommand {
+    std::string mirror_id;
+    Vector3State position;
+    EulerState orientation;
+    Vector3State linear_velocity;
+    Vector3State angular_velocity;
+    std::uint64_t created_at_usec {0};
+};
+
+/** One post-physics contact between a Mirror and a local physical body. */
+struct MirrorContactState {
+    std::string mirror_id;
+    std::string local_body_id;
+    /** MuJoCo-compatible signed distance; the smallest value is deepest. */
+    double distance_m {0.0};
+    double relative_normal_speed_mps {0.0};
+    Vector3State self_contact_vector;
+    Vector3State normal;
+    Vector3State target_contact_vector;
+    Vector3State target_velocity;
+    Vector3State target_angular_velocity;
+    EulerState target_euler;
+    Vector3State target_inertia;
+    double target_mass {0.0};
+};
+#endif
+
 struct BodyState {
     std::string body_id;
     Vector3State position;
@@ -96,6 +136,9 @@ struct RobotState {
     std::vector<ActuatorState> actuators;
     std::uint64_t sample_time_usec {0};
     std::vector<BodyState> bodies;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+    std::vector<MirrorContactState> mirror_contacts;
+#endif
 };
 
 /** Inclusive scalar command limits in the unit selected by command type. */
