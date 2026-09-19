@@ -1,6 +1,7 @@
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -9,6 +10,51 @@ using namespace hakoniwa::robot_runtime;
 namespace fs = std::filesystem;
 
 namespace {
+
+constexpr double epsilon = 1.0e-9;
+
+void test_initial_body_pose_survives_reset()
+{
+    const fs::path model_path =
+        fs::temp_directory_path() / "hakoniwa-initial-body-pose-test.xml";
+    {
+        std::ofstream model(model_path);
+        assert(model.is_open());
+        model << R"(<mujoco model="initial-body-pose-test">
+  <option timestep="0.001" gravity="0 0 0"/>
+  <worldbody>
+    <body name="car" pos="0 0 0.42">
+      <freejoint name="car_freejoint"/>
+      <geom type="sphere" size="0.1" mass="1"/>
+    </body>
+  </worldbody>
+</mujoco>)";
+    }
+
+    runtime::RuntimeDefinition definition;
+    definition.model_path = model_path.string();
+    definition.initial_body_poses.push_back({
+        "car_freejoint", {7.5, -45.0, 6.253847}, {0.0, 0.0, 0.75},
+    });
+    definition.multi_dof_state_outputs.push_back({
+        .component_id = "vehicle_states",
+        .bodies = {{"Car-1", "Car-1", "car_freejoint"}},
+    });
+
+    adapters::mujoco::MujocoActuatorPlant plant(definition);
+    const auto assert_pose = [](const runtime::RobotState& state) {
+        assert(state.bodies.size() == 1);
+        const auto& body = state.bodies.front();
+        assert(std::abs(body.position.x - 7.5) < epsilon);
+        assert(std::abs(body.position.y + 45.0) < epsilon);
+        assert(std::abs(body.position.z - 6.253847) < epsilon);
+        assert(std::abs(body.orientation.z - std::sin(0.75 / 2.0)) < epsilon);
+        assert(std::abs(body.orientation.w - std::cos(0.75 / 2.0)) < epsilon);
+    };
+    assert_pose(plant.read_state());
+    assert_pose(plant.reset());
+    fs::remove(model_path);
+}
 
 void test_mirror_application_and_contact_extraction()
 {
@@ -68,6 +114,7 @@ void test_mirror_application_and_contact_extraction()
 
 int main()
 {
+    test_initial_body_pose_survives_reset();
     test_mirror_application_and_contact_extraction();
     return 0;
 }

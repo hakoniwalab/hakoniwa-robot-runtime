@@ -650,6 +650,31 @@ runtime_config.actuators.<id>.command_timeout_sec
 
 Runtime は独立した wall-clock を Source of Truth とせず、Plant の simulation time に基づいて command expiration を判定します。
 
+### 4.2 `initial_body_poses`
+
+`initial_body_poses`は、MuJoCo modelをロードした後にfreejointへ適用する
+任意の初期姿勢です。大規模なMJBを再生成せず、車両などの開始位置を
+実行ごとに変更する用途を想定しています。
+
+```json
+{
+  "initial_body_poses": [
+    {
+      "mjcf_freejoint": "car_1_base_freejoint",
+      "position_m": [7.5, -45.0, 6.25],
+      "orientation_rpy_rad": [0.0, 0.0, -3.626]
+    }
+  ]
+}
+```
+
+`position_m`と`orientation_rpy_rad`はMuJoCo world frameで指定します。
+RuntimeはMJBを変更せず、指定した姿勢をdataの`qpos`へ設定して
+`mj_forward()`を実行します。reset時は`mj_resetData()`後に再適用するため、
+起動時だけでなくHakoniwa reset後も
+同じ姿勢へ戻ります。対象jointはMuJoCo freejointでなければならず、同じ
+freejointを複数回指定できません。
+
 Schema:
 
 ```text

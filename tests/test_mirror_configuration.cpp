@@ -49,6 +49,11 @@ void test_mirror_configuration_contract()
     const auto runtime_path = root / "runtime.json";
     write_json(runtime_path, {
         {"actuators", {{"joint1", {{"command_timeout_sec", 0.1}}}}},
+        {"initial_body_poses", json::array({{
+            {"mjcf_freejoint", "car_1_freejoint"},
+            {"position_m", json::array({7.5, -45.0, 6.25})},
+            {"orientation_rpy_rad", json::array({0.0, 0.0, 0.75})},
+        }})},
     });
     const auto actuator_path = root / "actuator.json";
     write_json(actuator_path, {
@@ -124,6 +129,11 @@ void test_mirror_configuration_contract()
     std::string error;
     assert(resolve_runtime_definition(input, definition, &error));
     assert(error.empty());
+    assert(definition.initial_body_poses.size() == 1);
+    assert(definition.initial_body_poses[0].mjcf_freejoint
+        == "car_1_freejoint");
+    assert(definition.initial_body_poses[0].position.z == 6.25);
+    assert(definition.initial_body_poses[0].rpy_rad[2] == 0.75);
     assert(definition.mirror_bodies.size() == 1);
     assert(definition.mirror_bodies[0].mirror_id == "Drone-1");
     assert(definition.mirror_bodies[0].velocity_pdu_name == "velocity");

@@ -113,6 +113,11 @@ public:
                 "MuJoCo model did not create model/data state");
         }
         delta_time_usec = model_step_usec(model);
+        initial_body_poses = definition.initial_body_poses;
+        apply_initial_body_poses();
+        if (!initial_body_poses.empty()) {
+            mj_forward(model, world->getData());
+        }
         bindings.reserve(definition.actuators.size());
         for (const auto& config : definition.actuators) {
             if (binding_by_id.contains(config.component_id)) {
@@ -217,6 +222,30 @@ public:
             mirror_bindings.push_back(std::move(mirror));
         }
 #endif
+    }
+
+    void apply_initial_body_poses()
+    {
+        auto* model = world->getModel();
+        auto* data = world->getData();
+        for (const auto& pose : initial_body_poses) {
+            const int joint_id = require_named_id(
+                model, mjOBJ_JOINT, pose.mjcf_freejoint,
+                "initial body pose freejoint");
+            if (model->jnt_type[joint_id] != mjJNT_FREE) {
+                throw std::invalid_argument(
+                    "initial body pose binding is not a freejoint: "
+                    + pose.mjcf_freejoint);
+            }
+            const int qpos = model->jnt_qposadr[joint_id];
+            data->qpos[qpos] = pose.position.x;
+            data->qpos[qpos + 1] = pose.position.y;
+            data->qpos[qpos + 2] = pose.position.z;
+            mjtNum euler[3] {
+                pose.rpy_rad[0], pose.rpy_rad[1], pose.rpy_rad[2],
+            };
+            mju_euler2Quat(data->qpos + qpos + 3, euler, "XYZ");
+        }
     }
 
     runtime::RobotState state() const
@@ -483,6 +512,7 @@ public:
     }
 
     std::shared_ptr<hako::robots::physics::impl::WorldImpl> world;
+    std::vector<runtime::RuntimeInitialBodyPoseConfig> initial_body_poses;
     std::vector<Binding> bindings;
     std::vector<BodyBinding> body_bindings;
     std::unordered_map<std::string, std::size_t> binding_by_id;
@@ -579,6 +609,7 @@ runtime::RobotState MujocoActuatorPlant::reset(
     }
     auto* data = impl_->world->getData();
     mj_resetData(impl_->world->getModel(), data);
+    impl_->apply_initial_body_poses();
     data->time =
         static_cast<double>(simulation_time_usec) / 1'000'000.0;
     mj_forward(impl_->world->getModel(), data);

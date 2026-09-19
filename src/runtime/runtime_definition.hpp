@@ -2,6 +2,7 @@
 
 #include "runtime/types.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -9,6 +10,12 @@
 #include <vector>
 
 namespace hakoniwa::robot_runtime::runtime {
+
+struct RuntimeInitialBodyPoseConfig {
+    std::string mjcf_freejoint;
+    Vector3State position;
+    std::array<double, 3> rpy_rad {0.0, 0.0, 0.0};
+};
 
 struct RuntimeActuatorConfig {
     std::string component_id;
@@ -163,6 +170,7 @@ struct RuntimeImpulseCollisionOutputConfig {
  */
 struct RuntimeDefinition {
     std::string model_path;
+    std::vector<RuntimeInitialBodyPoseConfig> initial_body_poses;
     std::vector<RuntimeActuatorConfig> actuators;
     std::vector<RuntimeStateOutputConfig> state_outputs;
     std::vector<RuntimeMultiDofStateOutputConfig> multi_dof_state_outputs;

@@ -1,10 +1,79 @@
 #include "runtime/runtime_factory_internal.hpp"
 
+#include <cmath>
 #include <fstream>
 #include <unordered_set>
 #include <utility>
 
 namespace hakoniwa::robot_runtime::runtime::detail {
+
+namespace {
+
+bool load_number_triplet(
+    const json& object,
+    const char* field,
+    std::array<double, 3>& output,
+    std::string* error)
+{
+    if (!object.contains(field) || !object.at(field).is_array()
+        || object.at(field).size() != output.size()) {
+        return fail(error,
+            std::string("initial body pose requires a three-number array: ")
+            + field);
+    }
+    for (std::size_t index = 0; index < output.size(); ++index) {
+        const auto& value = object.at(field).at(index);
+        if (!value.is_number()) {
+            return fail(error,
+                std::string("initial body pose contains a non-number: ")
+                + field);
+        }
+        output[index] = value.get<double>();
+        if (!std::isfinite(output[index])) {
+            return fail(error,
+                std::string("initial body pose contains a non-finite value: ")
+                + field);
+        }
+    }
+    return true;
+}
+
+bool load_initial_body_poses(
+    const json& runtime_root,
+    RuntimeDefinition& definition,
+    std::string* error)
+{
+    if (!runtime_root.contains("initial_body_poses")) {
+        return true;
+    }
+    const auto& poses = runtime_root.at("initial_body_poses");
+    if (!poses.is_array()) {
+        return fail(error, "initial_body_poses must be an array");
+    }
+    std::unordered_set<std::string> freejoints;
+    for (const auto& pose : poses) {
+        RuntimeInitialBodyPoseConfig config;
+        std::array<double, 3> position {};
+        if (!required_string(
+                pose, "mjcf_freejoint", config.mjcf_freejoint,
+                error, "initial body pose")
+            || !load_number_triplet(pose, "position_m", position, error)
+            || !load_number_triplet(
+                pose, "orientation_rpy_rad", config.rpy_rad, error)) {
+            return false;
+        }
+        if (!freejoints.insert(config.mjcf_freejoint).second) {
+            return fail(error,
+                "duplicate initial body pose freejoint: "
+                + config.mjcf_freejoint);
+        }
+        config.position = {position[0], position[1], position[2]};
+        definition.initial_body_poses.push_back(std::move(config));
+    }
+    return true;
+}
+
+} // namespace
 
 bool fail(std::string* error, std::string message)
 {
@@ -249,7 +318,9 @@ bool resolve_runtime_definition(
 
     RuntimeDefinition definition;
     definition.model_path = input.model_path;
-    if (!detail::load_actuator_definitions(
+    if (!detail::load_initial_body_poses(
+            context.runtime_root, definition, error_message)
+        || !detail::load_actuator_definitions(
             context, definition, error_message)
         || !detail::load_trajectory_definitions(
             context, definition, error_message)

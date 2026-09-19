@@ -7,6 +7,29 @@
   "required": ["actuators"],
   "properties": {
     "$schema": { "type": "string" },
+    "initial_body_poses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mjcf_freejoint", "position_m", "orientation_rpy_rad"],
+        "properties": {
+          "mjcf_freejoint": { "type": "string", "minLength": 1 },
+          "position_m": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": { "type": "number" }
+          },
+          "orientation_rpy_rad": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": { "type": "number" }
+          }
+        }
+      }
+    },
     "actuators": {
       "type": "object",
       "minProperties": 1,
