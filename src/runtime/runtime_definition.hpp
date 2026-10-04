@@ -130,7 +130,7 @@ struct RuntimeAckermannControllerConfig {
     RuntimeAckermannActuatorBindings actuators;
 };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 struct RuntimeMirrorContactBodyBinding {
     std::string body_id;
     std::string mjcf_freejoint;
@@ -159,6 +159,19 @@ struct RuntimeImpulseCollisionOutputConfig {
     double relative_normal_speed_threshold_mps {0.2};
     std::uint64_t cooldown_usec {100'000};
 };
+
+/** Plant Directive controller that sets the sliding friction of named geoms. */
+struct RuntimeGeomFrictionConfig {
+    std::string component_id;
+    std::string config_path;
+    std::string pdu_robot;
+    std::string pdu_name;
+    /**
+     * MuJoCo geoms whose sliding friction is set. Which friction wins in a
+     * contact is decided by the model (geom priority), not by the Runtime.
+     */
+    std::vector<std::string> geoms;
+};
 #endif
 
 /**
@@ -177,9 +190,10 @@ struct RuntimeDefinition {
     std::vector<RuntimeTrajectoryControllerConfig> trajectory_controllers;
     std::vector<RuntimeManualControllerConfig> manual_controllers;
     std::vector<RuntimeAckermannControllerConfig> ackermann_controllers;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<RuntimeMirrorBodyConfig> mirror_bodies;
     std::vector<RuntimeImpulseCollisionOutputConfig> impulse_collision_outputs;
+    std::vector<RuntimeGeomFrictionConfig> geom_frictions;
 #endif
 };
 

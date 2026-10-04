@@ -27,10 +27,9 @@ public:
     [[nodiscard]] runtime::RobotState read_state() const override;
     [[nodiscard]] runtime::RobotState step(
         const std::vector<runtime::ActuatorCommand>& commands) override;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    [[nodiscard]] runtime::RobotState step(
-        const std::vector<runtime::ActuatorCommand>& commands,
-        const std::vector<runtime::MirrorBodyCommand>& mirror_commands) override;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    void apply_directives(
+        const runtime::PlantDirectiveList& directives) override;
 #endif
     [[nodiscard]] runtime::RobotState reset(
         std::uint64_t simulation_time_usec = 0) override;

@@ -332,8 +332,10 @@ bool resolve_runtime_definition(
 #endif
         || !detail::load_state_output_definitions(
             context, definition, error_message)
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         || !detail::load_mirror_definitions(
+            context, definition, error_message)
+        || !detail::load_geom_friction_definitions(
             context, definition, error_message)
 #endif
         ) {

@@ -1,6 +1,9 @@
 #pragma once
 
 #include "runtime/types.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+#include "runtime/plant/plant_directive.hpp"
+#endif
 
 #include <cstdint>
 #include <vector>
@@ -39,17 +42,20 @@ public:
     [[nodiscard]] virtual RobotState step(
         const std::vector<ActuatorCommand>& commands) = 0;
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     /**
-     * Applies the structurally separate Mirror path before advancing physics.
-     * The default keeps non-Mirror Plant implementations source-compatible.
+     * Applies the structurally separate Plant Directive path.
+     *
+     * ActuatorRuntime calls this once per step after arbitration and right
+     * before step(commands), so directive effects (for example a Mirror pose or
+     * a geom friction change) are in place before physics advances. The list
+     * mixes directive kinds; each backend applier picks only its own kind with
+     * directives_of<T>() and ignores unknown kinds. The default is a no-op so
+     * Plant implementations without directive support stay source-compatible.
      */
-    [[nodiscard]] virtual RobotState step(
-        const std::vector<ActuatorCommand>& commands,
-        const std::vector<MirrorBodyCommand>& mirror_commands)
+    virtual void apply_directives(const PlantDirectiveList& directives)
     {
-        (void)mirror_commands;
-        return step(commands);
+        (void)directives;
     }
 #endif
 

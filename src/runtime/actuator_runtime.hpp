@@ -5,8 +5,8 @@
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/publisher/state_publisher.hpp"
 #include "runtime/source/command_source.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-#include "runtime/controller/mirror_body_controller.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+#include "runtime/controller/directive_controller.hpp"
 #endif
 
 #include <memory>
@@ -25,15 +25,20 @@ struct RuntimeStepReport {
     std::vector<ComponentStatus> controller_statuses;
     ArbitrationResult arbitration;
     std::vector<ComponentStatus> publisher_statuses;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    std::vector<ComponentStatus> mirror_controller_statuses;
-    std::vector<MirrorBodyCommand> mirror_commands;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    std::vector<ComponentStatus> directive_controller_statuses;
+    /** Mixed Plant Directives of this step; never part of `arbitration`. */
+    PlantDirectiveList plant_directives;
 #endif
 };
 
 /**
  * Orchestrates the five Runtime responsibilities for exactly one simulation
  * step: CommandSource -> Controller -> Arbiter -> Plant -> Publisher.
+ *
+ * With the opt-in Plant Directive path, non-arbitrated directive Controllers
+ * run next to the arbitrated Controllers and their directives are handed to
+ * the Plant via apply_directives() right before step().
  */
 class ActuatorRuntime final {
 public:
@@ -43,8 +48,8 @@ public:
         std::shared_ptr<ICommandArbiter> arbiter,
         std::shared_ptr<IActuatorPlant> plant,
         std::vector<std::shared_ptr<IStatePublisher>> publishers
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-        , std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers = {}
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+        , std::vector<std::shared_ptr<IDirectiveController>> directive_controllers = {}
 #endif
         );
 
@@ -75,12 +80,12 @@ private:
         std::vector<ComponentStatus>& statuses);
     [[nodiscard]] RobotState step_plant(
         const std::vector<ActuatorCommand>& commands
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-        , const std::vector<MirrorBodyCommand>& mirror_commands
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+        , const PlantDirectiveList& directives
 #endif
         );
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    [[nodiscard]] std::vector<MirrorBodyCommand> update_mirror_controllers(
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    [[nodiscard]] PlantDirectiveList update_directive_controllers(
         const ControllerInputMap& inputs,
         const RuntimeStepContext& context,
         std::vector<ComponentStatus>& statuses);
@@ -98,8 +103,8 @@ private:
     std::shared_ptr<ICommandArbiter> arbiter_;
     std::shared_ptr<IActuatorPlant> plant_;
     std::vector<std::shared_ptr<IStatePublisher>> publishers_;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers_;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    std::vector<std::shared_ptr<IDirectiveController>> directive_controllers_;
 #endif
     std::optional<std::string> previous_selected_control_id_;
     std::vector<ActuatorCommand> previous_selected_commands_;

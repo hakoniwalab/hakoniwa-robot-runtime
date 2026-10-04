@@ -1,6 +1,6 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/impulse_collision_pdu_writer.hpp"
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 
 #include "hako_msgs/pdu_cpptype_ImpulseCollision.hpp"
 #include "hako_msgs/pdu_cpptype_conv_ImpulseCollision.hpp"

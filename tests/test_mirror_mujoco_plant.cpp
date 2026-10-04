@@ -4,6 +4,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 
 using namespace hakoniwa::robot_runtime;
@@ -96,7 +97,9 @@ void test_mirror_application_and_contact_extraction()
     command.linear_velocity = {1.0, 0.0, 0.0};
     command.created_at_usec = 0;
 
-    const auto state = plant.step({}, {command});
+    plant.apply_directives({
+        std::make_shared<const runtime::MirrorBodyDirective>(command)});
+    const auto state = plant.step({});
     assert(state.sample_time_usec == 1'000);
     assert(!state.mirror_contacts.empty());
     for (const auto& contact : state.mirror_contacts) {
