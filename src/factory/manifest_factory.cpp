@@ -178,6 +178,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             manifest.pdu_definition_path,
             config.realtime_sync_cycle_msec,
             config.owns_conductor,
+            config.conductor_max_delay_usec,
         });
 }
 
