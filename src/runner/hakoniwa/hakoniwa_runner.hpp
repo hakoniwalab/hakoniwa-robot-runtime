@@ -27,6 +27,8 @@ struct HakoniwaRunnerConfig {
     std::uint64_t realtime_sync_cycle_msec {0};
     /** Start/stop a local Conductor. False joins an externally owned one. */
     bool owns_conductor {true};
+    /** The local Conductor's max_delay (used only when owns_conductor). */
+    std::uint64_t conductor_max_delay_usec {100000};
 };
 
 /** Runs one pre-composed ActuatorRuntime as a Hakoniwa Asset. */

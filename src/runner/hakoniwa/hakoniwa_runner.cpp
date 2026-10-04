@@ -208,7 +208,9 @@ int HakoniwaRunner::start()
 
     if (impl_->config.owns_conductor) {
         const auto delta_time_usec = impl_->resources.plant->delta_time_usec();
-        hako_conductor_start(static_cast<hako_time_t>(delta_time_usec), 100000);
+        hako_conductor_start(
+            static_cast<hako_time_t>(delta_time_usec),
+            static_cast<hako_time_t>(impl_->config.conductor_max_delay_usec));
         impl_->conductor_started = true;
     }
 

@@ -15,6 +15,11 @@ struct ManifestFactoryConfig {
     std::uint64_t realtime_sync_cycle_msec {0};
     /** True for standalone assets; false when another asset owns Conductor. */
     bool owns_conductor {true};
+    /**
+     * The local Conductor's max_delay: how far world time may run ahead of the
+     * slowest asset. Used only when owns_conductor.
+     */
+    std::uint64_t conductor_max_delay_usec {100000};
 };
 
 /**
