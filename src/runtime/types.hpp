@@ -82,7 +82,7 @@ struct QuaternionState {
     double w {1.0};
 };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 struct EulerState {
     double roll {0.0};
     double pitch {0.0};
@@ -136,7 +136,7 @@ struct RobotState {
     std::vector<ActuatorState> actuators;
     std::uint64_t sample_time_usec {0};
     std::vector<BodyState> bodies;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<MirrorContactState> mirror_contacts;
 #endif
 };

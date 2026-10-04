@@ -69,8 +69,12 @@ struct RuntimeParseContext {
     RuntimeParseContext& context,
     RuntimeDefinition& definition,
     std::string* error);
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 [[nodiscard]] bool load_mirror_definitions(
+    RuntimeParseContext& context,
+    RuntimeDefinition& definition,
+    std::string* error);
+[[nodiscard]] bool load_geom_friction_definitions(
     RuntimeParseContext& context,
     RuntimeDefinition& definition,
     std::string* error);

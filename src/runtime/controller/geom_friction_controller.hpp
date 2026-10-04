@@ -1,26 +1,30 @@
 #pragma once
 
 #include "runtime/controller/directive_controller.hpp"
-#include "runtime/source/mirror_body_state_source.hpp"
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace hakoniwa::robot_runtime::runtime {
 
 /**
- * Converts Mirror input into a MirrorBodyDirective. As a Plant Directive
- * controller it never produces an arbitration candidate.
+ * Converts a std_msgs/Float64 sliding-friction value into one
+ * GeomFrictionDirective for a fixed set of geoms.
+ *
+ * A directive is emitted only when a new value arrives. The Plant keeps the
+ * applied friction until the next directive, so a missing sample is not a
+ * fallback trigger. Time synchronization comes from the Runtime reading the
+ * latest staged value at the step start: a value written during one Hakoniwa
+ * step takes effect from the next physics step.
  */
-class MirrorBodyController final : public IDirectiveController {
+class GeomFrictionController final : public IDirectiveController {
 public:
-    MirrorBodyController(
+    GeomFrictionController(
         std::string controller_id,
         std::string source_id,
-        std::string mirror_id,
-        MirrorVelocityFrame velocity_frame = MirrorVelocityFrame::World);
+        std::vector<std::string> geom_names);
 
     [[nodiscard]] std::string_view id() const noexcept override;
     [[nodiscard]] std::string_view source_id() const noexcept override;
@@ -33,12 +37,8 @@ public:
 private:
     std::string controller_id_;
     std::string source_id_;
-    std::string mirror_id_;
-    MirrorVelocityFrame velocity_frame_ {MirrorVelocityFrame::World};
-    std::optional<Vector3State> previous_position_;
-    std::optional<std::uint64_t> previous_position_time_usec_;
-    std::optional<EulerState> previous_orientation_;
-    std::optional<std::uint64_t> previous_orientation_time_usec_;
+    std::vector<std::string> geom_names_;
+    bool applied_ {false};
 };
 
 } // namespace hakoniwa::robot_runtime::runtime

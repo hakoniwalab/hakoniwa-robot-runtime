@@ -35,8 +35,8 @@ ActuatorRuntime::ActuatorRuntime(
     std::shared_ptr<ICommandArbiter> arbiter,
     std::shared_ptr<IActuatorPlant> plant,
     std::vector<std::shared_ptr<IStatePublisher>> publishers
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    , std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    , std::vector<std::shared_ptr<IDirectiveController>> directive_controllers
 #endif
     )
     : sources_(std::move(sources))
@@ -44,8 +44,8 @@ ActuatorRuntime::ActuatorRuntime(
     , arbiter_(std::move(arbiter))
     , plant_(std::move(plant))
     , publishers_(std::move(publishers))
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    , mirror_controllers_(std::move(mirror_controllers))
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    , directive_controllers_(std::move(directive_controllers))
 #endif
 {
     require_non_null(arbiter_, "command arbiter");
@@ -89,20 +89,20 @@ ActuatorRuntime::ActuatorRuntime(
         }
     }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    std::unordered_set<std::string_view> mirror_controller_ids;
-    mirror_controller_ids.reserve(mirror_controllers_.size());
-    for (const auto& controller : mirror_controllers_) {
-        require_non_null(controller, "Mirror Controller");
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    std::unordered_set<std::string_view> directive_controller_ids;
+    directive_controller_ids.reserve(directive_controllers_.size());
+    for (const auto& controller : directive_controllers_) {
+        require_non_null(controller, "directive Controller");
         if (controller->id().empty()
             || controller_ids.contains(controller->id())
-            || !mirror_controller_ids.emplace(controller->id()).second) {
+            || !directive_controller_ids.emplace(controller->id()).second) {
             throw std::invalid_argument(
-                "Mirror Controller IDs must be non-empty and globally unique");
+                "directive Controller IDs must be non-empty and globally unique");
         }
         if (!source_ids.contains(controller->source_id())) {
             throw std::invalid_argument(
-                "Mirror Controller references an unknown source: "
+                "directive Controller references an unknown source: "
                 + std::string(controller->source_id()));
         }
     }
@@ -191,28 +191,31 @@ std::vector<ControllerOutput> ActuatorRuntime::update_controllers(
 
 RobotState ActuatorRuntime::step_plant(
     const std::vector<ActuatorCommand>& commands
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    , const std::vector<MirrorBodyCommand>& mirror_commands
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    , const PlantDirectiveList& directives
 #endif
     )
 {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    return plant_->step(commands, mirror_commands);
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    // Directives are applied before physics advances; post-physics effects
+    // such as Mirror contacts are then produced by step().
+    plant_->apply_directives(directives);
+    return plant_->step(commands);
 #else
     return plant_->step(commands);
 #endif
 }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-std::vector<MirrorBodyCommand> ActuatorRuntime::update_mirror_controllers(
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+PlantDirectiveList ActuatorRuntime::update_directive_controllers(
     const ControllerInputMap& inputs,
     const RuntimeStepContext& context,
     std::vector<ComponentStatus>& statuses)
 {
-    std::vector<MirrorBodyCommand> commands;
-    commands.reserve(mirror_controllers_.size());
-    statuses.reserve(mirror_controllers_.size());
-    for (const auto& controller : mirror_controllers_) {
+    PlantDirectiveList directives;
+    directives.reserve(directive_controllers_.size());
+    statuses.reserve(directive_controllers_.size());
+    for (const auto& controller : directive_controllers_) {
         auto input = inputs.at(controller->source_id());
         if (input != nullptr && !controller->accepts(*input)) {
             input.reset();
@@ -220,14 +223,18 @@ std::vector<MirrorBodyCommand> ActuatorRuntime::update_mirror_controllers(
         auto output = controller->update(std::move(input), context);
         if (output.controller_id != controller->id()) {
             throw std::runtime_error(
-                "Mirror Controller output ID does not match controller ID");
+                "directive Controller output ID does not match controller ID");
         }
         statuses.push_back(output.status);
-        if (output.command.has_value()) {
-            commands.push_back(std::move(*output.command));
+        for (auto& directive : output.directives) {
+            if (directive == nullptr) {
+                throw std::runtime_error(
+                    "directive Controller produced a null directive");
+            }
+            directives.push_back(std::move(directive));
         }
     }
-    return commands;
+    return directives;
 }
 #endif
 
@@ -272,21 +279,22 @@ RuntimeStepReport ActuatorRuntime::step()
     const auto outputs = update_controllers(
         inputs, current_state, context, report.controller_statuses);
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    // Mirror Controllers use a distinct output type. Their commands therefore
-    // cannot enter the arbitration input below.
-    report.mirror_commands = update_mirror_controllers(
-        inputs, context, report.mirror_controller_statuses);
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    // Plant Directive Controllers use a distinct output type. Their
+    // directives therefore cannot enter the arbitration input below.
+    report.plant_directives = update_directive_controllers(
+        inputs, context, report.directive_controller_statuses);
 #endif
 
     // 5. Select one logical control strategy for this step.
     report.arbitration = arbiter_->arbitrate(outputs, current_state, context);
 
-    // 6. Guard and apply the selected commands, then advance MuJoCo one step.
+    // 6. Apply Plant Directives (opt-in), guard and apply the selected
+    // commands, then advance MuJoCo one step.
     const auto next_state = step_plant(
         report.arbitration.selected_commands
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-        , report.mirror_commands
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+        , report.plant_directives
 #endif
         );
 
@@ -310,8 +318,8 @@ RobotState ActuatorRuntime::reset(const std::uint64_t simulation_time_usec)
     for (const auto& controller : controllers_) {
         controller->reset(state);
     }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    for (const auto& controller : mirror_controllers_) {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    for (const auto& controller : directive_controllers_) {
         controller->reset();
     }
 #endif

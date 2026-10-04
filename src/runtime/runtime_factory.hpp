@@ -9,7 +9,7 @@
 #include "runtime/source/joy_command_source.hpp"
 #include "runtime/source/scalar_pdu_command_source.hpp"
 #include "runtime/source/ackermann_drive_command_source.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 #include "runtime/publisher/impulse_collision_publisher.hpp"
 #include "runtime/source/mirror_body_state_source.hpp"
 #endif
@@ -34,12 +34,14 @@ using JoyEventReaderFactory = std::function<
 using AckermannDriveEventReaderFactory = std::function<
     std::shared_ptr<IAckermannDriveEventReader>(
         const RuntimeAckermannControllerConfig&)>;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 using MirrorBodyStateReaderFactory = std::function<
     std::shared_ptr<IMirrorBodyStateReader>(const RuntimeMirrorBodyConfig&)>;
 using ImpulseCollisionWriterFactory = std::function<
     std::shared_ptr<IImpulseCollisionWriter>(
         const RuntimeImpulseCollisionOutputConfig&)>;
+using GeomFrictionReaderFactory = std::function<
+    std::shared_ptr<IFloat64EventReader>(const RuntimeGeomFrictionConfig&)>;
 #endif
 
 /**
@@ -60,9 +62,10 @@ using ImpulseCollisionWriterFactory = std::function<
     const JoyEventReaderFactory& joy_reader_factory = {},
     const AckermannDriveEventReaderFactory& ackermann_reader_factory = {},
     const MultiDofJointStateWriterFactory& multi_dof_writer_factory = {}
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     , const MirrorBodyStateReaderFactory& mirror_reader_factory = {}
     , const ImpulseCollisionWriterFactory& impulse_writer_factory = {}
+    , const GeomFrictionReaderFactory& geom_friction_reader_factory = {}
 #endif
     );
 

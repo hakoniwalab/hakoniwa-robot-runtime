@@ -139,20 +139,20 @@ bool MirrorBodyController::accepts(
     return input.type_name() == "hakoniwa/MirrorBodyState";
 }
 
-MirrorControllerOutput MirrorBodyController::update(
+DirectiveControllerOutput MirrorBodyController::update(
     std::shared_ptr<const IControllerInput> input,
     const RuntimeStepContext& context)
 {
     if (input == nullptr) {
         return {controller_id_,
             {controller_id_, ComponentState::WaitingForInput, {}},
-            std::nullopt};
+            {}};
     }
     const auto typed = std::dynamic_pointer_cast<const MirrorBodyStateInput>(input);
     if (typed == nullptr) {
         return {controller_id_,
             {controller_id_, ComponentState::Error, "invalid Mirror input"},
-            std::nullopt};
+            {}};
     }
     const auto& sample = typed->sample();
     if (!finite(sample.position) || !finite(sample.orientation)
@@ -163,7 +163,7 @@ MirrorControllerOutput MirrorBodyController::update(
         return {controller_id_,
             {controller_id_, ComponentState::Degraded,
                 "Mirror input contains a non-finite value"},
-            std::nullopt};
+            {}};
     }
 
     Vector3State linear {};
@@ -216,14 +216,14 @@ MirrorControllerOutput MirrorBodyController::update(
     return {
         controller_id_,
         {controller_id_, ComponentState::Ready, {}},
-        MirrorBodyCommand {
+        {std::make_shared<const MirrorBodyDirective>(MirrorBodyCommand {
             mirror_id_,
             sample.position,
             sample.orientation,
             linear,
             angular,
             context.simulation_time_usec,
-        },
+        })},
     };
 }
 

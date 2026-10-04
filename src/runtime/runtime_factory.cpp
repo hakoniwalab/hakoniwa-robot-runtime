@@ -5,7 +5,8 @@
 #include "runtime/controller/joint_trajectory_controller.hpp"
 #include "runtime/controller/manual_controller.hpp"
 #include "runtime/controller/scalar_pdu_command_controller.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+#include "runtime/controller/geom_friction_controller.hpp"
 #include "runtime/controller/mirror_body_controller.hpp"
 #include "runtime/publisher/impulse_collision_publisher.hpp"
 #include "runtime/source/mirror_body_state_source.hpp"
@@ -31,9 +32,10 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     const JoyEventReaderFactory& joy_reader_factory,
     const AckermannDriveEventReaderFactory& ackermann_reader_factory,
     const MultiDofJointStateWriterFactory& multi_dof_writer_factory
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     , const MirrorBodyStateReaderFactory& mirror_reader_factory
     , const ImpulseCollisionWriterFactory& impulse_writer_factory
+    , const GeomFrictionReaderFactory& geom_friction_reader_factory
 #endif
     )
 {
@@ -54,7 +56,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
             "MultiDOF state writer factory is required by the Runtime definition");
     }
 #endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     if (!definition.mirror_bodies.empty() && !mirror_reader_factory) {
         throw std::invalid_argument(
             "Mirror state reader factory is required by the Runtime definition");
@@ -62,6 +64,10 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     if (!definition.impulse_collision_outputs.empty() && !impulse_writer_factory) {
         throw std::invalid_argument(
             "Impulse writer factory is required by the Runtime definition");
+    }
+    if (!definition.geom_frictions.empty() && !geom_friction_reader_factory) {
+        throw std::invalid_argument(
+            "geom friction reader factory is required by the Runtime definition");
     }
 #endif
     if (!definition.trajectory_controllers.empty()
@@ -88,8 +94,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     std::vector<std::shared_ptr<IController>> controllers;
     std::vector<ControllerPriority> priorities;
     sources.reserve(definition.actuators.size()
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         + definition.mirror_bodies.size()
+        + definition.geom_frictions.size()
 #endif
         );
     controllers.reserve(
@@ -101,9 +108,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
         + 1);
     priorities.reserve(controllers.capacity());
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-    std::vector<std::shared_ptr<MirrorBodyController>> mirror_controllers;
-    mirror_controllers.reserve(definition.mirror_bodies.size());
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    // Plant Directive Controllers are kept apart from `controllers` so their
+    // output never reaches the Arbiter.
+    std::vector<std::shared_ptr<IDirectiveController>> directive_controllers;
+    directive_controllers.reserve(
+        definition.mirror_bodies.size() + definition.geom_frictions.size());
 #endif
 
     constexpr const char* scalar_control_group = "scalar-pdu-direct";
@@ -131,7 +141,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         priorities.push_back({controller_id, 0, scalar_control_group});
     }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     for (const auto& mirror : definition.mirror_bodies) {
         auto reader = mirror_reader_factory(mirror);
         if (reader == nullptr) {
@@ -141,11 +151,31 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         const std::string source_id = "mirror-pdu:" + mirror.component_id;
         sources.push_back(std::make_shared<MirrorBodyStateSource>(
             source_id, std::move(reader)));
-        mirror_controllers.push_back(std::make_shared<MirrorBodyController>(
+        directive_controllers.push_back(std::make_shared<MirrorBodyController>(
             mirror.component_id,
             source_id,
             mirror.mirror_id,
             mirror.velocity_frame));
+    }
+
+    for (const auto& friction : definition.geom_frictions) {
+        auto reader = geom_friction_reader_factory(friction);
+        if (reader == nullptr) {
+            throw std::invalid_argument(
+                "geom friction reader factory returned null: "
+                + friction.component_id);
+        }
+        // The Float64 sample is consumed in the step it is polled; the Plant
+        // keeps the applied friction afterwards. One Plant step is therefore
+        // a sufficient input lifetime.
+        const std::string source_id =
+            "geom-friction-pdu:" + friction.component_id;
+        sources.push_back(std::make_shared<ScalarPduCommandSource>(
+            source_id, plant->delta_time_usec(), std::move(reader)));
+        directive_controllers.push_back(std::make_shared<GeomFrictionController>(
+            friction.component_id,
+            source_id,
+            friction.geoms));
     }
 #endif
 
@@ -292,7 +322,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 
     std::vector<std::shared_ptr<IStatePublisher>> publishers;
     publishers.reserve(definition.state_outputs.size()
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         + definition.impulse_collision_outputs.size()
 #endif
         );
@@ -341,7 +371,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     (void)multi_dof_writer_factory;
 #endif
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     for (const auto& output : definition.impulse_collision_outputs) {
         auto writer = impulse_writer_factory(output);
         if (writer == nullptr) {
@@ -368,8 +398,8 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         std::move(arbiter),
         std::move(plant),
         std::move(publishers)
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-        , std::move(mirror_controllers)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+        , std::move(directive_controllers)
 #endif
         );
 }

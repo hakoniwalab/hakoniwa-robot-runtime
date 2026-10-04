@@ -5,7 +5,7 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/joint_state_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/joint_trajectory_pdu_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/joy_pdu_event_reader.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 #include "hakoniwa/robot_runtime/adapters/endpoint/impulse_collision_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/mirror_body_twist_pdu_reader.hpp"
 #endif
@@ -128,10 +128,10 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         output.pdu_robot,
                         output.pdu_name);
                 }
-#elif defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#elif defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
                 , {}, {}
 #endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
                 ,
                 [&](const runtime::RuntimeMirrorBodyConfig& mirror) {
                     return std::make_shared<
@@ -147,6 +147,15 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         *endpoint,
                         output.pdu_robot,
                         output.pdu_name);
+                },
+                [&](const runtime::RuntimeGeomFrictionConfig& friction) {
+                    auto reader = std::make_shared<
+                        adapters::hakoniwa::Float64PduEventReader>(
+                        *endpoint,
+                        friction.pdu_robot,
+                        friction.pdu_name);
+                    reader->subscribe();
+                    return reader;
                 }
 #endif
                 );

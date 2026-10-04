@@ -108,6 +108,7 @@ Runtime が現在標準で解釈する主な component は次です。
 | `controller` | `joy_manual_controller` | [3.2.2 joy_manual_controller](#322-joy_manual_controller) |
 | `controller` | `ackermann_controller` | [3.2.3 ackermann_controller](#323-ackermann_controller) |
 | `controller` | `mirror_body` | [3.2.4 mirror_body](#324-mirror_body) |
+| `controller` | `geom_friction` | [3.2.5 geom_friction](#325-geom_friction) |
 | `state_output` | `joint_state` | [3.3.1 joint_state](#331-joint_state) |
 | `state_output` | `multi_dof_joint_state` | [3.3.2 multi_dof_joint_state](#332-multi_dof_joint_state) |
 | `state_output` | `impulse_collision` | [3.3.3 impulse_collision](#333-impulse_collision) |
@@ -120,10 +121,11 @@ extensionです。これらを使うApplicationのビルドだけが
 PDU adapterをリンクします。定義しない既存Applicationには、Ackermann固有の
 link dependencyやmanifest解釈を追加しません。
 
-`mirror_body` と `impulse_collision` も同様のopt-in extensionです。
-利用するApplicationだけが
-`HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR=1` を定義し、Mirror用source、
-controller、publisher、Endpoint adapterをリンクします。
+`mirror_body`、`impulse_collision`、`geom_friction` も同様のopt-in extension
+（Plant Directive extension）です。利用するApplicationだけが
+`HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE=1` を定義し、対応するsource、
+controller、publisher、Endpoint adapterをリンクします。未定義または `0` の
+ビルドでは、これらのcomponentは解釈されません。
 
 ## 3. Component Config — `components[].config` の内容
 
@@ -466,6 +468,73 @@ Schema:
 
 ```text
 schemas/components/mirror-body-controller.schema.json
+```
+
+<a id="325-geom_friction"></a>
+
+#### 3.2.5 `geom_friction`
+
+`std_msgs/Float64` PDUで受信したsliding frictionを、指定したMuJoCo geomへ
+反映します（Plant Directive）。路面状態に応じたタイヤ摩擦の切替等に使用します。
+commandはArbiterを経由しません。
+
+Manifest component:
+
+```json
+{
+  "id": "car-3-tire-friction",
+  "kind": "controller",
+  "type": "geom_friction",
+  "config": "config/car-3-tire-friction.json",
+  "pdu_robot": "Car-3"
+}
+```
+
+Component config:
+
+```json
+{
+  "$schema": "https://hakoniwa.dev/schemas/geom-friction-controller.schema.json",
+  "schema_version": 1,
+  "spec": {
+    "geoms": [
+      "car_3_front_left_tire",
+      "car_3_front_right_tire",
+      "car_3_rear_left_tire",
+      "car_3_rear_right_tire"
+    ]
+  },
+  "input": {
+    "pdu_name": "tire_friction",
+    "message_type": "std_msgs/Float64"
+  }
+}
+```
+
+| field | contract |
+| --- | --- |
+| `schema_version` | 任意。指定時は `1` |
+| `spec.geoms` | MuJoCo geom名の非空配列。各要素は非空文字列。同じgeomを複数の `geom_friction` componentから参照できない |
+| `input.pdu_name` | `pdu_robot` 内の `std_msgs/Float64` channel（32 byte以上） |
+| `input.message_type` | `std_msgs/Float64` |
+
+- geom名はPlant構築時にMuJoCo modelで解決します。未知のgeom名は構成エラーです。
+- Runtimeは `geom_priority` を変更しません。接触時にどのfrictionが使われるかは
+  modelが決めます。MuJoCoは接触ペアのうちpriorityの高いgeomのfrictionを使用し、
+  同priorityでは要素ごとの大きい方を使用します。タイヤのfrictionを有効にするには、
+  asset / composerがタイヤgeomにWorldより高いpriority（例: `priority="1"`）を
+  与えてください。
+- 受信値は `geom_friction[3 * id]`（sliding）にのみ反映し、torsional /
+  rollingは変更しません。値は次の受信まで持続し、Runtime resetで
+  モデル既定値へ戻ります。
+- NaN / Inf / 負値は拒否され、反映されません（controller statusは `Degraded`）。
+- Runtimeはstep開始時に最新値を読み取ります。あるHakoniwa step中に書かれた値は
+  次のphysics stepから適用されます。
+
+Schema:
+
+```text
+schemas/components/geom-friction-controller.schema.json
 ```
 
 ### 3.3 `state_output`

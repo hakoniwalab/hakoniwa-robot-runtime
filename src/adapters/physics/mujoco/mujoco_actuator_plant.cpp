@@ -87,7 +87,7 @@ public:
         int body_id {-1};
     };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     struct LocalContactBody {
         std::string body_id;
         int root_body_id {-1};
@@ -100,6 +100,12 @@ public:
         int qvel_address {-1};
         int root_body_id {-1};
         std::vector<LocalContactBody> contact_bodies;
+    };
+
+    struct GeomFrictionBinding {
+        int geom_id {-1};
+        /** Model friction before any directive; restored by reset(). */
+        std::array<mjtNum, 3> original_friction {};
     };
 #endif
 
@@ -179,7 +185,7 @@ public:
                 });
             }
         }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         std::unordered_set<std::string> mirror_ids;
         for (const auto& config : definition.mirror_bodies) {
             if (!mirror_ids.insert(config.mirror_id).second) {
@@ -221,6 +227,7 @@ public:
                 mirror.mirror_id, mirror_bindings.size());
             mirror_bindings.push_back(std::move(mirror));
         }
+        bind_geom_frictions(definition.geom_frictions);
 #endif
     }
 
@@ -281,13 +288,13 @@ public:
                 sample_time_usec,
             });
         }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         append_mirror_contacts(state);
 #endif
         return state;
     }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     bool body_is_descendant(int body_id, int ancestor_body_id) const noexcept
     {
         const auto* model = world->getModel();
@@ -418,13 +425,93 @@ public:
         }
     }
 
-    void apply_mirror_commands(
-        const std::vector<runtime::MirrorBodyCommand>& commands,
+    /**
+     * Resolves geom names once at binding and remembers their original
+     * friction for reset().
+     *
+     * The Plant does not touch geom_priority. MuJoCo uses the friction of the
+     * higher-priority geom of a contact pair (element-wise maximum for equal
+     * priority), so the model / asset composer decides whether these geoms'
+     * friction wins, e.g. by giving tires a higher priority than the World.
+     */
+    void bind_geom_frictions(
+        const std::vector<runtime::RuntimeGeomFrictionConfig>& configs)
+    {
+        auto* model = world->getModel();
+        for (const auto& config : configs) {
+            for (const auto& name : config.geoms) {
+                if (geom_friction_binding_by_name.contains(name)) {
+                    throw std::invalid_argument(
+                        "duplicate geom friction binding: " + name);
+                }
+                const int geom_id = require_named_id(
+                    model, mjOBJ_GEOM, name, "geom friction geom");
+                GeomFrictionBinding binding;
+                binding.geom_id = geom_id;
+                for (int index = 0; index < 3; ++index) {
+                    binding.original_friction[index] =
+                        model->geom_friction[3 * geom_id + index];
+                }
+                geom_friction_binding_by_name.emplace(name, binding);
+            }
+        }
+    }
+
+    void restore_geom_frictions() noexcept
+    {
+        auto* model = world->getModel();
+        for (const auto& [name, binding] : geom_friction_binding_by_name) {
+            (void)name;
+            for (int index = 0; index < 3; ++index) {
+                model->geom_friction[3 * binding.geom_id + index] =
+                    binding.original_friction[index];
+            }
+        }
+    }
+
+    /**
+     * Sets the sliding friction (geom_friction[3 * id]) of each bound geom.
+     * Torsional and rolling friction stay unchanged. Directives are applied in
+     * list order, so a later directive for the same geom wins. The value
+     * persists in the model until the next directive or reset().
+     */
+    void apply_geom_friction_directives(
+        const std::vector<std::shared_ptr<const runtime::GeomFrictionDirective>>&
+            directives,
         std::uint64_t simulation_time_usec)
     {
+        auto* model = world->getModel();
+        for (const auto& directive : directives) {
+            const double friction = directive->sliding_friction();
+            if (directive->created_at_usec() > simulation_time_usec
+                || !std::isfinite(friction) || friction < 0.0) {
+                continue;
+            }
+            for (const auto& name : directive->geom_names()) {
+                const auto binding = geom_friction_binding_by_name.find(name);
+                if (binding == geom_friction_binding_by_name.end()) {
+                    continue;
+                }
+                model->geom_friction[3 * binding->second.geom_id] = friction;
+            }
+        }
+    }
+
+    void apply_mirror_directives(
+        const std::vector<std::shared_ptr<const runtime::MirrorBodyDirective>>&
+            directives,
+        std::uint64_t simulation_time_usec)
+    {
+        // Mirror configurations run a forward pass every step after applying
+        // poses, before physics advances. Without Mirror bindings there is
+        // nothing to apply, so the forward pass is skipped.
+        if (mirror_bindings.empty()) {
+            return;
+        }
         std::unordered_map<std::string_view, const runtime::MirrorBodyCommand*> first;
         std::unordered_set<std::string_view> duplicates;
-        for (const auto& command : commands) {
+        for (const auto& directive : directives) {
+            const auto& command = directive->command();
             if (!mirror_binding_by_id.contains(command.mirror_id)) {
                 continue;
             }
@@ -516,9 +603,10 @@ public:
     std::vector<Binding> bindings;
     std::vector<BodyBinding> body_bindings;
     std::unordered_map<std::string, std::size_t> binding_by_id;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<MirrorBinding> mirror_bindings;
     std::unordered_map<std::string, std::size_t> mirror_binding_by_id;
+    std::unordered_map<std::string, GeomFrictionBinding> geom_friction_binding_by_name;
 #endif
     std::uint64_t delta_time_usec {0};
 };
@@ -588,15 +676,21 @@ runtime::RobotState MujocoActuatorPlant::step(
     return impl_->state();
 }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-runtime::RobotState MujocoActuatorPlant::step(
-    const std::vector<runtime::ActuatorCommand>& commands,
-    const std::vector<runtime::MirrorBodyCommand>& mirror_commands)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+void MujocoActuatorPlant::apply_directives(
+    const runtime::PlantDirectiveList& directives)
 {
     const auto simulation_time_usec = model_time_usec(
         impl_->world->getData());
-    impl_->apply_mirror_commands(mirror_commands, simulation_time_usec);
-    return step(commands);
+    // Each applier takes only its own directive kind. Model parameters such as
+    // friction are set first; the Mirror applier ends with mj_forward() so the
+    // state handed to the physics step is consistent.
+    impl_->apply_geom_friction_directives(
+        runtime::directives_of<runtime::GeomFrictionDirective>(directives),
+        simulation_time_usec);
+    impl_->apply_mirror_directives(
+        runtime::directives_of<runtime::MirrorBodyDirective>(directives),
+        simulation_time_usec);
 }
 #endif
 
@@ -608,6 +702,11 @@ runtime::RobotState MujocoActuatorPlant::reset(
             "MuJoCo reset time must align to the model timestep");
     }
     auto* data = impl_->world->getData();
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    // mj_resetData() does not touch mjModel, so directive-modified model
+    // parameters are restored explicitly.
+    impl_->restore_geom_frictions();
+#endif
     mj_resetData(impl_->world->getModel(), data);
     impl_->apply_initial_body_poses();
     data->time =

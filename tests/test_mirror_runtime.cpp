@@ -40,6 +40,8 @@ public:
     std::uint64_t time_usec {0};
     std::vector<ActuatorCommand> actuator_commands;
     std::vector<MirrorBodyCommand> mirror_commands;
+    /** Plant time observed by apply_directives(); must precede step(). */
+    std::optional<std::uint64_t> directives_applied_at_usec;
 
     std::uint64_t delta_time_usec() const noexcept override
     {
@@ -60,14 +62,13 @@ public:
         return read_state();
     }
 
-    RobotState step(
-        const std::vector<ActuatorCommand>& commands,
-        const std::vector<MirrorBodyCommand>& mirrors) override
+    void apply_directives(const PlantDirectiveList& directives) override
     {
-        actuator_commands = commands;
-        mirror_commands = mirrors;
-        time_usec += delta_time_usec();
-        return read_state();
+        mirror_commands.clear();
+        for (const auto& mirror : directives_of<MirrorBodyDirective>(directives)) {
+            mirror_commands.push_back(mirror->command());
+        }
+        directives_applied_at_usec = time_usec;
     }
 
     RobotState reset(const std::uint64_t requested_time_usec) override
@@ -75,6 +76,7 @@ public:
         time_usec = requested_time_usec;
         actuator_commands.clear();
         mirror_commands.clear();
+        directives_applied_at_usec.reset();
         return read_state();
     }
 };
@@ -107,6 +109,13 @@ MirrorContactState contact(
     value.relative_normal_speed_mps = speed;
     value.target_mass = 10.0;
     return value;
+}
+
+const MirrorBodyCommand& mirror_command(const RuntimeStepReport& report)
+{
+    const auto mirrors = directives_of<MirrorBodyDirective>(report.plant_directives);
+    assert(mirrors.size() == 1);
+    return mirrors.front()->command();
 }
 
 ComponentStatus publish_at(
@@ -171,30 +180,33 @@ void test_mirror_bypasses_arbiter_and_derives_velocity()
 
     const auto first = runtime.step();
     assert(first.arbitration.selected_commands.empty());
-    assert(first.mirror_commands.size() == 1);
+    assert(first.plant_directives.size() == 1);
+    assert(first.directive_controller_statuses.size() == 1);
+    assert(first.directive_controller_statuses[0].state == ComponentState::Ready);
+    // Directives are applied at the step-start Plant time, before physics.
+    assert(plant->directives_applied_at_usec == 0);
     assert(plant->actuator_commands.empty());
     assert(plant->mirror_commands.size() == 1);
     assert(plant->mirror_commands[0].linear_velocity.x == 4.0);
 
     const auto second = runtime.step();
     assert(second.arbitration.selected_commands.empty());
-    assert(second.mirror_commands.size() == 1);
-    assert(std::abs(second.mirror_commands[0].linear_velocity.x - 1.0) < 1.0e-9);
-    assert(std::abs(second.mirror_commands[0].linear_velocity.y - 2.0) < 1.0e-9);
-    assert(std::abs(second.mirror_commands[0].angular_velocity.z - 3.0) < 1.0e-9);
+    assert(std::abs(mirror_command(second).linear_velocity.x - 1.0) < 1.0e-9);
+    assert(std::abs(mirror_command(second).linear_velocity.y - 2.0) < 1.0e-9);
+    assert(std::abs(mirror_command(second).angular_velocity.z - 3.0) < 1.0e-9);
 
     const auto retained = runtime.step();
-    assert(retained.mirror_commands[0].linear_velocity.x == 0.0);
-    assert(retained.mirror_commands[0].angular_velocity.z == 0.0);
+    assert(mirror_command(retained).linear_velocity.x == 0.0);
+    assert(mirror_command(retained).angular_velocity.z == 0.0);
 
     const auto delayed = runtime.step();
-    assert(std::abs(delayed.mirror_commands[0].linear_velocity.x - 0.5) < 1.0e-9);
-    assert(std::abs(delayed.mirror_commands[0].angular_velocity.z - 1.5) < 1.0e-9);
+    assert(std::abs(mirror_command(delayed).linear_velocity.x - 0.5) < 1.0e-9);
+    assert(std::abs(mirror_command(delayed).angular_velocity.z - 1.5) < 1.0e-9);
 
     const auto body_frame = runtime.step();
-    assert(std::abs(body_frame.mirror_commands[0].linear_velocity.x) < 1.0e-9);
-    assert(std::abs(body_frame.mirror_commands[0].linear_velocity.y - 1.0) < 1.0e-9);
-    assert(body_frame.mirror_commands[0].angular_velocity.z == 1.0);
+    assert(std::abs(mirror_command(body_frame).linear_velocity.x) < 1.0e-9);
+    assert(std::abs(mirror_command(body_frame).linear_velocity.y - 1.0) < 1.0e-9);
+    assert(mirror_command(body_frame).angular_velocity.z == 1.0);
 }
 
 void test_impulse_rising_edge_threshold_cooldown_and_deepest_contact()

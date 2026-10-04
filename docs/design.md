@@ -187,34 +187,153 @@ physical step 完了後の `RobotState` を外部表現へ変換して送信し�
 - transport 固有 write は adapter へ委譲する
 - publish failure によって完了済み physical step を rollback しない
 
-### 2.6 Mirror extension（opt-in）
+### 2.6 Plant Directive extension（opt-in）
+
+Plant Directive は、Arbiter で選択される制御候補ではなく、外部から与えられた
+指示を Plant へそのまま反映するための **非調停（non-arbitrated）経路** です。
+外部 simulation が所有する物体の姿勢同期（Mirror）や、路面状態に応じた
+タイヤ摩擦の変更（geom friction）は、どちらも次の同じ構造を持ちます。
+
+- CommandSource が endpoint adapter の reader を注入されて PDU の最新値を取り込む
+- 非調停 Controller がそれを physical backend 非依存の指示へ変換する
+- Plant が指示を backend へ反映する
+
+これを一つの汎用経路として実装し、Mirror / geom friction はその上の
+directive kind の一つとして扱います。
+
+```text
+Normal control path:
+  CommandSource -> Controller ----------> Arbiter --+
+                                                     |  selected ActuatorCommand[*]
+                                                     v
+                                     Plant.apply_directives() -> Plant.step() -> Publisher
+                                                     ^
+Plant Directive path:                                |  IPlantDirective[*] (mixed kinds)
+  CommandSource -> IDirectiveController -------------+
+```
+
+責務:
+
+- `CommandSource`: PDU の最新値を non-blocking に取り込む。通常経路と同じ
+  `ICommandSource` であり、reader（endpoint adapter）を注入して transport から
+  分離する
+- `IDirectiveController`: 受信値を検証し、backend 非依存の `IPlantDirective`
+  へ変換する。`ActuatorCommand` は生成しない
+- `Arbiter`: directive を受け取らず、選択・競合判定を行わない
+- `Plant`: directive を backend の状態・パラメータへ反映する。反映結果の
+  physical effect（接触等）は physics step 後の `RobotState` に現れる
+- `Publisher`: 必要に応じて physics step 後の `RobotState` から送信する
+  （Mirror の Impulse 等）
+
+主な型:
+
+| 型 | 役割 |
+|---|---|
+| `IPlantDirective` | type-erased・immutable な Plant 向け指示。`IControllerInput` と同様に `type_name()` を持つ |
+| `MirrorBodyDirective` | Mirror body の pose / velocity（`MirrorBodyCommand`）を運ぶ |
+| `GeomFrictionDirective` | geom 名の集合と sliding friction を運ぶ |
+| `IDirectiveController` | `id()` / `source_id()` / `accepts()` / `update(input, context)` / `reset()` |
+| `DirectiveControllerOutput` | `controller_id` / `status` / `directives`（`IPlantDirective` の list） |
+
+#### 2.6.1 Arbiter から分離する理由
+
+Arbiter は、同じ actuator 群を奪い合う複数の制御戦略から一つの logical
+control を選ぶための層です。directive はそもそも actuator を奪い合わず、
+外部の Source of Truth（外部 Plant の姿勢、路面摩擦）を反映するだけなので、
+優先度や競合の概念を持ちません。Arbiter に混ぜると、HOLD や MANUAL への
+切替によって外部 Truth の反映が止まる、といった誤った結合が生じます。
+
+そのため、フラグで Arbiter の判断を無効化するのではなく、**型と経路で構造的に
+分離** します。`IDirectiveController::update()` の戻り値は
+`ControllerOutput` ではなく `DirectiveControllerOutput` であり、
+`ActuatorRuntime` は directive Controller を通常の `controllers_` とは別の
+`directive_controllers_` に保持します。directive は Arbiter の入力型に
+入り得ません。
+
+#### 2.6.2 directive kind の選別（`directives_of<T>`）
+
+`ActuatorRuntime` は全 directive Controller の出力を、kind を区別しない
+一つの list（`RuntimeStepReport::plant_directives`）として Plant へ渡します。
+Plant 内では、各 applier が自分の kind だけを取り出します。
+
+```cpp
+template <class T>
+std::vector<std::shared_ptr<const T>> directives_of(
+    const std::vector<std::shared_ptr<const IPlantDirective>>& directives);
+```
+
+新しい directive kind を追加する場合、Runtime core（`ActuatorRuntime`、
+`IActuatorPlant`）の変更は不要で、directive 型・Controller・Plant applier を
+追加するだけです。未対応の kind は Plant に無視されます。
+
+#### 2.6.3 `apply_directives` のタイミング
+
+`IActuatorPlant` は directive 用の入口を一つだけ持ちます。
+
+```cpp
+virtual void apply_directives(
+    const std::vector<std::shared_ptr<const IPlantDirective>>& directives);
+// default: no-op
+```
+
+`ActuatorRuntime` は毎 step、arbitration の後、`step(commands)` の直前に
+これを呼びます（directive が空の step でも呼びます）。
+
+```text
+arbitrate()  ->  apply_directives(directives)  ->  step(selected_commands)
+```
+
+したがって directive の効果（Mirror の pose / velocity、geom friction）は
+physics を進める前に反映され、その step の積分・接触計算に使われます。
+接触などの post-physics 情報は従来どおり `step()` が返す `RobotState` に
+含まれます。directive は Plant の simulation time より未来の
+`created_at_usec` を持つ場合や非有限値を含む場合、Plant 入口で無視されます。
+
+時刻同期は、Runtime が step 開始時に Source から最新値を読むことで成立します。
+ある Hakoniwa step 中に書かれた値は、次の physics step から適用されます。
+
+#### 2.6.4 opt-in build boundary
+
+Plant Directive extension（Mirror / Impulse / geom friction を含む）は、既存
+Runtime への回帰を避けるため、Ackermann / mobile-base extension と同じ
+opt-in 方式で導入します。
+
+```cpp
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) \
+    && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+// Plant Directive-only implementation
+#endif
+```
+
+未定義または `0` の場合:
+
+- `IPlantDirective` / `IDirectiveController` / `IActuatorPlant::apply_directives()`
+  を含め、本経路の Source / Controller / Plant extension / Publisher を構成しない
+- `mirror_body` / `impulse_collision` / `geom_friction` の Manifest / component
+  config を解釈しない
+- Mirror / Impulse PDU 固有の link dependency を要求しない
+- 既存の Runtime step、ABI、標準テストの挙動を変更しない
+
+本経路の config を使う Application だけがマクロを `1` とし、対応 source と
+adapter を build target に組み込みます。
+
+#### 2.6.5 Mirror（directive kind）
 
 Mirror は、外部の simulation / Plant が所有する物体を、本 Runtime
 の physical world に表示・接触させるための代理物体です。Mirror 自身の運動は
 本 Runtime が判断せず、外部から受信した pose / velocity を反映します。
 
-Mirror も既存の Source / Controller / Plant / Publisher の責務分類に載せます。
-ただし、Mirror command は制御候補ではないため Arbiter の対象にしません。
-フラグで Arbiter の判断を無効化するのではなく、異なる command type と経路によって
-構造的に分離します。
-
-```text
-Normal control path:
-  CommandSource -> Controller -> Arbiter --------+
-                                                   |
-Mirror path:                                      v
-  MirrorSource  -> MirrorController ------------> Plant -> Publisher
-```
-
-責務:
-
-- `MirrorSource`: pose / velocity PDU の最新値を non-blocking に取り込む
-- `MirrorController`: 受信値を physical backend 非依存の Mirror command へ正規化する
-- `Arbiter`: Mirror command を受け取らず、選択・競合判定を行わない
-- `Plant`: Mirror command を backend の pose / velocity へ反映し、physics step
-  完了後の接触情報を生成する
-- `Publisher`: 接触情報から送信ポリシーを適用し、Impulse PDU を外部 Plant
-  へ送信する
+- `MirrorBodyStateSource`: pose / velocity PDU の最新値を non-blocking に取り込む
+  （`IMirrorBodyStateReader` を注入）
+- `MirrorBodyController`（`IDirectiveController`）: 受信値を
+  `MirrorBodyDirective` へ正規化する
+- `MujocoActuatorPlant`: `directives_of<MirrorBodyDirective>` で取り出した
+  pose / velocity を freejoint へ反映し、`mj_forward()` 後に physics を進め、
+  step 後の接触情報（`RobotState::mirror_contacts`）を生成する。Mirror binding
+  がある構成では Mirror directive の有無によらず毎 step `mj_forward()` を行い、
+  binding が無い構成では省略する
+- `ImpulseCollisionPublisher`: 接触情報から送信ポリシーを適用し、Impulse PDU
+  を外部 Plant へ送信する
 
 Mirror velocity は相対法線速度の計算に必要です。velocity PDU がある場合は
 それを正本とし、`world` / `body` frameを設定で明示します。ない場合だけ
@@ -222,7 +341,7 @@ pose の simulation-time 差分から推定します。
 pose 反映時に無条件で velocity をゼロクリアしてはいけません。reset 時は
 最後の pose / time と接触履歴をクリアします。
 
-#### 2.6.1 External Drone PDU contract
+##### 2.6.5.1 External Drone PDU contract
 
 Mirror Runtimeは特定のDrone実装には依存せず、外部Droneとの標準接続契約として
 次のPDUの組み合わせを使用します。Drone Core / Proは、この契約を既存PDUのまま
@@ -250,7 +369,7 @@ takeoff / move / landなどのFleet指令はMirror経路の責務外です。外
 従来の指令を処理し、その結果としてpublishする `pos` / `velocity` をMirrorが
 追従します。Mirrorから飛行指令を送信することはありません。
 
-#### 2.6.2 接触境界
+##### 2.6.5.2 接触境界
 
 本 Runtime が Impulse の送信対象とするのは、Mirror と本 Runtime 所有の
 physical Plant body との接触です。physical Plant body は複数存在して構いません。
@@ -268,7 +387,7 @@ Mirror / local physical / Environment の所有関係に基づきます。
 同一 Mirror が同一 step で複数の対象と接触した場合、初期実装では
 最も深い接触を1件選びます。複数 Impulse の同時送信は将来拡張とします。
 
-#### 2.6.3 Impulse 送信ポリシー
+##### 2.6.5.3 Impulse 送信ポリシー
 
 Impulse は継続的な力ではなく、接触開始時の one-shot event として送信します。
 `hakoniwa-mujoco-robots` の ball sample と同じ基本方式を使用します。
@@ -309,27 +428,50 @@ Publisher のポリシーは component config から外部設定します。
 これにより physics timestep から独立した送信間隔を保ちます。接触対象の所有関係は
 このポリシーに混ぜず、Mirror / Plant binding として定義します。
 
-#### 2.6.4 opt-in build boundary
+#### 2.6.6 Geom friction（directive kind）
 
-Mirror extension は既存 Runtime への回帰を避けるため、Ackermann / mobile-base
-extension と同じ opt-in 方式で導入します。
+外部から与えた sliding friction を、指定した MuJoCo geom（例: タイヤ）へ
+反映します。路面状態（乾燥 / 濡れ / 凍結）を外部シナリオから切り替える用途を
+想定しています。
 
-```cpp
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR) \
-    && HAKONIWA_ROBOT_RUNTIME_ENABLE_MIRROR
-// Mirror-only implementation
-#endif
+```text
+Float64 PDU (tire_friction)
+   |  Float64PduEventReader (endpoint adapter)
+   v
+ScalarPduCommandSource            -- reader 注入。std_msgs/Float64 を step へ取り込む
+   v
+GeomFrictionController            -- IDirectiveController
+   |  新しい値の到着時のみ GeomFrictionDirective {geom names, sliding friction}
+   v
+MujocoActuatorPlant.apply_directives()
+   |  directives_of<GeomFrictionDirective>
+   v
+model->geom_friction[3 * id]      -- sliding のみ更新
 ```
 
-未定義または `0` の場合:
+Controller:
 
-- Mirror 用 Source / Controller / Plant extension / Publisher を構成しない
-- Mirror 用 Manifest / component config を解釈しない
-- Mirror / Impulse PDU 固有の link dependency を要求しない
-- 既存の Runtime step、ABI、標準テストの挙動を変更しない
+- 新しい値が届いた step だけ directive を1件生成する。値は Plant 側に保持される
+  ため、新着なしは fallback の契機ではない
+- NaN / Inf / 負値は拒否し、status を `Degraded` として directive を生成しない
 
-Mirror config を使う Application だけがマクロを `1` とし、対応 source と
-adapter を build target に組み込みます。
+Plant:
+
+- binding（構築）時に geom 名を id へ解決し、reset 用に元の friction を保存する。
+  未知の geom 名は構成エラー
+- `geom_priority` は変更しない。接触時にどちらの friction が使われるかは
+  model が決める。MuJoCo は接触ペアのうち priority の高い geom の friction を
+  使い、同 priority では要素ごとの大きい方を使う。したがって model（asset /
+  composer）は、friction を制御する geom に、接触相手（World 等）より高い
+  priority（例: `priority="1"`）を与えなければならない。そうでなければ大きい方の
+  friction が使われ、directive で下げた値が効かない
+- directive を受けると各 geom の `geom_friction[3 * id]`（sliding）を更新し、
+  torsional / rolling は変更しない
+- 変更は次の directive まで持続する。`reset()` は binding 時に保存した元の
+  friction を復元する（`mj_resetData()` は `mjModel` を戻さないため）
+
+時刻同期は他の directive と同じく、step 開始時の読み取りで成立します。
+ある Hakoniwa step 中に書かれた値は、次の physics step から適用されます。
 
 ## 3. ActuatorRuntime
 
@@ -345,13 +487,16 @@ Build RuntimeStepContext
 CommandSource
         |
         v
-Controller
+Controller            (+ IDirectiveController: opt-in, non-arbitrated)
         |
         v
 Arbiter
         |
         v
-Plant
+Plant.apply_directives (opt-in Plant Directive path)
+        |
+        v
+Plant.step
         |
         v
 Publisher
@@ -364,11 +509,16 @@ const auto current_state = plant_->read_state();
 const auto context = prepare_step_context(current_state);
 const auto inputs = poll_sources(context, ...);
 const auto outputs = update_controllers(inputs, current_state, context, ...);
+const auto directives = update_directive_controllers(inputs, context, ...); // opt-in
 auto arbitration = arbiter_->arbitrate(outputs, current_state, context);
+plant_->apply_directives(directives);                                     // opt-in
 const auto next_state = plant_->step(arbitration.selected_commands);
 const auto next_context = complete_step(next_state, arbitration);
 publish_state(next_state, next_context, ...);
 ```
+
+directive Controller の出力は `outputs` に含まれず、Arbiter を経由しません。
+`apply_directives()` は arbitration の後、`step()` の直前に毎 step 呼ばれます。
 
 Runtime 自身は `simulation_time += delta` のような独立 clock update を行いません。
 
@@ -629,6 +779,7 @@ Robot Pack / Application
 - MuJoCo physical update
 - JointState output
 - Hakoniwa Asset Runner
+- opt-in Plant Directive path（Mirror / Impulse collision output / geom friction）
 
 特定のロボット機種、運動学 solver、歩容生成、移動ロボットの navigation などは Runtime core の責務ではありません。
 
