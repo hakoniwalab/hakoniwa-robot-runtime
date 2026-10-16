@@ -125,7 +125,23 @@ int HakoniwaAssetDriver::is_force_stop() noexcept
 
 int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
 {
+    if (callbacks_.sleep_before_first_step()) {
+        const int sleep_result = api_->sleep_no_wait(
+            static_cast<hako_time_t>(config_.delta_time_usec),
+            &HakoniwaAssetDriver::is_force_stop);
+        if (sleep_result == EINTR) {
+            return 0;
+        }
+        if (sleep_result != 0 && !callbacks_.should_stop()) {
+            std::cerr << "[ERROR] Hakoniwa asset timing step failed: result="
+                      << sleep_result << std::endl;
+            return sleep_result;
+        }
+    }
     while (!callbacks_.should_stop()) {
+        if (!callbacks_.ready_to_step()) {
+            continue;  // lockstep: wait for the input without advancing time
+        }
         const int step_result = callbacks_.on_step();
         if (step_result != 0) {
             return step_result;

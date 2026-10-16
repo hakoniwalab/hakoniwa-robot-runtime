@@ -1,5 +1,7 @@
 #include "hakoniwa/robot_runtime/factory/manifest_factory.hpp"
 
+#include <algorithm>
+
 #include "factory/manifest_factory_internal.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/float64_pdu_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/joint_state_pdu_writer.hpp"
@@ -60,6 +62,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
         [definition = std::move(runtime_definition),
          endpoint_path = manifest.endpoint_path,
          endpoint_name = std::move(config.endpoint_name),
+         lockstep_keys = config.lockstep_inputs,
          asset_name]() mutable
         -> runner::HakoniwaRunnerResources {
         auto endpoint = std::make_unique<::hakoniwa::pdu::Endpoint>(
@@ -70,6 +73,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 "failed to open Runtime endpoint: " + endpoint_path);
         }
 
+        std::vector<std::shared_ptr<runner::ILockstepInput>> lockstep_inputs;
+        std::vector<std::string> lockstep_matched;
         try {
             auto plant = std::make_shared<
                 adapters::mujoco::MujocoActuatorPlant>(definition);
@@ -118,7 +123,15 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         *endpoint,
                         controller.pdu_robot,
                         controller.pdu_name);
-                    reader->subscribe();
+                    const auto key = controller.pdu_robot + "/" + controller.pdu_name;
+                    if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key)
+                        != lockstep_keys.end()) {
+                        reader->subscribe_lockstep();
+                        lockstep_inputs.push_back(reader);
+                        lockstep_matched.push_back(key);
+                    } else {
+                        reader->subscribe();
+                    }
                     return reader;
                 },
                 [&](const runtime::RuntimeMultiDofStateOutputConfig& output) {
@@ -154,16 +167,32 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         *endpoint,
                         friction.pdu_robot,
                         friction.pdu_name);
-                    reader->subscribe();
+                    const auto key = friction.pdu_robot + "/" + friction.pdu_name;
+                    if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key)
+                        != lockstep_keys.end()) {
+                        reader->subscribe_lockstep();
+                        lockstep_inputs.push_back(reader);
+                        lockstep_matched.push_back(key);
+                    } else {
+                        reader->subscribe();
+                    }
                     return reader;
                 }
 #endif
                 );
 
+            for (const auto& key : lockstep_keys) {
+                if (std::find(lockstep_matched.begin(), lockstep_matched.end(), key)
+                    == lockstep_matched.end()) {
+                    throw std::invalid_argument(
+                        "lockstep input " + key + " is not an Ackermann command or a geom friction input");
+                }
+            }
             return {
                 std::move(runtime_instance),
                 std::move(plant),
                 std::move(endpoint),
+                std::move(lockstep_inputs),
             };
         } catch (...) {
             endpoint->close();
