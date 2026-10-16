@@ -33,6 +33,13 @@ struct HakoniwaRunnerConfig {
     bool owns_conductor {true};
     /** The local Conductor's max_delay (used only when owns_conductor). */
     std::uint64_t conductor_max_delay_usec {100000};
+    /**
+     * Physics steps per Hakoniwa step: the asset (and its own Conductor) steps
+     * physics_substeps x the Plant's timestep, takes its inputs once and
+     * publishes its state once per Hakoniwa step (as CARLA's synchronous tick
+     * with substepping). 1 steps Hakoniwa at the Plant's timestep.
+     */
+    std::uint32_t physics_substeps {1};
 };
 
 /** Runs one pre-composed ActuatorRuntime as a Hakoniwa Asset. */

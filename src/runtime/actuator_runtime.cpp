@@ -258,7 +258,7 @@ void ActuatorRuntime::publish_state(
     }
 }
 
-RuntimeStepReport ActuatorRuntime::step()
+RuntimeStepReport ActuatorRuntime::step(const bool publish)
 {
     RuntimeStepReport report;
 
@@ -302,7 +302,9 @@ RuntimeStepReport ActuatorRuntime::step()
     report.next_step = complete_step(next_state, report.arbitration);
 
     // 8. Publish the updated physical state using the Plant-derived context.
-    publish_state(next_state, report.next_step, report.publisher_statuses);
+    if (publish) {
+        publish_state(next_state, report.next_step, report.publisher_statuses);
+    }
 
     return report;
 }
