@@ -208,6 +208,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             config.realtime_sync_cycle_msec,
             config.owns_conductor,
             config.conductor_max_delay_usec,
+            config.physics_substeps,
         });
 }
 

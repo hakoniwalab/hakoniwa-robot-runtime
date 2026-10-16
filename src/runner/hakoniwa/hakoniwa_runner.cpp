@@ -6,6 +6,7 @@
 #include "hako_conductor.h"
 #include "hakoniwa/pdu/endpoint.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -119,8 +120,13 @@ public:
                     pacer.reset();
                     return 0;
                 }
-                simulation_time_usec =
-                    resources.runtime->step().next_step.simulation_time_usec;
+                // Inputs are taken at the first substep (none are new later: the
+                // controllers hold them); the state goes out after the last.
+                const auto substeps = std::max<std::uint32_t>(1, config.physics_substeps);
+                for (std::uint32_t substep = 0; substep < substeps; ++substep) {
+                    simulation_time_usec = resources.runtime->step(substep + 1 == substeps)
+                        .next_step.simulation_time_usec;
+                }
             }
             pacer.pace(
                 static_cast<double>(simulation_time_usec) / 1'000'000.0);
@@ -208,7 +214,8 @@ int HakoniwaRunner::start()
                 "Hakoniwa Runner resources factory returned incomplete resources");
         }
 
-        const auto delta_time_usec = impl_->resources.plant->delta_time_usec();
+        const auto delta_time_usec = impl_->resources.plant->delta_time_usec()
+            * std::max<std::uint32_t>(1, impl_->config.physics_substeps);
         impl_->driver = std::make_unique<detail::HakoniwaAssetDriver>(
             detail::HakoniwaAssetDriverConfig {
                 impl_->config.asset_name,
@@ -225,7 +232,8 @@ int HakoniwaRunner::start()
     }
 
     if (impl_->config.owns_conductor) {
-        const auto delta_time_usec = impl_->resources.plant->delta_time_usec();
+        const auto delta_time_usec = impl_->resources.plant->delta_time_usec()
+            * std::max<std::uint32_t>(1, impl_->config.physics_substeps);
         hako_conductor_start(
             static_cast<hako_time_t>(delta_time_usec),
             static_cast<hako_time_t>(impl_->config.conductor_max_delay_usec));

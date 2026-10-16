@@ -53,8 +53,12 @@ public:
 #endif
         );
 
-    /** Runs exactly one Source -> Controller -> Arbiter -> Plant -> Publish step. */
-    [[nodiscard]] RuntimeStepReport step();
+    /**
+     * Runs exactly one Source -> Controller -> Arbiter -> Plant -> Publish step.
+     * publish false leaves the state outputs out (a physics substep of a longer
+     * Hakoniwa step: the state goes out after the last one).
+     */
+    [[nodiscard]] RuntimeStepReport step(bool publish = true);
 
     /**
      * Resets component/physical state and sets the Plant's actual simulation time.

@@ -27,6 +27,8 @@ struct ManifestFactoryConfig {
      * HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP.
      */
     std::vector<std::string> lockstep_inputs;
+    /** Physics steps per Hakoniwa step (HakoniwaRunnerConfig::physics_substeps). */
+    std::uint32_t physics_substeps {1};
 };
 
 /**
