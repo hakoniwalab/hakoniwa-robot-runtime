@@ -3,6 +3,7 @@
 #include "ackermann_msgs/pdu_cpptype_AckermannDrive.hpp"
 #include "ackermann_msgs/pdu_cpptype_conv_AckermannDrive.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
+#include "lockstep_pdu_channel.hpp"
 
 #include <cstddef>
 #include <mutex>
@@ -28,6 +29,26 @@ public:
     std::mutex mutex;
     std::optional<runtime::AckermannDriveCommand> pending;
     bool subscribed {false};
+
+    static std::optional<runtime::AckermannDriveCommand> decode(
+        std::span<const std::byte> payload)
+    {
+        HakoCpp_AckermannDrive pdu {};
+        ::hako::pdu::msgs::ackermann_msgs::AckermannDrive converter;
+        std::vector<std::byte> copy(payload.begin(), payload.end());
+        if (!converter.pdu2cpp(reinterpret_cast<char*>(copy.data()), pdu)) {
+            return std::nullopt;
+        }
+        return runtime::AckermannDriveCommand {
+            pdu.steering_angle,
+            pdu.steering_angle_velocity,
+            pdu.speed,
+            pdu.acceleration,
+            pdu.jerk,
+        };
+    }
+
+    LockstepPduChannel lockstep {endpoint, key};
 };
 
 AckermannDrivePduEventReader::AckermannDrivePduEventReader(
@@ -64,24 +85,42 @@ void AckermannDrivePduEventReader::subscribe()
         resolved,
         [this](const ::hakoniwa::pdu::PduResolvedKey&,
                const std::span<const std::byte> payload) {
-            HakoCpp_AckermannDrive pdu {};
-            ::hako::pdu::msgs::ackermann_msgs::AckermannDrive converter;
-            std::vector<std::byte> copy(payload.begin(), payload.end());
-            if (!converter.pdu2cpp(
-                    reinterpret_cast<char*>(copy.data()), pdu)) {
+            auto command = Impl::decode(payload);
+            if (!command) {
                 return;
             }
-            runtime::AckermannDriveCommand command {
-                pdu.steering_angle,
-                pdu.steering_angle_velocity,
-                pdu.speed,
-                pdu.acceleration,
-                pdu.jerk,
-            };
             std::lock_guard<std::mutex> lock(impl_->mutex);
             impl_->pending = command;
         });
     impl_->subscribed = true;
+}
+
+void AckermannDrivePduEventReader::subscribe_lockstep()
+{
+    if (impl_->subscribed) {
+        throw std::logic_error(
+            "AckermannDrive PDU event reader is already subscribed");
+    }
+    impl_->lockstep.enable();
+    impl_->subscribed = true;
+}
+
+void AckermannDrivePduEventReader::lockstep_prepare() noexcept
+{
+    impl_->lockstep.prepare();
+}
+
+bool AckermannDrivePduEventReader::lockstep_ready() noexcept
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->lockstep.ready([this](std::span<const std::byte> payload) {
+        auto command = Impl::decode(payload);
+        if (!command) {
+            return false;
+        }
+        impl_->pending = command;
+        return true;
+    });
 }
 
 std::optional<runtime::AckermannDriveCommand>
@@ -90,6 +129,7 @@ AckermannDrivePduEventReader::take_latest()
     std::lock_guard<std::mutex> lock(impl_->mutex);
     auto value = impl_->pending;
     impl_->pending.reset();
+    impl_->lockstep.consumed();  // lockstep: the next step waits for the next value
     return value;
 }
 
@@ -97,6 +137,7 @@ void AckermannDrivePduEventReader::reset() noexcept
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->pending.reset();
+    impl_->lockstep.consumed();
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

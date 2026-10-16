@@ -2,6 +2,7 @@
 
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/robot_runtime/runner/runner.hpp"
+#include "hakoniwa/robot_runtime/runner/lockstep_input.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "runtime/actuator_runtime.hpp"
 
@@ -9,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace hakoniwa::robot_runtime::runner {
 
@@ -16,6 +18,8 @@ struct HakoniwaRunnerResources {
     std::unique_ptr<runtime::ActuatorRuntime> runtime;
     std::shared_ptr<adapters::mujoco::MujocoActuatorPlant> plant;
     std::unique_ptr<::hakoniwa::pdu::Endpoint> endpoint;
+    /** Inputs each step waits for (lockstep mode; empty otherwise). */
+    std::vector<std::shared_ptr<ILockstepInput>> lockstep_inputs;
 };
 
 using HakoniwaRunnerResourcesFactory =

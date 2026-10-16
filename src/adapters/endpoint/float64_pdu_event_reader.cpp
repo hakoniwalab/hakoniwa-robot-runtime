@@ -2,6 +2,7 @@
 
 #include "hakoniwa/pdu/converter/std_msgs/float64.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
+#include "lockstep_pdu_channel.hpp"
 #include "std_msgs/pdu_cpptype_Float64.hpp"
 #include "std_msgs/pdu_cpptype_conv_Float64.hpp"
 
@@ -29,6 +30,18 @@ public:
     std::mutex mutex;
     std::optional<double> pending;
     bool subscribed {false};
+    LockstepPduChannel lockstep {endpoint, key};
+
+    static std::optional<double> decode(std::span<const std::byte> payload)
+    {
+        HakoCpp_Float64 pdu {};
+        ::hako::pdu::msgs::std_msgs::Float64 converter;
+        std::vector<std::byte> copy(payload.begin(), payload.end());
+        if (!converter.pdu2cpp(reinterpret_cast<char*>(copy.data()), pdu)) {
+            return std::nullopt;
+        }
+        return ::hako::robots::pdu::converter::std_msgs::ToDouble(pdu);
+    }
 };
 
 Float64PduEventReader::Float64PduEventReader(
@@ -76,11 +89,39 @@ void Float64PduEventReader::subscribe()
     impl_->subscribed = true;
 }
 
+void Float64PduEventReader::subscribe_lockstep()
+{
+    if (impl_->subscribed) {
+        throw std::logic_error("Float64 PDU event reader is already subscribed");
+    }
+    impl_->lockstep.enable();
+    impl_->subscribed = true;
+}
+
+void Float64PduEventReader::lockstep_prepare() noexcept
+{
+    impl_->lockstep.prepare();
+}
+
+bool Float64PduEventReader::lockstep_ready() noexcept
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->lockstep.ready([this](std::span<const std::byte> payload) {
+        auto value = Impl::decode(payload);
+        if (!value) {
+            return false;
+        }
+        impl_->pending = value;
+        return true;
+    });
+}
+
 std::optional<double> Float64PduEventReader::take_latest()
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     auto value = impl_->pending;
     impl_->pending.reset();
+    impl_->lockstep.consumed();
     return value;
 }
 
@@ -88,6 +129,7 @@ void Float64PduEventReader::reset() noexcept
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->pending.reset();
+    impl_->lockstep.consumed();
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

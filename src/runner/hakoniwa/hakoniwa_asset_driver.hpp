@@ -24,6 +24,13 @@ public:
     virtual int on_step() noexcept = 0;
     virtual int on_reset() noexcept = 0;
     [[nodiscard]] virtual bool should_stop() const noexcept = 0;
+    /** Lockstep: false while an input the next step waits for has not arrived
+     * (runner::ILockstepInput); the Driver then neither steps nor advances time. */
+    [[nodiscard]] virtual bool ready_to_step() noexcept { return true; }
+    /** Lockstep: wait one step of time before the first step. That first wait is
+     * where Hakoniwa's PDU sync mode holds time until every asset has initialized
+     * (and written its initial PDUs); the first step then sees them. */
+    [[nodiscard]] virtual bool sleep_before_first_step() const noexcept { return false; }
 };
 
 /** Test seam around the process-global Hakoniwa C asset API. */

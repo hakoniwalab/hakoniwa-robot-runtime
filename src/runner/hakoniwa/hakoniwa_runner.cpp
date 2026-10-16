@@ -76,12 +76,30 @@ public:
 
     int on_initialize() noexcept override
     {
+        for (const auto& input : resources.lockstep_inputs) {
+            input->lockstep_prepare();
+        }
         if (resources.endpoint == nullptr
             || resources.endpoint->post_start() != HAKO_PDU_ERR_OK) {
             fail("failed to complete endpoint post_start");
             return -1;
         }
         return 0;
+    }
+
+    bool sleep_before_first_step() const noexcept override
+    {
+        return !resources.lockstep_inputs.empty();
+    }
+
+    bool ready_to_step() noexcept override
+    {
+        for (const auto& input : resources.lockstep_inputs) {
+            if (!input->lockstep_ready()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     int on_step() noexcept override

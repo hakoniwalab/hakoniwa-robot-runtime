@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace hakoniwa::robot_runtime::factory {
 
@@ -20,6 +21,12 @@ struct ManifestFactoryConfig {
      * slowest asset. Used only when owns_conductor.
      */
     std::uint64_t conductor_max_delay_usec {100000};
+    /**
+     * Lockstep inputs, "robot/pdu" (an Ackermann controller's command): each
+     * step waits until a new value has arrived (runner::ILockstepInput). Needs
+     * HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP.
+     */
+    std::vector<std::string> lockstep_inputs;
 };
 
 /**
