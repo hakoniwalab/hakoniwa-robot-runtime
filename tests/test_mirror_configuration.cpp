@@ -54,6 +54,11 @@ void test_mirror_configuration_contract()
             {"position_m", json::array({7.5, -45.0, 6.25})},
             {"orientation_rpy_rad", json::array({0.0, 0.0, 0.75})},
         }})},
+        {"person_vehicles", json::array({{
+            {"name", "Car-1"},
+            {"mjcf_freejoint", "car_1_freejoint"},
+            {"seats", {{"driver", json::array({0.3, 0.4, 0.5})}}},
+        }})},
     });
     const auto actuator_path = root / "actuator.json";
     write_json(actuator_path, {
@@ -134,6 +139,10 @@ void test_mirror_configuration_contract()
         == "car_1_freejoint");
     assert(definition.initial_body_poses[0].position.z == 6.25);
     assert(definition.initial_body_poses[0].rpy_rad[2] == 0.75);
+    assert(definition.person_vehicles.size() == 1);
+    assert(definition.person_vehicles[0].name == "Car-1");
+    assert(definition.person_vehicles[0].seats.size() == 1);
+    assert(definition.person_vehicles[0].seats[0].offset.y == 0.4);
     assert(definition.mirror_bodies.size() == 1);
     assert(definition.mirror_bodies[0].mirror_id == "Drone-1");
     assert(definition.mirror_bodies[0].velocity_pdu_name == "velocity");

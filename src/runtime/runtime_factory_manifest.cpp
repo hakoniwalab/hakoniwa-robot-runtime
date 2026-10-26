@@ -73,6 +73,69 @@ bool load_initial_body_poses(
     return true;
 }
 
+bool load_person_vehicles(
+    const json& runtime_root,
+    RuntimeDefinition& definition,
+    std::string* error)
+{
+    if (!runtime_root.contains("person_vehicles")) {
+        return true;
+    }
+    const auto& vehicles = runtime_root.at("person_vehicles");
+    if (!vehicles.is_array()) {
+        return fail(error, "person_vehicles must be an array");
+    }
+    std::unordered_set<std::string> names;
+    std::unordered_set<std::string> freejoints;
+    for (const auto& vehicle : vehicles) {
+        RuntimePersonVehicleConfig config;
+        if (!required_string(vehicle, "name", config.name, error, "person vehicle")
+            || !required_string(
+                vehicle, "mjcf_freejoint", config.mjcf_freejoint,
+                error, "person vehicle")) {
+            return false;
+        }
+        if (!names.insert(config.name).second) {
+            return fail(error, "duplicate person vehicle name: " + config.name);
+        }
+        if (!freejoints.insert(config.mjcf_freejoint).second) {
+            return fail(error,
+                "duplicate person vehicle freejoint: " + config.mjcf_freejoint);
+        }
+        if (!vehicle.contains("seats") || !vehicle.at("seats").is_object()
+            || vehicle.at("seats").empty()) {
+            return fail(error,
+                "person vehicle seats must be a non-empty object: " + config.name);
+        }
+        for (const auto& [seat_name, value] : vehicle.at("seats").items()) {
+            if (seat_name.empty() || !value.is_array() || value.size() != 3) {
+                return fail(error,
+                    "person vehicle seat requires a name and three-number array: "
+                    + config.name + "/" + seat_name);
+            }
+            RuntimePersonSeatConfig seat;
+            seat.name = seat_name;
+            double* coordinates[] {&seat.offset.x, &seat.offset.y, &seat.offset.z};
+            for (std::size_t index = 0; index < 3; ++index) {
+                if (!value.at(index).is_number()) {
+                    return fail(error,
+                        "person vehicle seat contains a non-number: "
+                        + config.name + "/" + seat_name);
+                }
+                *coordinates[index] = value.at(index).get<double>();
+                if (!std::isfinite(*coordinates[index])) {
+                    return fail(error,
+                        "person vehicle seat contains a non-finite value: "
+                        + config.name + "/" + seat_name);
+                }
+            }
+            config.seats.push_back(std::move(seat));
+        }
+        definition.person_vehicles.push_back(std::move(config));
+    }
+    return true;
+}
+
 } // namespace
 
 bool fail(std::string* error, std::string message)
@@ -319,6 +382,8 @@ bool resolve_runtime_definition(
     RuntimeDefinition definition;
     definition.model_path = input.model_path;
     if (!detail::load_initial_body_poses(
+            context.runtime_root, definition, error_message)
+        || !detail::load_person_vehicles(
             context.runtime_root, definition, error_message)
         || !detail::load_actuator_definitions(
             context, definition, error_message)

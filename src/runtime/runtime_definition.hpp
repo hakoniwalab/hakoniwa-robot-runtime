@@ -17,6 +17,17 @@ struct RuntimeInitialBodyPoseConfig {
     std::array<double, 3> rpy_rad {0.0, 0.0, 0.0};
 };
 
+struct RuntimePersonSeatConfig {
+    std::string name;
+    Vector3State offset;
+};
+
+struct RuntimePersonVehicleConfig {
+    std::string name;
+    std::string mjcf_freejoint;
+    std::vector<RuntimePersonSeatConfig> seats;
+};
+
 struct RuntimeActuatorConfig {
     std::string component_id;
     std::string component_type;
@@ -184,6 +195,7 @@ struct RuntimeGeomFrictionConfig {
 struct RuntimeDefinition {
     std::string model_path;
     std::vector<RuntimeInitialBodyPoseConfig> initial_body_poses;
+    std::vector<RuntimePersonVehicleConfig> person_vehicles;
     std::vector<RuntimeActuatorConfig> actuators;
     std::vector<RuntimeStateOutputConfig> state_outputs;
     std::vector<RuntimeMultiDofStateOutputConfig> multi_dof_state_outputs;

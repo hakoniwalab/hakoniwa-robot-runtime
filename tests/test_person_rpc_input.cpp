@@ -3,6 +3,7 @@
 
 #include <mujoco/mujoco.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -99,12 +100,83 @@ fs::path write_model()
     <geom name="ground" type="plane" size="20 20 0.1" friction="0.01 0.001 0.0001"/>)";
     add_person(model, "A", 0.0, 0.66);
     add_person(model, "B", 2.0, 0.462);
+    model << "<body name=\"Car-1/body\" pos=\"0 0 0.2\" gravcomp=\"1\">"
+          << "<freejoint name=\"Car-1/freejoint\"/>"
+          << "<geom type=\"box\" size=\"0.5 0.3 0.2\" mass=\"100\" "
+             "contype=\"0\" conaffinity=\"0\"/></body>";
     model << "<geom name=\"fixed_box\" type=\"box\" pos=\"4 0 0.5\" size=\"0.2 0.5 0.5\"/>";
+    model << "<geom name=\"dismount_box\" type=\"box\" pos=\"4 1.15 0.5\" size=\"0.2 0.5 0.5\"/>";
     model << R"(</worldbody><actuator>)";
     add_actuators(model, "A");
     add_actuators(model, "B");
     model << "</actuator></mujoco>";
     return path;
+}
+
+runtime::RuntimeDefinition definition_with_vehicle(const fs::path& model)
+{
+    runtime::RuntimeDefinition definition;
+    definition.model_path = model.string();
+    runtime::RuntimePersonVehicleConfig vehicle;
+    vehicle.name = "Car-1";
+    vehicle.mjcf_freejoint = "Car-1/freejoint";
+    vehicle.seats.push_back({"driver", {0.3, 0.4, 0.5}});
+    definition.person_vehicles.push_back(std::move(vehicle));
+    return definition;
+}
+
+runtime::Vector3State rotate_vector(
+    const runtime::QuaternionState& q,
+    const runtime::Vector3State& vector)
+{
+    const double x = q.x;
+    const double y = q.y;
+    const double z = q.z;
+    const double w = q.w;
+    return {
+        (1.0 - 2.0 * (y * y + z * z)) * vector.x
+            + 2.0 * (x * y - z * w) * vector.y
+            + 2.0 * (x * z + y * w) * vector.z,
+        2.0 * (x * y + z * w) * vector.x
+            + (1.0 - 2.0 * (x * x + z * z)) * vector.y
+            + 2.0 * (y * z - x * w) * vector.z,
+        2.0 * (x * z - y * w) * vector.x
+            + 2.0 * (y * z + x * w) * vector.y
+            + (1.0 - 2.0 * (x * x + y * y)) * vector.z,
+    };
+}
+
+runtime::Vector3State visual_hip(
+    const adapters::hakoniwa::PersonStepState& state,
+    const double hip_height)
+{
+    const auto offset = rotate_vector(
+        state.orientation, {0.0, 0.0, hip_height});
+    return {
+        state.position.x + offset.x,
+        state.position.y + offset.y,
+        state.position.z + offset.z,
+    };
+}
+
+double quaternion_yaw(const runtime::QuaternionState& q)
+{
+    return std::atan2(
+        2.0 * (q.w * q.z + q.x * q.y),
+        1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+}
+
+double quaternion_pitch(const runtime::QuaternionState& q)
+{
+    return std::asin(std::clamp(
+        2.0 * (q.w * q.y - q.z * q.x), -1.0, 1.0));
+}
+
+double quaternion_roll(const runtime::QuaternionState& q)
+{
+    return std::atan2(
+        2.0 * (q.w * q.x + q.y * q.z),
+        1.0 - 2.0 * (q.x * q.x + q.y * q.y));
 }
 
 class TemporaryModel final {
@@ -374,6 +446,113 @@ void test_gestures_and_sitting()
     REQUIRE(std::fabs(child_hip_height - 0.44) < 0.02);
 }
 
+void test_vehicle_ride_and_posture()
+{
+    const TemporaryModel temporary_model;
+    adapters::mujoco::MujocoActuatorPlant plant(
+        definition_with_vehicle(temporary_model.path));
+    plant.bind_person("A");
+    const int vehicle_joint = mj_name2id(
+        plant.model(), mjOBJ_JOINT, "Car-1/freejoint");
+    const int collision = mj_name2id(
+        plant.model(), mjOBJ_GEOM, "A/person_collision");
+    REQUIRE(vehicle_joint >= 0);
+    REQUIRE(collision >= 0);
+    const int vehicle_qpos = plant.model()->jnt_qposadr[vehicle_joint];
+    const int vehicle_qvel = plant.model()->jnt_dofadr[vehicle_joint];
+
+    // Omitting the seat name selects driver. The response's visual hip is
+    // exactly on the body-frame seat after the same physics step.
+    REQUIRE(plant.apply_person_command(
+        "A", command(0.0, 0.0, 0.0, "sit", "Car-1")) == 0);
+    (void)plant.step({});
+    auto state = plant.person_state("A");
+    auto hip = visual_hip(state, 0.66);
+    const int vehicle_body = plant.model()->jnt_bodyid[vehicle_joint];
+    REQUIRE(std::fabs(hip.x - (plant.data()->xpos[3 * vehicle_body] + 0.3)) < 1.0e-6);
+    REQUIRE(std::fabs(hip.y - (plant.data()->xpos[3 * vehicle_body + 1] + 0.4)) < 1.0e-6);
+    REQUIRE(std::fabs(hip.z - (plant.data()->xpos[3 * vehicle_body + 2] + 0.5)) < 1.0e-6);
+    REQUIRE(std::fabs(quaternion_yaw(state.orientation)) < 1.0e-6);
+    REQUIRE(plant.model()->geom_contype[collision] == 0);
+    REQUIRE(plant.model()->geom_conaffinity[collision] == 0);
+
+    // A 5 m/s vehicle is followed without prediction or a one-step lag.
+    for (int step = 0; step < 100; ++step) {
+        plant.data()->qvel[vehicle_qvel] = 5.0;
+        (void)plant.step({});
+        state = plant.person_state("A");
+        hip = visual_hip(state, 0.66);
+        REQUIRE(std::fabs(
+            hip.x - (plant.data()->xpos[3 * vehicle_body] + 0.3)) < 0.001);
+        REQUIRE(std::fabs(
+            hip.y - (plant.data()->xpos[3 * vehicle_body + 1] + 0.4)) < 0.001);
+        REQUIRE(std::fabs(
+            hip.z - (plant.data()->xpos[3 * vehicle_body + 2] + 0.5)) < 0.001);
+    }
+
+    // Rotating the vehicle rotates both its seat offset and the rider.
+    plant.data()->qvel[vehicle_qvel] = 0.0;
+    plant.data()->qpos[vehicle_qpos + 3] = std::cos(pi / 4.0);
+    plant.data()->qpos[vehicle_qpos + 4] = 0.0;
+    plant.data()->qpos[vehicle_qpos + 5] = 0.0;
+    plant.data()->qpos[vehicle_qpos + 6] = std::sin(pi / 4.0);
+    mj_forward(plant.model(), plant.data());
+    (void)plant.step({});
+    state = plant.person_state("A");
+    hip = visual_hip(state, 0.66);
+    REQUIRE(std::fabs(
+        hip.x - (plant.data()->xpos[3 * vehicle_body] - 0.4)) < 0.001);
+    REQUIRE(std::fabs(
+        hip.y - (plant.data()->xpos[3 * vehicle_body + 1] + 0.3)) < 0.001);
+    REQUIRE(std::fabs(quaternion_yaw(state.orientation) - pi / 2.0) < 0.001);
+
+    // Whole-body posture is visual-only and approaches its target at 90 deg/s.
+    REQUIRE(plant.apply_person_command(
+        "A", command(0.0, 0.0, 0.0, "sit_drowsy", "Car-1/driver")) == 0);
+    (void)plant.step({});
+    state = plant.person_state("A");
+    REQUIRE(std::fabs(quaternion_pitch(state.orientation)) <= radians(0.9) + 1.0e-6);
+    for (int step = 0; step < 199; ++step) (void)plant.step({});
+    state = plant.person_state("A");
+    REQUIRE(quaternion_pitch(state.orientation) >= radians(16.0) - 1.0e-6);
+    REQUIRE(quaternion_pitch(state.orientation) <= radians(28.0) + 1.0e-6);
+    REQUIRE(std::fabs(quaternion_roll(state.orientation)) <= radians(5.0) + 1.0e-6);
+
+    // Empty ride dismounts on the seat's outside at 0.75 + abs(0.4),
+    // restores ground collision, and can then be stopped by a box.
+    plant.data()->qpos[vehicle_qpos + 3] = 1.0;
+    plant.data()->qpos[vehicle_qpos + 6] = 0.0;
+    plant.data()->qpos[vehicle_qpos] = 0.0;
+    plant.data()->qpos[vehicle_qpos + 1] = 0.0;
+    mj_forward(plant.model(), plant.data());
+    REQUIRE(plant.apply_person_command(
+        "A", command(0.0, 0.0, 0.0, "idle", "")) == 0);
+    (void)plant.step({});
+    state = plant.person_state("A");
+    REQUIRE(std::fabs(state.position.x - 0.3) < 0.001);
+    REQUIRE(std::fabs(state.position.y - 1.15) < 0.001);
+    REQUIRE(std::fabs(state.position.z) < 0.02);
+    REQUIRE(plant.model()->geom_contype[collision] == 1);
+    REQUIRE(plant.model()->geom_conaffinity[collision] == 1);
+    REQUIRE(plant.apply_person_command(
+        "A", command(1.0, 0.0, 0.0, "walk")) == 0);
+    for (int step = 0; step < 600; ++step) (void)plant.step({});
+    REQUIRE(plant.person_state("A").position.x < 3.75);
+
+    // Unknown vehicle/seat requests do not replace the accepted standing state.
+    (void)plant.reset();
+    const auto standing = plant.person_state("A");
+    REQUIRE(plant.apply_person_command(
+        "A", command(0.0, 0.0, 0.0, "sit", "Missing/driver")) != 0);
+    REQUIRE(plant.apply_person_command(
+        "A", command(0.0, 0.0, 0.0, "sit", "Car-1/missing")) != 0);
+    (void)plant.step({});
+    const auto rejected = plant.person_state("A");
+    REQUIRE(std::fabs(rejected.position.x - standing.position.x) < 0.001);
+    REQUIRE(std::fabs(rejected.position.y - standing.position.y) < 0.001);
+    REQUIRE(plant.model()->geom_contype[collision] == 1);
+}
+
 } // namespace
 
 int main()
@@ -381,5 +560,6 @@ int main()
     test_codec();
     test_motion_and_gait();
     test_gestures_and_sitting();
+    test_vehicle_ride_and_posture();
     return 0;
 }
