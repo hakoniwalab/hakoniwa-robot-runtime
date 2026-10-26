@@ -43,7 +43,7 @@ public:
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
     /** Binds one `<person>/...` hakoniwa_person model to PersonStep. */
-    void bind_person(std::string person_name);
+    void bind_person(std::string person_name, double initial_yaw_rad = 0.0);
     /** Keeps the latest body-frame command active until the next request. */
     [[nodiscard]] std::uint32_t apply_person_command(
         const std::string& person_name,

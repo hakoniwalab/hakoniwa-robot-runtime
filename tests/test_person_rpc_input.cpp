@@ -292,6 +292,38 @@ void test_motion_and_gait()
 
 }
 
+void test_initial_world_yaw()
+{
+    const TemporaryModel temporary_model;
+    for (const double yaw : {0.0, pi / 2.0, radians(-21.144)}) {
+        runtime::RuntimeDefinition definition;
+        definition.model_path = temporary_model.path.string();
+        adapters::mujoco::MujocoActuatorPlant plant(definition);
+        plant.bind_person("A", yaw);
+        REQUIRE(std::fabs(
+            quaternion_yaw(plant.person_state("A").orientation) - yaw)
+            < 1.0e-9);
+        (void)plant.reset();
+        REQUIRE(std::fabs(
+            quaternion_yaw(plant.person_state("A").orientation) - yaw)
+            < 1.0e-9);
+    }
+
+    // ENU east is MuJoCo -Y. A person whose world yaw is east and receives
+    // a 1.2 m/s body-forward command moves east and remains facing east.
+    runtime::RuntimeDefinition definition;
+    definition.model_path = temporary_model.path.string();
+    adapters::mujoco::MujocoActuatorPlant plant(definition);
+    plant.bind_person("A", -pi / 2.0);
+    REQUIRE(plant.apply_person_command(
+        "A", command(1.2, 0.0, 0.0, "walk")) == 0);
+    for (int step = 0; step < 100; ++step) (void)plant.step({});
+    const auto east = plant.person_state("A");
+    REQUIRE(east.position.y < -1.1);
+    REQUIRE(std::fabs(east.position.x) < 0.1);
+    REQUIRE(std::fabs(quaternion_yaw(east.orientation) + pi / 2.0) < 0.01);
+}
+
 void test_gestures_and_sitting()
 {
     const TemporaryModel temporary_model;
@@ -507,6 +539,16 @@ void test_vehicle_ride_and_posture()
     REQUIRE(std::fabs(
         hip.y - (plant.data()->xpos[3 * vehicle_body + 1] + 0.3)) < 0.001);
     REQUIRE(std::fabs(quaternion_yaw(state.orientation) - pi / 2.0) < 0.001);
+
+    // The Rainbow Bridge heading is preserved exactly for a rider; the
+    // person's spawn yaw/reference must not be subtracted a second time.
+    constexpr double rainbow_yaw = -21.144 * pi / 180.0;
+    plant.data()->qpos[vehicle_qpos + 3] = std::cos(rainbow_yaw / 2.0);
+    plant.data()->qpos[vehicle_qpos + 6] = std::sin(rainbow_yaw / 2.0);
+    mj_forward(plant.model(), plant.data());
+    (void)plant.step({});
+    state = plant.person_state("A");
+    REQUIRE(std::fabs(quaternion_yaw(state.orientation) - rainbow_yaw) < 0.001);
 
     // Whole-body posture is visual-only and approaches its target at 90 deg/s.
     REQUIRE(plant.apply_person_command(
@@ -752,6 +794,7 @@ int main()
 {
     test_codec();
     test_motion_and_gait();
+    test_initial_world_yaw();
     test_gestures_and_sitting();
     test_vehicle_ride_and_posture();
     test_person_contact_events();

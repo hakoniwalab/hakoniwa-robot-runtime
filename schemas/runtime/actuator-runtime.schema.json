@@ -30,6 +30,18 @@
         }
       }
     },
+    "person_initial_poses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "yaw_rad"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "yaw_rad": { "type": "number" }
+        }
+      }
+    },
     "person_vehicles": {
       "type": "array",
       "items": {

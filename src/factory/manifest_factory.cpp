@@ -241,7 +241,17 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 throw std::invalid_argument("duplicate PersonStep person");
             }
             for (const auto& person : rpc_people) {
-                plant->bind_person(person);
+                const auto initial = std::find_if(
+                    definition.person_initial_poses.begin(),
+                    definition.person_initial_poses.end(),
+                    [&person](const auto& pose) {
+                        return pose.name == person;
+                    });
+                plant->bind_person(
+                    person,
+                    initial == definition.person_initial_poses.end()
+                        ? 0.0
+                        : initial->yaw_rad);
             }
 #endif
             auto runtime_instance = runtime::build_runtime(

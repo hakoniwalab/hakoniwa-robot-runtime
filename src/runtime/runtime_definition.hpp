@@ -28,6 +28,12 @@ struct RuntimePersonVehicleConfig {
     std::vector<RuntimePersonSeatConfig> seats;
 };
 
+/** Initial world yaw of a PersonStep-controlled articulated person. */
+struct RuntimePersonInitialPoseConfig {
+    std::string name;
+    double yaw_rad {0.0};
+};
+
 struct RuntimeActuatorConfig {
     std::string component_id;
     std::string component_type;
@@ -195,6 +201,7 @@ struct RuntimeGeomFrictionConfig {
 struct RuntimeDefinition {
     std::string model_path;
     std::vector<RuntimeInitialBodyPoseConfig> initial_body_poses;
+    std::vector<RuntimePersonInitialPoseConfig> person_initial_poses;
     std::vector<RuntimePersonVehicleConfig> person_vehicles;
     std::vector<RuntimeActuatorConfig> actuators;
     std::vector<RuntimeStateOutputConfig> state_outputs;

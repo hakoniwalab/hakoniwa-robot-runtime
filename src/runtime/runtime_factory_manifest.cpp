@@ -136,6 +136,43 @@ bool load_person_vehicles(
     return true;
 }
 
+bool load_person_initial_poses(
+    const json& runtime_root,
+    RuntimeDefinition& definition,
+    std::string* error)
+{
+    if (!runtime_root.contains("person_initial_poses")) {
+        return true;
+    }
+    const auto& poses = runtime_root.at("person_initial_poses");
+    if (!poses.is_array()) {
+        return fail(error, "person_initial_poses must be an array");
+    }
+    std::unordered_set<std::string> names;
+    for (const auto& pose : poses) {
+        RuntimePersonInitialPoseConfig config;
+        if (!required_string(
+                pose, "name", config.name, error, "person initial pose")) {
+            return false;
+        }
+        if (!names.insert(config.name).second) {
+            return fail(error,
+                "duplicate person initial pose name: " + config.name);
+        }
+        if (!pose.contains("yaw_rad") || !pose.at("yaw_rad").is_number()) {
+            return fail(error,
+                "person initial pose requires numeric yaw_rad: " + config.name);
+        }
+        config.yaw_rad = pose.at("yaw_rad").get<double>();
+        if (!std::isfinite(config.yaw_rad)) {
+            return fail(error,
+                "person initial pose yaw_rad must be finite: " + config.name);
+        }
+        definition.person_initial_poses.push_back(std::move(config));
+    }
+    return true;
+}
+
 } // namespace
 
 bool fail(std::string* error, std::string message)
@@ -382,6 +419,8 @@ bool resolve_runtime_definition(
     RuntimeDefinition definition;
     definition.model_path = input.model_path;
     if (!detail::load_initial_body_poses(
+            context.runtime_root, definition, error_message)
+        || !detail::load_person_initial_poses(
             context.runtime_root, definition, error_message)
         || !detail::load_person_vehicles(
             context.runtime_root, definition, error_message)

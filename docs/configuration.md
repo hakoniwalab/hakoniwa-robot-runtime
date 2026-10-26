@@ -744,6 +744,24 @@ RuntimeはMJBを変更せず、指定した姿勢をdataの`qpos`へ設定して
 同じ姿勢へ戻ります。対象jointはMuJoCo freejointでなければならず、同じ
 freejointを複数回指定できません。
 
+### 4.3 `person_initial_poses`
+
+`person_initial_poses` は、PersonStep に bind する人の `turn_joint` qposへ
+適用する任意の初期 world yaw です。角度は MuJoCo world frame の radianで
+指定します。`turn_joint` の `ref` は0のままとし、Runtimeは起動時とreset後に
+同じyawをqposへ設定します。これにより、Runtimeが読むworld yawとMuJoCoが
+描画する身体の向きが一致します。
+
+```json
+{
+  "person_initial_poses": [
+    {"name": "Driver-1", "yaw_rad": -1.939759}
+  ]
+}
+```
+
+同じ人を複数回指定できません。ここにないPersonStep対象の初期yawは0です。
+
 Schema:
 
 ```text
