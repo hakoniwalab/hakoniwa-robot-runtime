@@ -87,6 +87,31 @@ public:
         int body_id {-1};
     };
 
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    struct PersonBinding {
+        std::string name;
+        int body_id {-1};
+        int slide_x_qpos {-1};
+        int slide_y_qpos {-1};
+        int slide_z_qpos {-1};
+        int turn_qpos {-1};
+        int slide_x_qvel {-1};
+        int slide_y_qvel {-1};
+        int turn_qvel {-1};
+        int move_x_actuator {-1};
+        int move_y_actuator {-1};
+        int lift_actuator {-1};
+        int turn_actuator {-1};
+        std::array<int, adapters::hakoniwa::person_limb_joint_names.size()>
+            limb_qpos {};
+        adapters::hakoniwa::PersonStepCommand command;
+        std::array<double, adapters::hakoniwa::person_limb_joint_names.size()>
+            gait_angles {};
+        double gait_phase {0.0};
+        double gait_clock {0.0};
+    };
+#endif
+
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     struct LocalContactBody {
         std::string body_id;
@@ -230,6 +255,305 @@ public:
         bind_geom_frictions(definition.geom_frictions);
 #endif
     }
+
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    static std::string person_model_name(
+        const mjModel* model,
+        const std::string& person,
+        const std::string_view suffix,
+        const mjtObj object_type)
+    {
+        const std::array<std::string, 3> candidates {
+            person + "/" + std::string(suffix),
+            person + "_" + std::string(suffix),
+            std::string(suffix),
+        };
+        for (const auto& candidate : candidates) {
+            if (mj_name2id(model, object_type, candidate.c_str()) >= 0) {
+                return candidate;
+            }
+        }
+        throw std::invalid_argument(
+            "person " + person + " is missing MuJoCo object "
+            + std::string(suffix));
+    }
+
+    void bind_person(std::string person_name)
+    {
+        if (person_name.empty()) {
+            throw std::invalid_argument("person name must not be empty");
+        }
+        if (person_binding_by_name.contains(person_name)) {
+            throw std::invalid_argument("duplicate PersonStep person: " + person_name);
+        }
+        auto* model = world->getModel();
+        if (!person_terrain_groups_configured) {
+            for (int geom = 0; geom < model->ngeom; ++geom) {
+                if (model->geom_type[geom] == mjGEOM_HFIELD
+                    || model->geom_type[geom] == mjGEOM_PLANE) {
+                    model->geom_group[geom] = 4;
+                }
+            }
+            person_terrain_groups_configured = true;
+        }
+        auto joint_id = [&](const std::string_view suffix) {
+            return require_named_id(model, mjOBJ_JOINT,
+                person_model_name(model, person_name, suffix, mjOBJ_JOINT),
+                "person joint");
+        };
+        auto actuator_id = [&](const std::string_view suffix) {
+            return require_named_id(model, mjOBJ_ACTUATOR,
+                person_model_name(model, person_name, suffix, mjOBJ_ACTUATOR),
+                "person actuator");
+        };
+        const int slide_x = joint_id("slide_x_joint");
+        const int slide_y = joint_id("slide_y_joint");
+        const int slide_z = joint_id("slide_z_joint");
+        const int turn = joint_id("turn_joint");
+        PersonBinding binding;
+        binding.name = person_name;
+        binding.body_id = require_named_id(model, mjOBJ_BODY,
+            person_model_name(model, binding.name, "person", mjOBJ_BODY),
+            "person body");
+        binding.slide_x_qpos = model->jnt_qposadr[slide_x];
+        binding.slide_y_qpos = model->jnt_qposadr[slide_y];
+        binding.slide_z_qpos = model->jnt_qposadr[slide_z];
+        binding.turn_qpos = model->jnt_qposadr[turn];
+        binding.slide_x_qvel = model->jnt_dofadr[slide_x];
+        binding.slide_y_qvel = model->jnt_dofadr[slide_y];
+        binding.turn_qvel = model->jnt_dofadr[turn];
+        binding.move_x_actuator = actuator_id("move_x");
+        binding.move_y_actuator = actuator_id("move_y");
+        binding.lift_actuator = actuator_id("lift");
+        binding.turn_actuator = actuator_id("turn");
+        for (std::size_t index = 0; index < binding.limb_qpos.size(); ++index) {
+            const int limb = joint_id(
+                adapters::hakoniwa::person_limb_joint_names[index]);
+            binding.limb_qpos[index] = model->jnt_qposadr[limb];
+        }
+        person_binding_by_name.emplace(binding.name, person_bindings.size());
+        person_bindings.push_back(std::move(binding));
+        mj_forward(model, world->getData());
+        auto& added = person_bindings.back();
+        const double ground = ground_under(added);
+        world->getData()->qpos[added.slide_z_qpos] = ground;
+        world->getData()->ctrl[added.lift_actuator] = ground;
+        mj_forward(model, world->getData());
+    }
+
+    double ray_down(
+        const double x,
+        const double y,
+        const double z,
+        const int body_exclude,
+        const bool terrain_only) const
+    {
+        mjtNum point[3] {x, y, z};
+        mjtNum direction[3] {0.0, 0.0, -1.0};
+        mjtByte groups[mjNGROUP] {};
+        if (terrain_only) {
+            groups[4] = 1;
+        } else {
+            groups[0] = 1;
+            groups[4] = 1;
+        }
+        int geom_id = -1;
+        mjtNum normal[3] {};
+        const mjtNum distance = mj_ray(
+            world->getModel(), world->getData(), point, direction,
+            groups, 1, body_exclude, &geom_id, normal);
+        return distance >= 0.0
+            ? z - static_cast<double>(distance)
+            : std::numeric_limits<double>::quiet_NaN();
+    }
+
+    double ground_under(const PersonBinding& person) const
+    {
+        const auto* data = world->getData();
+        const double x = data->xpos[3 * person.body_id];
+        const double y = data->xpos[3 * person.body_id + 1];
+        const double z = data->xpos[3 * person.body_id + 2];
+        double terrain = ray_down(x, y, 10'000.0, -1, true);
+        if (!std::isfinite(terrain)) terrain = 0.0;
+        double hit = ray_down(
+            x, y, std::max(z, terrain) + 0.37, person.body_id, false);
+        if (!std::isfinite(hit)) hit = terrain;
+        return std::max(terrain, hit);
+    }
+
+    PersonBinding& person(const std::string& name)
+    {
+        const auto found = person_binding_by_name.find(name);
+        if (found == person_binding_by_name.end()) {
+            throw std::invalid_argument("PersonStep person is not bound: " + name);
+        }
+        return person_bindings[found->second];
+    }
+
+    const PersonBinding& person(const std::string& name) const
+    {
+        const auto found = person_binding_by_name.find(name);
+        if (found == person_binding_by_name.end()) {
+            throw std::invalid_argument("PersonStep person is not bound: " + name);
+        }
+        return person_bindings[found->second];
+    }
+
+    std::uint32_t apply_person_command(
+        const std::string& name,
+        const adapters::hakoniwa::PersonStepCommand& command)
+    {
+        auto& binding = person(name);
+        if (!command.ride.empty()) {
+            return 1;
+        }
+        const auto finite = [](const double value) {
+            return std::isfinite(value);
+        };
+        if (!finite(command.linear_velocity.x)
+            || !finite(command.linear_velocity.y)
+            || !finite(command.linear_velocity.z)
+            || !finite(command.angular_velocity.x)
+            || !finite(command.angular_velocity.y)
+            || !finite(command.angular_velocity.z)) {
+            return 2;
+        }
+        binding.command = command;
+        if (binding.command.animation != "auto"
+            && binding.command.animation != "walk"
+            && binding.command.animation != "idle") {
+            binding.command.animation = "idle";
+        }
+        return 0;
+    }
+
+    void apply_person_controls()
+    {
+        auto* data = world->getData();
+        for (auto& binding : person_bindings) {
+            const double yaw = data->qpos[binding.turn_qpos];
+            const double c = std::cos(yaw);
+            const double s = std::sin(yaw);
+            const double body_x = binding.command.linear_velocity.x;
+            const double body_y = binding.command.linear_velocity.y;
+            data->ctrl[binding.move_x_actuator] = c * body_x - s * body_y;
+            data->ctrl[binding.move_y_actuator] = s * body_x + c * body_y;
+            data->ctrl[binding.turn_actuator] =
+                std::clamp(binding.command.angular_velocity.z, -3.0, 3.0);
+            data->ctrl[binding.lift_actuator] = ground_under(binding);
+        }
+    }
+
+    static double approach(
+        const double current,
+        const double target,
+        const double maximum_step) noexcept
+    {
+        const double difference = target - current;
+        if (std::fabs(difference) <= maximum_step) return target;
+        return current + std::copysign(maximum_step, difference);
+    }
+
+    void update_person_gaits()
+    {
+        constexpr double pi = 3.14159265358979323846;
+        constexpr double moving_m_s = 0.05;
+        constexpr double stride_m = 1.0;
+        constexpr double max_swing_rad = pi / 6.0;
+        const double dt = static_cast<double>(delta_time_usec) / 1'000'000.0;
+        auto* data = world->getData();
+        for (auto& binding : person_bindings) {
+            const double vx = data->qvel[binding.slide_x_qvel];
+            const double vy = data->qvel[binding.slide_y_qvel];
+            const double speed = std::hypot(vx, vy);
+            binding.gait_clock += dt;
+            std::string mode = binding.command.animation;
+            if (mode.empty() || mode == "auto") {
+                mode = speed > moving_m_s ? "walk" : "idle";
+            }
+            std::array<double, adapters::hakoniwa::person_limb_joint_names.size()>
+                targets {};
+            if (mode == "walk") {
+                const double gait_speed = std::max(speed, 0.6);
+                binding.gait_phase = std::fmod(
+                    binding.gait_phase + 2.0 * pi * gait_speed * dt / stride_m,
+                    2.0 * pi);
+                const double swing = max_swing_rad
+                    * std::min(1.0, gait_speed / 1.4);
+                const double phase = std::sin(binding.gait_phase);
+                targets = {
+                    -swing * phase,
+                    swing * phase,
+                    swing * phase,
+                    -swing * phase,
+                    1.3 * swing * std::max(0.0, phase),
+                    1.3 * swing * std::max(0.0, -phase),
+                };
+                binding.gait_angles = targets;
+            } else {
+                const double sway = (pi / 90.0)
+                    * std::sin(binding.gait_clock * 1.3);
+                targets[0] = sway;
+                targets[1] = -sway;
+                const double maximum_step = (4.0 * pi / 3.0) * dt;
+                for (std::size_t index = 0;
+                     index < targets.size(); ++index) {
+                    binding.gait_angles[index] = approach(
+                        binding.gait_angles[index], targets[index], maximum_step);
+                }
+            }
+            for (std::size_t index = 0;
+                 index < binding.limb_qpos.size(); ++index) {
+                data->qpos[binding.limb_qpos[index]] =
+                    binding.gait_angles[index];
+            }
+        }
+        if (!person_bindings.empty()) {
+            mj_forward(world->getModel(), data);
+        }
+    }
+
+    adapters::hakoniwa::PersonStepState person_state(
+        const std::string& name,
+        const std::uint32_t result_code) const
+    {
+        const auto& binding = person(name);
+        const auto* data = world->getData();
+        const mjtNum* position = &data->xpos[3 * binding.body_id];
+        const mjtNum* quaternion = &data->xquat[4 * binding.body_id];
+        return {
+            result_code,
+            model_time_usec(data),
+            {position[0], position[1], position[2]},
+            {quaternion[1], quaternion[2], quaternion[3], quaternion[0]},
+            {data->qvel[binding.slide_x_qvel],
+                data->qvel[binding.slide_y_qvel], 0.0},
+            {0.0, 0.0, data->qvel[binding.turn_qvel]},
+            binding.gait_angles,
+        };
+    }
+
+    void reset_people()
+    {
+        auto* data = world->getData();
+        for (auto& binding : person_bindings) {
+            binding.command = {};
+            binding.gait_angles.fill(0.0);
+            binding.gait_phase = 0.0;
+            binding.gait_clock = 0.0;
+            const double ground = ground_under(binding);
+            data->qpos[binding.slide_z_qpos] = ground;
+            data->ctrl[binding.lift_actuator] = ground;
+            for (std::size_t index = 0;
+                 index < binding.limb_qpos.size(); ++index) {
+                data->qpos[binding.limb_qpos[index]] = 0.0;
+            }
+        }
+        if (!person_bindings.empty()) {
+            mj_forward(world->getModel(), data);
+        }
+    }
+#endif
 
     void apply_initial_body_poses()
     {
@@ -603,6 +927,11 @@ public:
     std::vector<Binding> bindings;
     std::vector<BodyBinding> body_bindings;
     std::unordered_map<std::string, std::size_t> binding_by_id;
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    std::vector<PersonBinding> person_bindings;
+    std::unordered_map<std::string, std::size_t> person_binding_by_name;
+    bool person_terrain_groups_configured {false};
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<MirrorBinding> mirror_bindings;
     std::unordered_map<std::string, std::size_t> mirror_binding_by_id;
@@ -672,7 +1001,13 @@ runtime::RobotState MujocoActuatorPlant::step(
          ++index) {
         impl_->bindings[index].actuator->SetTarget(safe_values[index]);
     }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    impl_->apply_person_controls();
+#endif
     impl_->world->advanceTimeStep();
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    impl_->update_person_gaits();
+#endif
     return impl_->state();
 }
 
@@ -712,6 +1047,9 @@ runtime::RobotState MujocoActuatorPlant::reset(
     data->time =
         static_cast<double>(simulation_time_usec) / 1'000'000.0;
     mj_forward(impl_->world->getModel(), data);
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    impl_->reset_people();
+#endif
     return impl_->state();
 }
 
@@ -724,5 +1062,26 @@ mjData* MujocoActuatorPlant::data() noexcept
 {
     return impl_->world->getData();
 }
+
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+void MujocoActuatorPlant::bind_person(std::string person_name)
+{
+    impl_->bind_person(std::move(person_name));
+}
+
+std::uint32_t MujocoActuatorPlant::apply_person_command(
+    const std::string& person_name,
+    const adapters::hakoniwa::PersonStepCommand& command)
+{
+    return impl_->apply_person_command(person_name, command);
+}
+
+adapters::hakoniwa::PersonStepState MujocoActuatorPlant::person_state(
+    const std::string& person_name,
+    const std::uint32_t result_code) const
+{
+    return impl_->person_state(person_name, result_code);
+}
+#endif
 
 } // namespace hakoniwa::robot_runtime::adapters::mujoco
