@@ -33,7 +33,7 @@ public:
         AsyncRpcResponseEncoder encoder);
 
     /** Create the Core service server during Start, before asset feedback. */
-    bool prepare(std::string& error) noexcept;
+    bool prepare(std::string& error) noexcept override;
     [[nodiscard]] const std::string& name() const noexcept override;
     AsyncRpcPollResult poll(AsyncRpcRequest& request, std::string& error) noexcept override;
     bool reply(const AsyncRpcResponse& response, std::string& error) noexcept override;
