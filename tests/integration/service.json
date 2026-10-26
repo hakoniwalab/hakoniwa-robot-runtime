@@ -1,0 +1,24 @@
+{
+  "pduMetaDataSize": 24,
+  "services": [
+    {
+      "name": "Service/AsyncA",
+      "type": "hako_srv_msgs/AddTwoInts",
+      "maxClients": 1,
+      "pduSize": {
+        "server": { "heapSize": 0, "baseSize": 296 },
+        "client": { "heapSize": 0, "baseSize": 288 }
+      }
+    },
+    {
+      "name": "Service/AsyncB",
+      "type": "hako_srv_msgs/AddTwoInts",
+      "maxClients": 1,
+      "pduSize": {
+        "server": { "heapSize": 0, "baseSize": 296 },
+        "client": { "heapSize": 0, "baseSize": 288 }
+      }
+    }
+  ],
+  "nodes": []
+}

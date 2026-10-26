@@ -6,9 +6,21 @@
 #include <stdexcept>
 #include <utility>
 
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#include <chrono>
+#include <thread>
+#endif
+
 namespace hakoniwa::robot_runtime::runner::detail {
 
 std::atomic<HakoniwaAssetDriver*> HakoniwaAssetDriver::active_instance_ {nullptr};
+
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+void IHakoniwaAssetDriverCallbacks::wait_for_input() noexcept
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+#endif
 
 int HakoniwaAssetApi::register_asset(
     const HakoniwaAssetDriverConfig& config,
@@ -33,6 +45,31 @@ int HakoniwaAssetApi::sleep_no_wait(
 {
     return hako_asset_usleep_no_wait(sleep_time_usec, is_force_stop);
 }
+
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+IHakoniwaAssetApi::CoreActivity core_activity_from_simulation_state(
+    const int state) noexcept
+{
+    switch (state) {
+    case HAKO_ASSET_SIM_STATE_RUNNING:
+        return IHakoniwaAssetApi::CoreActivity::running;
+    case HAKO_ASSET_SIM_STATE_STOPPED:
+    case HAKO_ASSET_SIM_STATE_RUNNABLE:
+    case HAKO_ASSET_SIM_STATE_STOPPING:
+    case HAKO_ASSET_SIM_STATE_RESETTING:
+    case HAKO_ASSET_SIM_STATE_ERROR:
+    case HAKO_ASSET_SIM_STATE_TERMINATED:
+        return IHakoniwaAssetApi::CoreActivity::inactive;
+    default:
+        return IHakoniwaAssetApi::CoreActivity::unknown;
+    }
+}
+
+IHakoniwaAssetApi::CoreActivity HakoniwaAssetApi::core_activity() noexcept
+{
+    return core_activity_from_simulation_state(hako_asset_simulation_state());
+}
+#endif
 
 HakoniwaAssetDriver::HakoniwaAssetDriver(
     HakoniwaAssetDriverConfig config,
@@ -139,7 +176,19 @@ int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
         }
     }
     while (!callbacks_.should_stop()) {
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+        // While lockstep input is incomplete sleep_no_wait() is intentionally
+        // not called, so it cannot report Core stop/reset as EINTR.  Poll the
+        // read-only state before the input clock instead.  Unknown is not a
+        // stop signal: retain the timeout/error path for a failed state read.
+        if (api_->core_activity() == IHakoniwaAssetApi::CoreActivity::inactive) {
+            return 0;
+        }
+#endif
         if (!callbacks_.ready_to_step()) {
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+            callbacks_.wait_for_input();
+#endif
             continue;  // lockstep: wait for the input without advancing time
         }
         const int step_result = callbacks_.on_step();
@@ -159,7 +208,11 @@ int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
             return sleep_result;
         }
     }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    return callbacks_.stop_result();
+#else
     return 0;
+#endif
 }
 
 void HakoniwaAssetDriver::release_active_instance() noexcept
