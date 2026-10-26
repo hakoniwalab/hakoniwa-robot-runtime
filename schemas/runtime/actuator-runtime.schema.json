@@ -30,6 +30,29 @@
         }
       }
     },
+    "person_vehicles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "mjcf_freejoint", "seats"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "mjcf_freejoint": { "type": "string", "minLength": 1 },
+          "seats": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "minLength": 1 },
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
     "actuators": {
       "type": "object",
       "minProperties": 1,

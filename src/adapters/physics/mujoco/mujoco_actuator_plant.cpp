@@ -69,6 +69,40 @@ double clamp_value(
     return std::clamp(value, limits.minimum, limits.maximum);
 }
 
+double quaternion_yaw(const mjtNum* quaternion) noexcept
+{
+    const double w = quaternion[0];
+    const double x = quaternion[1];
+    const double y = quaternion[2];
+    const double z = quaternion[3];
+    return std::atan2(
+        2.0 * (w * z + x * y),
+        1.0 - 2.0 * (y * y + z * z));
+}
+
+std::array<double, 4> quaternion_multiply(
+    const std::array<double, 4>& a,
+    const std::array<double, 4>& b) noexcept
+{
+    return {
+        a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+        a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+        a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+        a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+    };
+}
+
+runtime::Vector3State quaternion_rotate(
+    const std::array<double, 4>& quaternion,
+    const runtime::Vector3State& vector) noexcept
+{
+    const auto rotated = quaternion_multiply(
+        quaternion_multiply(
+            quaternion, {0.0, vector.x, vector.y, vector.z}),
+        {quaternion[0], -quaternion[1], -quaternion[2], -quaternion[3]});
+    return {rotated[1], rotated[2], rotated[3]};
+}
+
 } // namespace
 
 class MujocoActuatorPlant::Impl {
@@ -89,6 +123,17 @@ public:
     };
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    struct PersonVehicleBinding {
+        std::string name;
+        int body_id {-1};
+        std::unordered_map<std::string, runtime::Vector3State> seats;
+    };
+
+    struct PersonRideBinding {
+        std::size_t vehicle_index {0};
+        runtime::Vector3State offset;
+    };
+
     struct PersonBinding {
         std::string name;
         int body_id {-1};
@@ -98,6 +143,7 @@ public:
         int turn_qpos {-1};
         int slide_x_qvel {-1};
         int slide_y_qvel {-1};
+        int slide_z_qvel {-1};
         int turn_qvel {-1};
         int move_x_actuator {-1};
         int move_y_actuator {-1};
@@ -108,6 +154,8 @@ public:
         int standing_conaffinity {1};
         int hip_body_id {-1};
         double hip_height_m {0.0};
+        double origin_x_m {0.0};
+        double origin_y_m {0.0};
         std::array<int, adapters::hakoniwa::person_limb_joint_names.size()>
             limb_qpos {};
         adapters::hakoniwa::PersonStepCommand command;
@@ -115,7 +163,11 @@ public:
             gait_angles {};
         double gait_phase {0.0};
         double gait_clock {0.0};
+        double posture_pitch_rad {0.0};
+        double posture_roll_rad {0.0};
         std::optional<double> sit_ground;
+        std::optional<PersonRideBinding> requested_ride;
+        std::optional<PersonRideBinding> riding;
     };
 #endif
 
@@ -156,6 +208,35 @@ public:
         if (!initial_body_poses.empty()) {
             mj_forward(model, world->getData());
         }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+        person_vehicles.reserve(definition.person_vehicles.size());
+        for (const auto& config : definition.person_vehicles) {
+            if (person_vehicle_by_name.contains(config.name)) {
+                throw std::invalid_argument(
+                    "duplicate person vehicle: " + config.name);
+            }
+            const int joint_id = require_named_id(
+                model, mjOBJ_JOINT, config.mjcf_freejoint,
+                "person vehicle freejoint");
+            if (model->jnt_type[joint_id] != mjJNT_FREE) {
+                throw std::invalid_argument(
+                    "person vehicle binding is not a freejoint: "
+                    + config.mjcf_freejoint);
+            }
+            PersonVehicleBinding vehicle;
+            vehicle.name = config.name;
+            vehicle.body_id = model->jnt_bodyid[joint_id];
+            for (const auto& seat : config.seats) {
+                if (!vehicle.seats.emplace(seat.name, seat.offset).second) {
+                    throw std::invalid_argument(
+                        "duplicate person vehicle seat: "
+                        + config.name + "/" + seat.name);
+                }
+            }
+            person_vehicle_by_name.emplace(vehicle.name, person_vehicles.size());
+            person_vehicles.push_back(std::move(vehicle));
+        }
+#endif
         bindings.reserve(definition.actuators.size());
         for (const auto& config : definition.actuators) {
             if (binding_by_id.contains(config.component_id)) {
@@ -328,6 +409,7 @@ public:
         binding.turn_qpos = model->jnt_qposadr[turn];
         binding.slide_x_qvel = model->jnt_dofadr[slide_x];
         binding.slide_y_qvel = model->jnt_dofadr[slide_y];
+        binding.slide_z_qvel = model->jnt_dofadr[slide_z];
         binding.turn_qvel = model->jnt_dofadr[turn];
         binding.move_x_actuator = actuator_id("move_x");
         binding.move_y_actuator = actuator_id("move_y");
@@ -355,6 +437,10 @@ public:
                 "person " + binding.name + " is missing its hip body");
         }
         const auto* data = world->getData();
+        binding.origin_x_m = data->xpos[3 * binding.body_id]
+            - data->qpos[binding.slide_x_qpos];
+        binding.origin_y_m = data->xpos[3 * binding.body_id + 1]
+            - data->qpos[binding.slide_y_qpos];
         binding.hip_height_m =
             data->xpos[3 * binding.hip_body_id + 2]
             - data->xpos[3 * binding.body_id + 2];
@@ -436,9 +522,6 @@ public:
         const adapters::hakoniwa::PersonStepCommand& command)
     {
         auto& binding = person(name);
-        if (!command.ride.empty()) {
-            return 1;
-        }
         const auto finite = [](const double value) {
             return std::isfinite(value);
         };
@@ -450,7 +533,29 @@ public:
             || !finite(command.angular_velocity.z)) {
             return 2;
         }
+        std::optional<PersonRideBinding> requested_ride;
+        if (!command.ride.empty()) {
+            const auto separator = command.ride.find('/');
+            const std::string vehicle_name = command.ride.substr(0, separator);
+            const std::string seat_name = separator == std::string::npos
+                || separator + 1 == command.ride.size()
+                ? "driver"
+                : command.ride.substr(separator + 1);
+            const auto vehicle = person_vehicle_by_name.find(vehicle_name);
+            if (vehicle == person_vehicle_by_name.end()
+                || seat_name.find('/') != std::string::npos) {
+                return 1;
+            }
+            const auto seat = person_vehicles[vehicle->second].seats.find(seat_name);
+            if (seat == person_vehicles[vehicle->second].seats.end()) {
+                return 1;
+            }
+            requested_ride = PersonRideBinding {
+                vehicle->second, seat->second,
+            };
+        }
         binding.command = command;
+        binding.requested_ride = std::move(requested_ride);
         static const std::unordered_set<std::string> animations {
             "auto", "walk", "idle", "wave", "talk", "sit", "sit_talk",
             "sit_drive", "sit_drowsy", "sit_alert", "sit_startled",
@@ -475,6 +580,16 @@ public:
     {
         auto* data = world->getData();
         for (auto& binding : person_bindings) {
+            auto* model = world->getModel();
+            if (binding.riding.has_value() || binding.requested_ride.has_value()) {
+                data->ctrl[binding.move_x_actuator] = 0.0;
+                data->ctrl[binding.move_y_actuator] = 0.0;
+                data->ctrl[binding.turn_actuator] = 0.0;
+                model->geom_contype[binding.collision_geom] = 0;
+                model->geom_conaffinity[binding.collision_geom] = 0;
+                binding.sit_ground.reset();
+                continue;
+            }
             const double yaw = data->qpos[binding.turn_qpos];
             const double c = std::cos(yaw);
             const double s = std::sin(yaw);
@@ -497,12 +612,101 @@ public:
             constexpr double seat_m = 0.44;
             data->ctrl[binding.lift_actuator] =
                 sitting ? ground - (binding.hip_height_m - seat_m) : ground;
-            auto* model = world->getModel();
             model->geom_contype[binding.collision_geom] =
                 sitting ? 0 : binding.standing_contype;
             model->geom_conaffinity[binding.collision_geom] =
                 sitting ? 0 : binding.standing_conaffinity;
         }
+    }
+
+    void place_person(
+        PersonBinding& person,
+        const double x,
+        const double y,
+        const double z,
+        const double yaw)
+    {
+        auto* data = world->getData();
+        data->qpos[person.slide_x_qpos] = x - person.origin_x_m;
+        data->qpos[person.slide_y_qpos] = y - person.origin_y_m;
+        data->qpos[person.slide_z_qpos] = z;
+        data->qpos[person.turn_qpos] = yaw;
+        data->ctrl[person.lift_actuator] = z;
+        data->qvel[person.slide_x_qvel] = 0.0;
+        data->qvel[person.slide_y_qvel] = 0.0;
+        data->qvel[person.slide_z_qvel] = 0.0;
+        data->qvel[person.turn_qvel] = 0.0;
+    }
+
+    void update_person_rides()
+    {
+        constexpr double get_off_m = 0.75;
+        auto* model = world->getModel();
+        auto* data = world->getData();
+        bool changed = false;
+        for (auto& person : person_bindings) {
+            if (person.requested_ride.has_value()) {
+                person.riding = person.requested_ride;
+                const auto& ride = *person.riding;
+                const auto& vehicle = person_vehicles[ride.vehicle_index];
+                const mjtNum* position = &data->xpos[3 * vehicle.body_id];
+                const mjtNum* quaternion = &data->xquat[4 * vehicle.body_id];
+                const double yaw = quaternion_yaw(quaternion);
+                const double c = std::cos(yaw);
+                const double s = std::sin(yaw);
+                place_person(
+                    person,
+                    position[0] + c * ride.offset.x - s * ride.offset.y,
+                    position[1] + s * ride.offset.x + c * ride.offset.y,
+                    position[2] + ride.offset.z - person.hip_height_m,
+                    yaw);
+                model->geom_contype[person.collision_geom] = 0;
+                model->geom_conaffinity[person.collision_geom] = 0;
+                changed = true;
+                continue;
+            }
+            if (!person.riding.has_value()) {
+                continue;
+            }
+            const auto ride = *person.riding;
+            const auto& vehicle = person_vehicles[ride.vehicle_index];
+            const mjtNum* position = &data->xpos[3 * vehicle.body_id];
+            const mjtNum* quaternion = &data->xquat[4 * vehicle.body_id];
+            const double yaw = quaternion_yaw(quaternion);
+            const double c = std::cos(yaw);
+            const double s = std::sin(yaw);
+            const double side = get_off_m + std::fabs(ride.offset.y);
+            const double outside = std::copysign(
+                side, ride.offset.y == 0.0 ? 1.0 : ride.offset.y);
+            place_person(
+                person,
+                position[0] + c * ride.offset.x - s * outside,
+                position[1] + s * ride.offset.x + c * outside,
+                0.0,
+                yaw);
+            person.riding.reset();
+            mj_forward(model, data);
+            const double ground = ground_under(person);
+            data->qpos[person.slide_z_qpos] = ground;
+            data->ctrl[person.lift_actuator] = ground;
+            model->geom_contype[person.collision_geom] = person.standing_contype;
+            model->geom_conaffinity[person.collision_geom] =
+                person.standing_conaffinity;
+            changed = true;
+        }
+        if (changed) {
+            mj_forward(model, data);
+        }
+    }
+
+    bool has_person_ride_activity() const noexcept
+    {
+        return std::any_of(
+            person_bindings.begin(), person_bindings.end(),
+            [](const PersonBinding& person) {
+                return person.riding.has_value()
+                    || person.requested_ride.has_value();
+            });
     }
 
     static double approach(
@@ -529,6 +733,9 @@ public:
             const double speed = std::hypot(vx, vy);
             binding.gait_clock += dt;
             std::string mode = binding.command.animation;
+            if (binding.riding.has_value() && !person_is_sitting(mode)) {
+                mode = "sit";
+            }
             if (mode.empty() || mode == "auto") {
                 mode = speed > moving_m_s ? "walk" : "idle";
             }
@@ -601,6 +808,26 @@ public:
                 data->qpos[binding.limb_qpos[index]] =
                     binding.gait_angles[index];
             }
+            double target_pitch = 0.0;
+            double target_roll = 0.0;
+            if (binding.riding.has_value()) {
+                if (mode == "sit_drowsy") {
+                    target_pitch = 22.0 * pi / 180.0
+                        + 6.0 * pi / 180.0
+                            * std::sin(binding.gait_clock * 0.9);
+                    target_roll = 5.0 * pi / 180.0
+                        * std::sin(binding.gait_clock * 0.6);
+                } else if (mode == "sit_startled") {
+                    target_pitch = -8.0 * pi / 180.0;
+                } else if (mode == "sit_drive") {
+                    target_pitch = 4.0 * pi / 180.0;
+                }
+            }
+            const double posture_step = 90.0 * pi / 180.0 * dt;
+            binding.posture_pitch_rad = approach(
+                binding.posture_pitch_rad, target_pitch, posture_step);
+            binding.posture_roll_rad = approach(
+                binding.posture_roll_rad, target_roll, posture_step);
         }
         if (!person_bindings.empty()) {
             mj_forward(world->getModel(), data);
@@ -613,12 +840,40 @@ public:
     {
         const auto& binding = person(name);
         const auto* data = world->getData();
-        const mjtNum* position = &data->xpos[3 * binding.body_id];
-        const mjtNum* quaternion = &data->xquat[4 * binding.body_id];
+        const mjtNum* actual_position = &data->xpos[3 * binding.body_id];
+        const mjtNum* actual_quaternion = &data->xquat[4 * binding.body_id];
+        runtime::Vector3State position {
+            actual_position[0], actual_position[1], actual_position[2],
+        };
+        std::array<double, 4> quaternion {
+            actual_quaternion[0], actual_quaternion[1],
+            actual_quaternion[2], actual_quaternion[3],
+        };
+        if (binding.riding.has_value()
+            && (binding.posture_pitch_rad != 0.0
+                || binding.posture_roll_rad != 0.0)) {
+            const auto pitch = std::array<double, 4> {
+                std::cos(binding.posture_pitch_rad / 2.0), 0.0,
+                std::sin(binding.posture_pitch_rad / 2.0), 0.0,
+            };
+            const auto roll = std::array<double, 4> {
+                std::cos(binding.posture_roll_rad / 2.0),
+                std::sin(binding.posture_roll_rad / 2.0), 0.0, 0.0,
+            };
+            const auto tilted = quaternion_multiply(
+                quaternion, quaternion_multiply(pitch, roll));
+            const runtime::Vector3State hip {0.0, 0.0, binding.hip_height_m};
+            const auto before = quaternion_rotate(quaternion, hip);
+            const auto after = quaternion_rotate(tilted, hip);
+            position.x += before.x - after.x;
+            position.y += before.y - after.y;
+            position.z += before.z - after.z;
+            quaternion = tilted;
+        }
         return {
             result_code,
             model_time_usec(data),
-            {position[0], position[1], position[2]},
+            position,
             {quaternion[1], quaternion[2], quaternion[3], quaternion[0]},
             {data->qvel[binding.slide_x_qvel],
                 data->qvel[binding.slide_y_qvel], 0.0},
@@ -635,7 +890,11 @@ public:
             binding.gait_angles.fill(0.0);
             binding.gait_phase = 0.0;
             binding.gait_clock = 0.0;
+            binding.posture_pitch_rad = 0.0;
+            binding.posture_roll_rad = 0.0;
             binding.sit_ground.reset();
+            binding.requested_ride.reset();
+            binding.riding.reset();
             const double ground = ground_under(binding);
             data->qpos[binding.slide_z_qpos] = ground;
             data->ctrl[binding.lift_actuator] = ground;
@@ -1028,6 +1287,8 @@ public:
     std::vector<BodyBinding> body_bindings;
     std::unordered_map<std::string, std::size_t> binding_by_id;
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    std::vector<PersonVehicleBinding> person_vehicles;
+    std::unordered_map<std::string, std::size_t> person_vehicle_by_name;
     std::vector<PersonBinding> person_bindings;
     std::unordered_map<std::string, std::size_t> person_binding_by_name;
     bool person_terrain_groups_configured {false};
@@ -1106,6 +1367,14 @@ runtime::RobotState MujocoActuatorPlant::step(
 #endif
     impl_->world->advanceTimeStep();
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    // mj_step leaves position-dependent fields at the state used for the
+    // integration. Refresh them before placing riders on the just-integrated
+    // vehicle pose returned for this step. Avoid the extra forward pass when
+    // no ride is active or pending.
+    if (impl_->has_person_ride_activity()) {
+        mj_forward(impl_->world->getModel(), impl_->world->getData());
+    }
+    impl_->update_person_rides();
     impl_->update_person_gaits();
 #endif
     return impl_->state();
