@@ -3,6 +3,9 @@
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/robot_runtime/runner/runner.hpp"
 #include "hakoniwa/robot_runtime/runner/lockstep_input.hpp"
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#include "hakoniwa/robot_runtime/runner/async_rpc_input.hpp"
+#endif
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "runtime/actuator_runtime.hpp"
 
@@ -20,6 +23,10 @@ struct HakoniwaRunnerResources {
     std::unique_ptr<::hakoniwa::pdu::Endpoint> endpoint;
     /** Inputs each step waits for (lockstep mode; empty otherwise). */
     std::vector<std::shared_ptr<ILockstepInput>> lockstep_inputs;
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    /** Complete multi-robot request batches; opt-in build and empty by default. */
+    std::vector<std::shared_ptr<AsyncRpcInput>> async_rpc_inputs;
+#endif
 };
 
 using HakoniwaRunnerResourcesFactory =

@@ -80,6 +80,11 @@ public:
         for (const auto& input : resources.lockstep_inputs) {
             input->lockstep_prepare();
         }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+        for (const auto& input : resources.async_rpc_inputs) {
+            input->lockstep_prepare();
+        }
+#endif
         if (resources.endpoint == nullptr
             || resources.endpoint->post_start() != HAKO_PDU_ERR_OK) {
             fail("failed to complete endpoint post_start");
@@ -95,11 +100,36 @@ public:
 
     bool ready_to_step() noexcept override
     {
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+        // Propagate pause before consulting any other lockstep input.  A
+        // different input may be incomplete and return early below, but that
+        // must not leave the asynchronous RPC timeout clock running.
+        const bool is_paused = paused.load();
+        for (const auto& input : resources.async_rpc_inputs) {
+            input->set_waiting_paused(is_paused);
+        }
+        // With asynchronous RPC, one request batch corresponds to exactly one
+        // physics/time step.  A viewer pause therefore blocks the Driver before
+        // on_step() and sleep_no_wait().  The legacy PDU-only path remains below.
+        if (is_paused && !resources.async_rpc_inputs.empty()) {
+            return false;
+        }
+#endif
         for (const auto& input : resources.lockstep_inputs) {
             if (!input->lockstep_ready()) {
                 return false;
             }
         }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+        for (const auto& input : resources.async_rpc_inputs) {
+            if (!input->lockstep_ready()) {
+                if (input->failed()) {
+                    fail(input->failure_reason());
+                }
+                return false;
+            }
+        }
+#endif
         return true;
     }
 
@@ -120,6 +150,13 @@ public:
                     pacer.reset();
                     return 0;
                 }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+                for (const auto& input : resources.async_rpc_inputs) {
+                    if (!input->apply_ready_requests()) {
+                        throw std::runtime_error(input->failure_reason());
+                    }
+                }
+#endif
                 // Inputs are taken at the first substep (none are new later: the
                 // controllers hold them); the state goes out after the last.
                 const auto substeps = std::max<std::uint32_t>(1, config.physics_substeps);
@@ -127,6 +164,13 @@ public:
                     simulation_time_usec = resources.runtime->step(substep + 1 == substeps)
                         .next_step.simulation_time_usec;
                 }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+                for (const auto& input : resources.async_rpc_inputs) {
+                    if (!input->complete_step()) {
+                        throw std::runtime_error(input->failure_reason());
+                    }
+                }
+#endif
             }
             pacer.pace(
                 static_cast<double>(simulation_time_usec) / 1'000'000.0);
@@ -146,6 +190,11 @@ public:
             (void)resources.runtime->reset();
             reset_requested.store(false);
             pacer.reset();
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+            for (const auto& input : resources.async_rpc_inputs) {
+                input->lockstep_prepare();
+            }
+#endif
             return 0;
         } catch (const std::exception& error) {
             fail(error.what());
@@ -159,6 +208,13 @@ public:
     {
         return !running.load();
     }
+
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    [[nodiscard]] int stop_result() const noexcept override
+    {
+        return last_error.empty() ? 0 : -1;
+    }
+#endif
 
     HakoniwaRunnerResourcesFactory resources_factory;
     HakoniwaRunnerConfig config;
