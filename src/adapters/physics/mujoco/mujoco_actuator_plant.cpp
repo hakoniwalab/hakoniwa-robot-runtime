@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -102,6 +103,11 @@ public:
         int move_y_actuator {-1};
         int lift_actuator {-1};
         int turn_actuator {-1};
+        int collision_geom {-1};
+        int standing_contype {1};
+        int standing_conaffinity {1};
+        int hip_body_id {-1};
+        double hip_height_m {0.0};
         std::array<int, adapters::hakoniwa::person_limb_joint_names.size()>
             limb_qpos {};
         adapters::hakoniwa::PersonStepCommand command;
@@ -109,6 +115,7 @@ public:
             gait_angles {};
         double gait_phase {0.0};
         double gait_clock {0.0};
+        std::optional<double> sit_ground;
     };
 #endif
 
@@ -326,14 +333,39 @@ public:
         binding.move_y_actuator = actuator_id("move_y");
         binding.lift_actuator = actuator_id("lift");
         binding.turn_actuator = actuator_id("turn");
+        binding.collision_geom = require_named_id(
+            model, mjOBJ_GEOM,
+            person_model_name(model, binding.name, "person_collision", mjOBJ_GEOM),
+            "person collision geom");
+        binding.standing_contype = model->geom_contype[binding.collision_geom];
+        binding.standing_conaffinity =
+            model->geom_conaffinity[binding.collision_geom];
         for (std::size_t index = 0; index < binding.limb_qpos.size(); ++index) {
             const int limb = joint_id(
                 adapters::hakoniwa::person_limb_joint_names[index]);
             binding.limb_qpos[index] = model->jnt_qposadr[limb];
+            if (adapters::hakoniwa::person_limb_joint_names[index]
+                == "hip_left_joint") {
+                binding.hip_body_id = model->jnt_bodyid[limb];
+            }
+        }
+        mj_forward(model, world->getData());
+        if (binding.hip_body_id < 0) {
+            throw std::invalid_argument(
+                "person " + binding.name + " is missing its hip body");
+        }
+        const auto* data = world->getData();
+        binding.hip_height_m =
+            data->xpos[3 * binding.hip_body_id + 2]
+            - data->xpos[3 * binding.body_id + 2];
+        if (!std::isfinite(binding.hip_height_m)
+            || binding.hip_height_m <= 0.0) {
+            throw std::invalid_argument(
+                "person " + binding.name
+                + " has an invalid hip height in its MuJoCo model");
         }
         person_binding_by_name.emplace(binding.name, person_bindings.size());
         person_bindings.push_back(std::move(binding));
-        mj_forward(model, world->getData());
         auto& added = person_bindings.back();
         const double ground = ground_under(added);
         world->getData()->qpos[added.slide_z_qpos] = ground;
@@ -419,12 +451,24 @@ public:
             return 2;
         }
         binding.command = command;
-        if (binding.command.animation != "auto"
-            && binding.command.animation != "walk"
-            && binding.command.animation != "idle") {
-            binding.command.animation = "idle";
+        static const std::unordered_set<std::string> animations {
+            "auto", "walk", "idle", "wave", "talk", "sit", "sit_talk",
+            "sit_drive", "sit_drowsy", "sit_alert", "sit_startled",
+        };
+        if (!animations.contains(binding.command.animation)) {
+            binding.command.animation = "auto";
         }
         return 0;
+    }
+
+    static bool person_is_sitting(const std::string& animation) noexcept
+    {
+        return animation == "sit"
+            || animation == "sit_talk"
+            || animation == "sit_drive"
+            || animation == "sit_drowsy"
+            || animation == "sit_alert"
+            || animation == "sit_startled";
     }
 
     void apply_person_controls()
@@ -440,7 +484,24 @@ public:
             data->ctrl[binding.move_y_actuator] = s * body_x + c * body_y;
             data->ctrl[binding.turn_actuator] =
                 std::clamp(binding.command.angular_velocity.z, -3.0, 3.0);
-            data->ctrl[binding.lift_actuator] = ground_under(binding);
+            const bool sitting = person_is_sitting(binding.command.animation);
+            double ground = 0.0;
+            if (sitting && binding.sit_ground.has_value()) {
+                ground = *binding.sit_ground;
+            } else {
+                ground = ground_under(binding);
+            }
+            binding.sit_ground = sitting
+                ? std::optional<double> {ground}
+                : std::nullopt;
+            constexpr double seat_m = 0.44;
+            data->ctrl[binding.lift_actuator] =
+                sitting ? ground - (binding.hip_height_m - seat_m) : ground;
+            auto* model = world->getModel();
+            model->geom_contype[binding.collision_geom] =
+                sitting ? 0 : binding.standing_contype;
+            model->geom_conaffinity[binding.collision_geom] =
+                sitting ? 0 : binding.standing_conaffinity;
         }
     }
 
@@ -491,10 +552,43 @@ public:
                 };
                 binding.gait_angles = targets;
             } else {
-                const double sway = (pi / 90.0)
-                    * std::sin(binding.gait_clock * 1.3);
-                targets[0] = sway;
-                targets[1] = -sway;
+                if (mode == "idle") {
+                    const double sway = (pi / 90.0)
+                        * std::sin(binding.gait_clock * 1.3);
+                    targets[0] = sway;
+                    targets[1] = -sway;
+                } else if (mode == "wave") {
+                    targets[1] = -5.0 * pi / 6.0
+                        + (pi / 10.0)
+                            * std::sin(binding.gait_clock * 2.0 * pi * 1.5);
+                } else if (person_is_sitting(mode)) {
+                    targets[0] = -5.0 * pi / 36.0;
+                    targets[1] = -5.0 * pi / 36.0;
+                    targets[2] = -pi / 2.0;
+                    targets[3] = -pi / 2.0;
+                    targets[4] = pi / 2.0;
+                    targets[5] = pi / 2.0;
+                }
+                if (mode == "sit_drive" || mode == "sit_alert") {
+                    targets[0] = -13.0 * pi / 36.0;
+                    targets[1] = -13.0 * pi / 36.0;
+                } else if (mode == "sit_drowsy") {
+                    const double drift = (pi / 45.0)
+                        * std::sin(binding.gait_clock * 0.7);
+                    targets[0] = -pi / 12.0 + drift;
+                    targets[1] = -pi / 12.0 - drift;
+                } else if (mode == "sit_startled") {
+                    targets[0] = -17.0 * pi / 36.0;
+                    targets[1] = -17.0 * pi / 36.0;
+                }
+                if (mode == "talk" || mode == "sit_talk") {
+                    targets[1] = -7.0 * pi / 36.0
+                        + (7.0 * pi / 90.0)
+                            * std::sin(binding.gait_clock * 2.3);
+                    targets[0] = -pi / 9.0
+                        + (pi / 20.0)
+                            * std::sin(binding.gait_clock * 1.7 + 1.0);
+                }
                 const double maximum_step = (4.0 * pi / 3.0) * dt;
                 for (std::size_t index = 0;
                      index < targets.size(); ++index) {
@@ -541,9 +635,15 @@ public:
             binding.gait_angles.fill(0.0);
             binding.gait_phase = 0.0;
             binding.gait_clock = 0.0;
+            binding.sit_ground.reset();
             const double ground = ground_under(binding);
             data->qpos[binding.slide_z_qpos] = ground;
             data->ctrl[binding.lift_actuator] = ground;
+            auto* model = world->getModel();
+            model->geom_contype[binding.collision_geom] =
+                binding.standing_contype;
+            model->geom_conaffinity[binding.collision_geom] =
+                binding.standing_conaffinity;
             for (std::size_t index = 0;
                  index < binding.limb_qpos.size(); ++index) {
                 data->qpos[binding.limb_qpos[index]] = 0.0;
