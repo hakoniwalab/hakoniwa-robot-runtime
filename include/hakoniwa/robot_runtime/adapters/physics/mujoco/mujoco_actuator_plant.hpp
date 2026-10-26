@@ -2,6 +2,9 @@
 
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/runtime_definition.hpp"
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
+#endif
 
 #include <memory>
 
@@ -37,6 +40,18 @@ public:
     /** Non-owning handles for presentation adapters such as the Viewer. */
     [[nodiscard]] mjModel* model() noexcept;
     [[nodiscard]] mjData* data() noexcept;
+
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    /** Binds one `<person>/...` hakoniwa_person model to PersonStep. */
+    void bind_person(std::string person_name);
+    /** Keeps the latest body-frame command active until the next request. */
+    [[nodiscard]] std::uint32_t apply_person_command(
+        const std::string& person_name,
+        const adapters::hakoniwa::PersonStepCommand& command);
+    [[nodiscard]] adapters::hakoniwa::PersonStepState person_state(
+        const std::string& person_name,
+        std::uint32_t result_code = 0) const;
+#endif
 
 private:
     class Impl;

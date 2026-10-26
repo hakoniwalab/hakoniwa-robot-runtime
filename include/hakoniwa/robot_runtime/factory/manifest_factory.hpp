@@ -31,7 +31,11 @@ struct ManifestFactoryConfig {
     std::uint32_t physics_substeps {1};
     /** Vehicles supplied by `CarService/AckermannStep/<vehicle>`. */
     std::vector<std::string> ackermann_rpc_inputs;
-    /** Core service definition JSON; required when ackermann_rpc_inputs is non-empty. */
+    /** People supplied by `PersonService/PersonStep/<person>`. */
+    std::vector<std::string> person_rpc_inputs;
+    /** Robot carrying the viewer-compatible people state PDUs. */
+    std::string person_state_robot {"UrbanPeople"};
+    /** Core service definition JSON; required when any RPC input is non-empty. */
     std::string async_rpc_service_definition_path;
 };
 

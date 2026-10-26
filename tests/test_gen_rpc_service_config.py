@@ -44,6 +44,32 @@ class RpcServiceConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate car name"):
             GENERATOR.build_service_json(["Car-1", "Car-1"], "pdu.json")
 
+    def test_people_match_the_service_contract(self) -> None:
+        config = GENERATOR.build_service_json(
+            [], "/workspace/pdu_config.json", ["Alice", "Bob"]
+        )
+        self.assertEqual(
+            config["services"],
+            [
+                {
+                    "name": f"PersonService/PersonStep/{name}",
+                    "type": "hako_srv_msgs/PersonStep",
+                    "maxClients": 1,
+                    "pduSize": {
+                        "server": {"heapSize": 0, "baseSize": 592},
+                        "client": {"heapSize": 2048, "baseSize": 576},
+                    },
+                }
+                for name in ("Alice", "Bob")
+            ],
+        )
+
+    def test_duplicate_person_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate person name"):
+            GENERATOR.build_service_json(
+                [], "pdu.json", ["Alice", "Alice"]
+            )
+
     def test_runtime_arguments_match_generated_service_config(self) -> None:
         self.assertEqual(
             GENERATOR.build_runtime_args(
@@ -54,6 +80,21 @@ class RpcServiceConfigTest(unittest.TestCase):
                 "Car-1",
                 "--ackermann-rpc-input",
                 "Car-2",
+                "--rpc-service-config",
+                "/runtime/service.json",
+            ],
+        )
+
+    def test_person_runtime_arguments(self) -> None:
+        self.assertEqual(
+            GENERATOR.build_runtime_args(
+                [], "/runtime/service.json", ["Alice", "Bob"]
+            ),
+            [
+                "--person-rpc-input",
+                "Alice",
+                "--person-rpc-input",
+                "Bob",
                 "--rpc-service-config",
                 "/runtime/service.json",
             ],

@@ -13,8 +13,12 @@ from hakoniwa_pdu.pdu_msgs.pdu_size import PDU_SIZE
 
 ACKERMANN_REQUEST_PACKET = "hako_srv_msgs/AckermannStepRequestPacket"
 ACKERMANN_RESPONSE_PACKET = "hako_srv_msgs/AckermannStepResponsePacket"
+PERSON_REQUEST_PACKET = "hako_srv_msgs/PersonStepRequestPacket"
+PERSON_RESPONSE_PACKET = "hako_srv_msgs/PersonStepResponsePacket"
 # Match the eight-byte base-size allowance used by existing service definitions.
 SERVICE_BASE_SIZE_ALLOWANCE = 8
+# Six joint names (fixed HAKO strings) plus position/velocity/effort arrays.
+PERSON_RESPONSE_HEAP_SIZE = 2048
 
 
 def make_robot_rpc_service_name(
@@ -31,28 +35,41 @@ def ackermann_step_service_name(car_name: str) -> str:
     return make_robot_rpc_service_name("CarService", "AckermannStep", car_name)
 
 
-def _validated_unique_names(car_names: Sequence[str]) -> list[str]:
-    names = list(car_names)
-    if not names:
-        raise ValueError("at least one car name is required")
+def person_step_service_name(person_name: str) -> str:
+    return make_robot_rpc_service_name(
+        "PersonService", "PersonStep", person_name
+    )
+
+
+def _validated_unique_names(
+    values: Sequence[str], kind: str, required: bool = True
+) -> list[str]:
+    names = list(values)
+    if required and not names:
+        raise ValueError(f"at least one {kind} name is required")
     if any(not name for name in names):
-        raise ValueError("car names must not be empty")
+        raise ValueError(f"{kind} names must not be empty")
     if len(names) != len(set(names)):
-        raise ValueError("duplicate car name")
+        raise ValueError(f"duplicate {kind} name")
     return names
 
 
 def build_service_json(
-    car_names: Sequence[str], pdu_config_path: str | Path
+    car_names: Sequence[str],
+    pdu_config_path: str | Path,
+    person_names: Sequence[str] = (),
 ) -> dict[str, Any]:
-    names = _validated_unique_names(car_names)
+    names = _validated_unique_names(car_names, "car", required=False)
+    people = _validated_unique_names(person_names, "person", required=False)
+    if not names and not people:
+        raise ValueError("at least one car or person name is required")
     request_size = (
         PDU_SIZE[ACKERMANN_REQUEST_PACKET] + SERVICE_BASE_SIZE_ALLOWANCE
     )
     response_size = (
         PDU_SIZE[ACKERMANN_RESPONSE_PACKET] + SERVICE_BASE_SIZE_ALLOWANCE
     )
-    services = [
+    services: list[dict[str, Any]] = [
         {
             "name": ackermann_step_service_name(name),
             "type": "hako_srv_msgs/AckermannStep",
@@ -64,6 +81,26 @@ def build_service_json(
         }
         for name in names
     ]
+    services.extend(
+        {
+            "name": person_step_service_name(name),
+            "type": "hako_srv_msgs/PersonStep",
+            "maxClients": 1,
+            "pduSize": {
+                "server": {
+                    "heapSize": 0,
+                    "baseSize": PDU_SIZE[PERSON_REQUEST_PACKET]
+                    + SERVICE_BASE_SIZE_ALLOWANCE,
+                },
+                "client": {
+                    "heapSize": PERSON_RESPONSE_HEAP_SIZE,
+                    "baseSize": PDU_SIZE[PERSON_RESPONSE_PACKET]
+                    + SERVICE_BASE_SIZE_ALLOWANCE,
+                },
+            },
+        }
+        for name in people
+    )
     return {
         "pduMetaDataSize": 24,
         "pdu_config_path": str(pdu_config_path),
@@ -73,19 +110,27 @@ def build_service_json(
 
 
 def build_runtime_args(
-    car_names: Sequence[str], service_config_path: str | Path
+    car_names: Sequence[str],
+    service_config_path: str | Path,
+    person_names: Sequence[str] = (),
 ) -> list[str]:
-    names = _validated_unique_names(car_names)
+    names = _validated_unique_names(car_names, "car", required=False)
+    people = _validated_unique_names(person_names, "person", required=False)
+    if not names and not people:
+        raise ValueError("at least one car or person name is required")
     result: list[str] = []
     for name in names:
         result.extend(("--ackermann-rpc-input", name))
+    for name in people:
+        result.extend(("--person-rpc-input", name))
     result.extend(("--rpc-service-config", str(service_config_path)))
     return result
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--car", action="append", required=True, dest="cars")
+    parser.add_argument("--car", action="append", default=[], dest="cars")
+    parser.add_argument("--person", action="append", default=[], dest="people")
     parser.add_argument("--pdu-config", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     return parser.parse_args()
@@ -94,8 +139,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        service_config = build_service_json(args.cars, args.pdu_config)
-        runtime_args = build_runtime_args(args.cars, args.output)
+        service_config = build_service_json(
+            args.cars, args.pdu_config, args.people
+        )
+        runtime_args = build_runtime_args(args.cars, args.output, args.people)
     except (KeyError, ValueError) as exc:
         raise SystemExit(f"ERROR: {exc}") from exc
 
