@@ -8,9 +8,11 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -126,6 +128,7 @@ public:
     struct PersonVehicleBinding {
         std::string name;
         int body_id {-1};
+        int qvel_address {-1};
         std::unordered_map<std::string, runtime::Vector3State> seats;
     };
 
@@ -168,6 +171,20 @@ public:
         std::optional<double> sit_ground;
         std::optional<PersonRideBinding> requested_ride;
         std::optional<PersonRideBinding> riding;
+    };
+
+    using PersonContactKey = std::tuple<std::string, std::string, std::string>;
+
+    struct ActivePersonContact {
+        runtime::PersonContactEvent started;
+        double last_seen_sec {0.0};
+    };
+
+    struct ContactOwner {
+        std::string kind {"static"};
+        std::string name {"static"};
+        std::optional<std::size_t> person_index;
+        std::optional<std::size_t> vehicle_index;
     };
 #endif
 
@@ -226,6 +243,7 @@ public:
             PersonVehicleBinding vehicle;
             vehicle.name = config.name;
             vehicle.body_id = model->jnt_bodyid[joint_id];
+            vehicle.qvel_address = model->jnt_dofadr[joint_id];
             for (const auto& seat : config.seats) {
                 if (!vehicle.seats.emplace(seat.name, seat.offset).second) {
                     throw std::invalid_argument(
@@ -709,6 +727,200 @@ public:
             });
     }
 
+    bool body_descends_from(int body, const int root) const noexcept
+    {
+        const auto* model = world->getModel();
+        while (body > 0) {
+            if (body == root) return true;
+            body = model->body_parentid[body];
+        }
+        return root == 0;
+    }
+
+    ContactOwner contact_owner(const int geom_id) const
+    {
+        const auto* model = world->getModel();
+        if (model->geom_type[geom_id] == mjGEOM_PLANE
+            || model->geom_type[geom_id] == mjGEOM_HFIELD) {
+            return {"terrain", "terrain", std::nullopt, std::nullopt};
+        }
+        const int body = model->geom_bodyid[geom_id];
+        for (std::size_t index = 0; index < person_bindings.size(); ++index) {
+            if (body_descends_from(body, person_bindings[index].body_id)) {
+                return {"person", person_bindings[index].name, index, std::nullopt};
+            }
+        }
+        for (std::size_t index = 0; index < person_vehicles.size(); ++index) {
+            if (body_descends_from(body, person_vehicles[index].body_id)) {
+                return {"vehicle", person_vehicles[index].name, std::nullopt, index};
+            }
+        }
+        return {};
+    }
+
+    runtime::Vector3State contact_owner_velocity(
+        const ContactOwner& owner) const
+    {
+        if (owner.person_index.has_value()) {
+            return person_contact_velocities[*owner.person_index];
+        }
+        if (owner.vehicle_index.has_value()) {
+            return vehicle_contact_velocities[*owner.vehicle_index];
+        }
+        return {};
+    }
+
+    void capture_person_contact_velocities()
+    {
+        const auto* data = world->getData();
+        person_contact_velocities.clear();
+        person_contact_velocities.reserve(person_bindings.size());
+        for (const auto& person : person_bindings) {
+            person_contact_velocities.push_back({
+                data->qvel[person.slide_x_qvel],
+                data->qvel[person.slide_y_qvel],
+                data->qvel[person.slide_z_qvel],
+            });
+        }
+        vehicle_contact_velocities.clear();
+        vehicle_contact_velocities.reserve(person_vehicles.size());
+        for (const auto& vehicle : person_vehicles) {
+            vehicle_contact_velocities.push_back({
+                data->qvel[vehicle.qvel_address],
+                data->qvel[vehicle.qvel_address + 1],
+                data->qvel[vehicle.qvel_address + 2],
+            });
+        }
+    }
+
+    static double rounded(const double value, const double scale) noexcept
+    {
+        return std::round(value * scale) / scale;
+    }
+
+    runtime::PersonContactEvent make_person_contact_event(
+        const PersonContactKey& key,
+        const runtime::Vector3State& position_mjcf,
+        const double relative_speed,
+        const bool started)
+    {
+        const auto& [self, kind, other] = key;
+        runtime::PersonContactEvent event;
+        event.id = next_person_contact_id++;
+        event.time_sec = rounded(world->getData()->time, 10'000.0);
+        event.self_name = self;
+        event.other_name = other;
+        event.other_kind = kind;
+        event.position = {
+            rounded(-position_mjcf.y, 1'000.0),
+            rounded(position_mjcf.x, 1'000.0),
+            rounded(position_mjcf.z, 1'000.0),
+        };
+        event.relative_speed_mps = rounded(relative_speed, 1'000.0);
+        event.started = started;
+        pending_person_contacts.push_back(event);
+        return event;
+    }
+
+    void detect_person_contacts()
+    {
+        constexpr double contact_gap_sec = 0.3;
+        auto* data = world->getData();
+        std::map<PersonContactKey, runtime::Vector3State> seen;
+        for (int index = 0; index < data->ncon; ++index) {
+            const auto& contact = data->contact[index];
+            const std::array<ContactOwner, 2> owners {
+                contact_owner(contact.geom1), contact_owner(contact.geom2),
+            };
+            for (int mine_index = 0; mine_index < 2; ++mine_index) {
+                const auto& mine = owners[mine_index];
+                const auto& other = owners[1 - mine_index];
+                if (mine.kind != "person" || !mine.person_index.has_value()) {
+                    continue;
+                }
+                // Supporting terrain is not an impact event. Static city
+                // parts such as walls, decks and boxes remain observable.
+                if (other.kind == "terrain") {
+                    continue;
+                }
+                const auto& person = person_bindings[*mine.person_index];
+                if (other.kind == "vehicle"
+                    && other.vehicle_index.has_value()
+                    && person.riding.has_value()
+                    && person.riding->vehicle_index == *other.vehicle_index) {
+                    continue;
+                }
+                const PersonContactKey key {
+                    mine.name, other.kind, other.name,
+                };
+                seen.try_emplace(key, runtime::Vector3State {
+                    contact.pos[0], contact.pos[1], contact.pos[2],
+                });
+            }
+        }
+
+        const double now = data->time;
+        for (const auto& [key, position] : seen) {
+            const auto active = active_person_contacts.find(key);
+            if (active != active_person_contacts.end()) {
+                active->second.last_seen_sec = now;
+                continue;
+            }
+            const auto self_index = person_binding_by_name.at(std::get<0>(key));
+            const auto& self = person_bindings[self_index];
+            const ContactOwner self_owner {
+                "person", self.name, self_index, std::nullopt,
+            };
+            const ContactOwner other_owner = [&]() {
+                if (std::get<1>(key) == "person") {
+                    const auto index = person_binding_by_name.at(std::get<2>(key));
+                    return ContactOwner {
+                        "person", std::get<2>(key), index, std::nullopt,
+                    };
+                }
+                if (std::get<1>(key) == "vehicle") {
+                    const auto index = person_vehicle_by_name.at(std::get<2>(key));
+                    return ContactOwner {
+                        "vehicle", std::get<2>(key), std::nullopt, index,
+                    };
+                }
+                return ContactOwner {};
+            }();
+            const auto self_velocity = contact_owner_velocity(self_owner);
+            const auto other_velocity = contact_owner_velocity(other_owner);
+            const double relative_speed = std::hypot(
+                self_velocity.x - other_velocity.x,
+                self_velocity.y - other_velocity.y);
+            auto event = make_person_contact_event(
+                key, position, relative_speed, true);
+            active_person_contacts.emplace(
+                key, ActivePersonContact {std::move(event), now});
+        }
+
+        for (auto active = active_person_contacts.begin();
+             active != active_person_contacts.end();) {
+            if (seen.contains(active->first)
+                || now - active->second.last_seen_sec <= contact_gap_sec) {
+                ++active;
+                continue;
+            }
+            const auto& position = active->second.started.position;
+            const runtime::Vector3State position_mjcf {
+                position.y, -position.x, position.z,
+            };
+            make_person_contact_event(
+                active->first, position_mjcf, 0.0, false);
+            active = active_person_contacts.erase(active);
+        }
+    }
+
+    std::vector<runtime::PersonContactEvent> take_person_contact_events()
+    {
+        auto result = std::move(pending_person_contacts);
+        pending_person_contacts.clear();
+        return result;
+    }
+
     static double approach(
         const double current,
         const double target,
@@ -911,6 +1123,9 @@ public:
         if (!person_bindings.empty()) {
             mj_forward(world->getModel(), data);
         }
+        active_person_contacts.clear();
+        pending_person_contacts.clear();
+        next_person_contact_id = 1;
     }
 #endif
 
@@ -1291,6 +1506,11 @@ public:
     std::unordered_map<std::string, std::size_t> person_vehicle_by_name;
     std::vector<PersonBinding> person_bindings;
     std::unordered_map<std::string, std::size_t> person_binding_by_name;
+    std::map<PersonContactKey, ActivePersonContact> active_person_contacts;
+    std::vector<runtime::PersonContactEvent> pending_person_contacts;
+    std::vector<runtime::Vector3State> person_contact_velocities;
+    std::vector<runtime::Vector3State> vehicle_contact_velocities;
+    std::uint64_t next_person_contact_id {1};
     bool person_terrain_groups_configured {false};
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
@@ -1364,9 +1584,11 @@ runtime::RobotState MujocoActuatorPlant::step(
     }
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
     impl_->apply_person_controls();
+    impl_->capture_person_contact_velocities();
 #endif
     impl_->world->advanceTimeStep();
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    impl_->detect_person_contacts();
     // mj_step leaves position-dependent fields at the state used for the
     // integration. Refresh them before placing riders on the just-integrated
     // vehicle pose returned for this step. Avoid the extra forward pass when
@@ -1450,6 +1672,12 @@ adapters::hakoniwa::PersonStepState MujocoActuatorPlant::person_state(
     const std::uint32_t result_code) const
 {
     return impl_->person_state(person_name, result_code);
+}
+
+std::vector<runtime::PersonContactEvent>
+MujocoActuatorPlant::take_person_contact_events()
+{
+    return impl_->take_person_contact_events();
 }
 #endif
 

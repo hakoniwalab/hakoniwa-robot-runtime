@@ -51,6 +51,9 @@ public:
     [[nodiscard]] adapters::hakoniwa::PersonStepState person_state(
         const std::string& person_name,
         std::uint32_t result_code = 0) const;
+    /** Drains contact edges produced since the previous call. */
+    [[nodiscard]] std::vector<runtime::PersonContactEvent>
+        take_person_contact_events();
 #endif
 
 private:

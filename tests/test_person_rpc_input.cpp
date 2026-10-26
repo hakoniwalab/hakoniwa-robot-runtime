@@ -57,7 +57,7 @@ void add_person(
           << "<joint name=\"" << name
           << "/turn_joint\" type=\"hinge\" axis=\"0 0 1\"/>"
           << "<geom name=\"" << name
-          << "/person_collision\" type=\"capsule\" fromto=\"0 0 0.1 0 0 1\" size=\"0.1\" mass=\"20\" friction=\"0.01 0.001 0.0001\"/>";
+          << "/person_collision\" type=\"capsule\" fromto=\"0 0 0.1 0 0 1\" size=\"0.1\" mass=\"20\" conaffinity=\"3\" friction=\"0.01 0.001 0.0001\"/>";
     for (const auto joint : adapters::hakoniwa::person_limb_joint_names) {
         const double body_z = joint == "hip_left_joint"
                 || joint == "hip_right_joint"
@@ -100,10 +100,12 @@ fs::path write_model()
     <geom name="ground" type="plane" size="20 20 0.1" friction="0.01 0.001 0.0001"/>)";
     add_person(model, "A", 0.0, 0.66);
     add_person(model, "B", 2.0, 0.462);
-    model << "<body name=\"Car-1/body\" pos=\"0 0 0.2\" gravcomp=\"1\">"
+    model << "<body name=\"Car-1/body\" pos=\"0 5 0.2\" gravcomp=\"1\">"
           << "<freejoint name=\"Car-1/freejoint\"/>"
-          << "<geom type=\"box\" size=\"0.5 0.3 0.2\" mass=\"100\" "
-             "contype=\"0\" conaffinity=\"0\"/></body>";
+          << "<geom name=\"Car-1/collision\" type=\"box\" "
+             "size=\"0.5 0.3 0.2\" mass=\"100\" "
+             "contype=\"2\" conaffinity=\"0\" "
+             "margin=\"0.05\" gap=\"0.05\"/></body>";
     model << "<geom name=\"fixed_box\" type=\"box\" pos=\"4 0 0.5\" size=\"0.2 0.5 0.5\"/>";
     model << "<geom name=\"dismount_box\" type=\"box\" pos=\"4 1.15 0.5\" size=\"0.2 0.5 0.5\"/>";
     model << R"(</worldbody><actuator>)";
@@ -379,7 +381,7 @@ void test_gestures_and_sitting()
     REQUIRE(std::fabs(plant.data()->qpos[
         plant.model()->jnt_qposadr[slide_z]]) < 0.02);
     REQUIRE(plant.model()->geom_contype[collision] == 1);
-    REQUIRE(plant.model()->geom_conaffinity[collision] == 1);
+    REQUIRE(plant.model()->geom_conaffinity[collision] == 3);
 
     reset();
     animation("sit_drive");
@@ -533,7 +535,7 @@ void test_vehicle_ride_and_posture()
     REQUIRE(std::fabs(state.position.y - 1.15) < 0.001);
     REQUIRE(std::fabs(state.position.z) < 0.02);
     REQUIRE(plant.model()->geom_contype[collision] == 1);
-    REQUIRE(plant.model()->geom_conaffinity[collision] == 1);
+    REQUIRE(plant.model()->geom_conaffinity[collision] == 3);
     REQUIRE(plant.apply_person_command(
         "A", command(1.0, 0.0, 0.0, "walk")) == 0);
     for (int step = 0; step < 600; ++step) (void)plant.step({});
@@ -553,6 +555,197 @@ void test_vehicle_ride_and_posture()
     REQUIRE(plant.model()->geom_contype[collision] == 1);
 }
 
+std::vector<runtime::PersonContactEvent> append_contact_events(
+    adapters::mujoco::MujocoActuatorPlant& plant,
+    std::vector<runtime::PersonContactEvent>& events)
+{
+    auto current = plant.take_person_contact_events();
+    events.insert(events.end(), current.begin(), current.end());
+    return current;
+}
+
+std::vector<runtime::PersonContactEvent> static_contact_scenario()
+{
+    const TemporaryModel temporary_model;
+    adapters::mujoco::MujocoActuatorPlant plant(
+        definition_with_vehicle(temporary_model.path));
+    plant.bind_person("A");
+    plant.bind_person("B");
+    REQUIRE(plant.apply_person_command(
+        "A", command(1.0, 0.0, 0.0, "walk")) == 0);
+    std::vector<runtime::PersonContactEvent> events;
+    for (int step = 0; step < 600; ++step) {
+        (void)plant.step({});
+        append_contact_events(plant, events);
+        if (std::any_of(events.begin(), events.end(), [](const auto& event) {
+                return event.self_name == "A" && event.other_kind == "static"
+                    && event.started && event.position.y > 3.5;
+            })) {
+            break;
+        }
+    }
+    const auto started = std::find_if(
+        events.begin(), events.end(), [](const auto& event) {
+            return event.self_name == "A" && event.other_kind == "static"
+                && event.started && event.position.y > 3.5;
+        });
+    REQUIRE(started != events.end());
+    REQUIRE(started->other_name == "static");
+    REQUIRE(started->position.y > 3.7 && started->position.y < 4.05);
+    REQUIRE(started->relative_speed_mps > 0.8);
+    REQUIRE(started->relative_speed_mps < 1.1);
+    const auto started_id = started->id;
+    const auto started_time = started->time_sec;
+
+    REQUIRE(plant.apply_person_command(
+        "A", command(-1.0, 0.0, 0.0, "walk")) == 0);
+    for (int step = 0; step < 80; ++step) {
+        (void)plant.step({});
+        append_contact_events(plant, events);
+    }
+    const auto ended = std::find_if(
+        events.begin(), events.end(), [&](const auto& event) {
+            return event.self_name == "A" && event.other_kind == "static"
+                && !event.started && event.id > started_id;
+        });
+    REQUIRE(ended != events.end());
+    REQUIRE(ended->relative_speed_mps == 0.0);
+    REQUIRE(ended->time_sec - started_time > 0.3);
+    return events;
+}
+
+void test_person_contact_events()
+{
+    // Static contact emits one edge in each direction of time. Repeating the
+    // same simulation produces the same IDs, times, kinds and ordering.
+    const auto first = static_contact_scenario();
+    const auto second = static_contact_scenario();
+    REQUIRE(first.size() == second.size());
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        REQUIRE(first[index].id == second[index].id);
+        REQUIRE(first[index].time_sec == second[index].time_sec);
+        REQUIRE(first[index].self_name == second[index].self_name);
+        REQUIRE(first[index].other_name == second[index].other_name);
+        REQUIRE(first[index].other_kind == second[index].other_kind);
+        REQUIRE(first[index].started == second[index].started);
+    }
+
+    const TemporaryModel temporary_model;
+    adapters::mujoco::MujocoActuatorPlant plant(
+        definition_with_vehicle(temporary_model.path));
+    plant.bind_person("A");
+    plant.bind_person("B");
+    const int vehicle_joint = mj_name2id(
+        plant.model(), mjOBJ_JOINT, "Car-1/freejoint");
+    const int vehicle_geom = mj_name2id(
+        plant.model(), mjOBJ_GEOM, "Car-1/collision");
+    REQUIRE(vehicle_joint >= 0);
+    REQUIRE(vehicle_geom >= 0);
+    const int vehicle_qpos = plant.model()->jnt_qposadr[vehicle_joint];
+    const int vehicle_qvel = plant.model()->jnt_dofadr[vehicle_joint];
+
+    // A real vehicle body moving at 5 m/s reports vehicle ownership and body
+    // relative velocity. The idle person's position actuator holds its place.
+    plant.model()->geom_contype[vehicle_geom] = 1;
+    plant.model()->geom_conaffinity[vehicle_geom] = 1;
+    plant.data()->qpos[vehicle_qpos] = -2.0;
+    plant.data()->qpos[vehicle_qpos + 1] = 0.0;
+    mj_forward(plant.model(), plant.data());
+    const auto person_before = plant.person_state("A").position;
+    std::vector<runtime::PersonContactEvent> events;
+    for (int step = 0; step < 80; ++step) {
+        plant.data()->qvel[vehicle_qvel] = 5.0;
+        (void)plant.step({});
+        append_contact_events(plant, events);
+        if (std::any_of(events.begin(), events.end(), [](const auto& event) {
+                return event.self_name == "A" && event.other_kind == "vehicle"
+                    && event.started;
+            })) {
+            break;
+        }
+    }
+    const auto vehicle_contact = std::find_if(
+        events.begin(), events.end(), [](const auto& event) {
+            return event.self_name == "A" && event.other_kind == "vehicle"
+                && event.started;
+        });
+    REQUIRE(vehicle_contact != events.end());
+    REQUIRE(vehicle_contact->other_name == "Car-1");
+    REQUIRE(vehicle_contact->relative_speed_mps > 4.0);
+    REQUIRE(vehicle_contact->relative_speed_mps < 5.1);
+    REQUIRE(std::fabs(
+        plant.person_state("A").position.x - person_before.x) < 0.02);
+
+    // Person-person contact produces a directed event for both people.
+    (void)plant.reset();
+    plant.model()->geom_contype[vehicle_geom] = 0;
+    plant.model()->geom_conaffinity[vehicle_geom] = 0;
+    REQUIRE(plant.apply_person_command(
+        "A", command(0.0, 1.0, 0.0, "walk")) == 0);
+    REQUIRE(plant.apply_person_command(
+        "B", command(0.0, -1.0, 0.0, "walk")) == 0);
+    events.clear();
+    for (int step = 0; step < 150; ++step) {
+        (void)plant.step({});
+        append_contact_events(plant, events);
+    }
+    REQUIRE(std::any_of(events.begin(), events.end(), [](const auto& event) {
+        return event.self_name == "A" && event.other_name == "B"
+            && event.other_kind == "person" && event.started;
+    }));
+    REQUIRE(std::any_of(events.begin(), events.end(), [](const auto& event) {
+        return event.self_name == "B" && event.other_name == "A"
+            && event.other_kind == "person" && event.started;
+    }));
+
+    // Separating for less than 0.3 s and touching again does not create a
+    // second started edge for the same pair.
+    (void)plant.reset();
+    REQUIRE(plant.apply_person_command(
+        "A", command(1.0, 0.0, 0.0, "walk")) == 0);
+    events.clear();
+    for (int step = 0; step < 500; ++step) {
+        (void)plant.step({});
+        append_contact_events(plant, events);
+        if (std::any_of(events.begin(), events.end(), [](const auto& event) {
+                return event.self_name == "A" && event.other_kind == "static"
+                    && event.started && event.position.y > 3.5;
+            })) break;
+    }
+    REQUIRE(plant.apply_person_command(
+        "A", command(-1.0, 0.0, 0.0, "walk")) == 0);
+    for (int step = 0; step < 10; ++step) {
+        (void)plant.step({});
+        append_contact_events(plant, events);
+    }
+    REQUIRE(plant.apply_person_command(
+        "A", command(1.0, 0.0, 0.0, "walk")) == 0);
+    for (int step = 0; step < 20; ++step) {
+        (void)plant.step({});
+        append_contact_events(plant, events);
+    }
+    REQUIRE(std::count_if(events.begin(), events.end(), [](const auto& event) {
+        return event.self_name == "A" && event.other_kind == "static"
+            && event.started && event.position.y > 3.5;
+    }) == 1);
+
+    // A rider's collision is disabled before physics, so its own vehicle does
+    // not produce contact events even when the seat lies inside the car body.
+    (void)plant.reset();
+    plant.model()->geom_contype[vehicle_geom] = 1;
+    plant.model()->geom_conaffinity[vehicle_geom] = 1;
+    REQUIRE(plant.apply_person_command(
+        "A", command(0.0, 0.0, 0.0, "sit", "Car-1/driver")) == 0);
+    events.clear();
+    for (int step = 0; step < 20; ++step) {
+        (void)plant.step({});
+        append_contact_events(plant, events);
+    }
+    REQUIRE(std::none_of(events.begin(), events.end(), [](const auto& event) {
+        return event.self_name == "A" && event.other_kind == "vehicle";
+    }));
+}
+
 } // namespace
 
 int main()
@@ -561,5 +754,6 @@ int main()
     test_motion_and_gait();
     test_gestures_and_sitting();
     test_vehicle_ride_and_posture();
+    test_person_contact_events();
     return 0;
 }
