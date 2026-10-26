@@ -82,6 +82,20 @@ struct QuaternionState {
     double w {1.0};
 };
 
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+/** One deterministic person contact edge, expressed in City World ENU. */
+struct PersonContactEvent {
+    std::uint64_t id {0};
+    double time_sec {0.0};
+    std::string self_name;
+    std::string other_name;
+    std::string other_kind;
+    Vector3State position;
+    double relative_speed_mps {0.0};
+    bool started {false};
+};
+#endif
+
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 struct EulerState {
     double roll {0.0};

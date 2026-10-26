@@ -37,6 +37,8 @@ struct ManifestFactoryConfig {
     std::string person_state_robot {"UrbanPeople"};
     /** Core service definition JSON; required when any RPC input is non-empty. */
     std::string async_rpc_service_definition_path;
+    /** Optional JSONL destination for person contact edges. */
+    std::string person_contact_log_path;
 };
 
 /**
