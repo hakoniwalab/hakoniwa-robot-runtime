@@ -47,6 +47,8 @@ struct HakoniwaRunnerConfig {
      * with substepping). 1 steps Hakoniwa at the Plant's timestep.
      */
     std::uint32_t physics_substeps {1};
+    /** Core service definition JSON for async_rpc_inputs; empty when unused. */
+    std::string async_rpc_service_definition_path;
 };
 
 /** Runs one pre-composed ActuatorRuntime as a Hakoniwa Asset. */

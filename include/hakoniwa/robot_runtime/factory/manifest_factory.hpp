@@ -29,6 +29,10 @@ struct ManifestFactoryConfig {
     std::vector<std::string> lockstep_inputs;
     /** Physics steps per Hakoniwa step (HakoniwaRunnerConfig::physics_substeps). */
     std::uint32_t physics_substeps {1};
+    /** Vehicles supplied by `CarService/AckermannStep/<vehicle>`. */
+    std::vector<std::string> ackermann_rpc_inputs;
+    /** Core service definition JSON; required when ackermann_rpc_inputs is non-empty. */
+    std::string async_rpc_service_definition_path;
 };
 
 /**

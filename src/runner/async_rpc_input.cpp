@@ -158,6 +158,22 @@ AsyncRpcInput::AsyncRpcInput(
 
 AsyncRpcInput::~AsyncRpcInput() = default;
 
+bool AsyncRpcInput::prepare_channels() noexcept
+{
+    if (!impl_->failure.empty()) {
+        return false;
+    }
+    for (const auto& channel : impl_->channels) {
+        std::string error;
+        if (!channel->prepare(error)) {
+            impl_->fail("async RPC channel " + channel->name()
+                        + " preparation failed: " + error);
+            return false;
+        }
+    }
+    return true;
+}
+
 void AsyncRpcInput::lockstep_prepare() noexcept
 {
     impl_->expected = 0;

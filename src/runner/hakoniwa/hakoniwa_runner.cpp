@@ -4,6 +4,9 @@
 #include "runner/realtime_pacer.hpp"
 
 #include "hako_conductor.h"
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#include "hako_asset_service.h"
+#endif
 #include "hakoniwa/pdu/endpoint.hpp"
 
 #include <algorithm>
@@ -82,6 +85,10 @@ public:
         }
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
         for (const auto& input : resources.async_rpc_inputs) {
+            if (!input->prepare_channels()) {
+                fail(input->failure_reason());
+                return -1;
+            }
             input->lockstep_prepare();
         }
 #endif
@@ -301,6 +308,23 @@ int HakoniwaRunner::start()
         impl_->cleanup();
         return 1;
     }
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    if (!impl_->resources.async_rpc_inputs.empty()) {
+        if (impl_->config.async_rpc_service_definition_path.empty()) {
+            std::cerr << "[ERROR] Async RPC inputs require a service definition path."
+                      << std::endl;
+            impl_->cleanup();
+            return 1;
+        }
+        if (hako_asset_service_initialize(
+                impl_->config.async_rpc_service_definition_path.c_str()) != 0) {
+            std::cerr << "[ERROR] Failed to initialize async RPC services: "
+                      << impl_->config.async_rpc_service_definition_path << std::endl;
+            impl_->cleanup();
+            return 1;
+        }
+    }
+#endif
     if (impl_->resources.endpoint->start() != HAKO_PDU_ERR_OK) {
         std::cerr << "[ERROR] Failed to start Runtime endpoint." << std::endl;
         impl_->cleanup();

@@ -39,6 +39,12 @@ enum class AsyncRpcPollResult {
 class IAsyncRpcChannel {
 public:
     virtual ~IAsyncRpcChannel() = default;
+    /** Prepare transport resources after Core service initialization. */
+    virtual bool prepare(std::string& error) noexcept
+    {
+        (void)error;
+        return true;
+    }
     [[nodiscard]] virtual const std::string& name() const noexcept = 0;
     virtual AsyncRpcPollResult poll(AsyncRpcRequest& request, std::string& error) noexcept = 0;
     virtual bool reply(const AsyncRpcResponse& response, std::string& error) noexcept = 0;
@@ -82,6 +88,7 @@ public:
     [[nodiscard]] bool lockstep_ready() noexcept override;
     void lockstep_prepare() noexcept override;
 
+    [[nodiscard]] bool prepare_channels() noexcept;
     [[nodiscard]] bool apply_ready_requests() noexcept;
     [[nodiscard]] bool complete_step() noexcept;
     /** Pause timeout accounting. Resuming starts a fresh full timeout. */
