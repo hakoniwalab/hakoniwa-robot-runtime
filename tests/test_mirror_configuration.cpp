@@ -54,6 +54,9 @@ void test_mirror_configuration_contract()
             {"position_m", json::array({7.5, -45.0, 6.25})},
             {"orientation_rpy_rad", json::array({0.0, 0.0, 0.75})},
         }})},
+        {"person_initial_poses", json::array({{
+            {"name", "Alice"}, {"yaw_rad", -0.368962457},
+        }})},
         {"person_vehicles", json::array({{
             {"name", "Car-1"},
             {"mjcf_freejoint", "car_1_freejoint"},
@@ -139,6 +142,9 @@ void test_mirror_configuration_contract()
         == "car_1_freejoint");
     assert(definition.initial_body_poses[0].position.z == 6.25);
     assert(definition.initial_body_poses[0].rpy_rad[2] == 0.75);
+    assert(definition.person_initial_poses.size() == 1);
+    assert(definition.person_initial_poses[0].name == "Alice");
+    assert(definition.person_initial_poses[0].yaw_rad == -0.368962457);
     assert(definition.person_vehicles.size() == 1);
     assert(definition.person_vehicles[0].name == "Car-1");
     assert(definition.person_vehicles[0].seats.size() == 1);

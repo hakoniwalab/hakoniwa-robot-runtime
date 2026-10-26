@@ -159,6 +159,7 @@ public:
         double hip_height_m {0.0};
         double origin_x_m {0.0};
         double origin_y_m {0.0};
+        double initial_yaw_rad {0.0};
         std::array<int, adapters::hakoniwa::person_limb_joint_names.size()>
             limb_qpos {};
         adapters::hakoniwa::PersonStepCommand command;
@@ -384,7 +385,7 @@ public:
             + std::string(suffix));
     }
 
-    void bind_person(std::string person_name)
+    void bind_person(std::string person_name, const double initial_yaw_rad)
     {
         if (person_name.empty()) {
             throw std::invalid_argument("person name must not be empty");
@@ -418,6 +419,11 @@ public:
         const int turn = joint_id("turn_joint");
         PersonBinding binding;
         binding.name = person_name;
+        if (!std::isfinite(initial_yaw_rad)) {
+            throw std::invalid_argument(
+                "person initial yaw must be finite: " + person_name);
+        }
+        binding.initial_yaw_rad = initial_yaw_rad;
         binding.body_id = require_named_id(model, mjOBJ_BODY,
             person_model_name(model, binding.name, "person", mjOBJ_BODY),
             "person body");
@@ -449,6 +455,7 @@ public:
                 binding.hip_body_id = model->jnt_bodyid[limb];
             }
         }
+        world->getData()->qpos[binding.turn_qpos] = binding.initial_yaw_rad;
         mj_forward(model, world->getData());
         if (binding.hip_body_id < 0) {
             throw std::invalid_argument(
@@ -1107,6 +1114,7 @@ public:
             binding.sit_ground.reset();
             binding.requested_ride.reset();
             binding.riding.reset();
+            data->qpos[binding.turn_qpos] = binding.initial_yaw_rad;
             const double ground = ground_under(binding);
             data->qpos[binding.slide_z_qpos] = ground;
             data->ctrl[binding.lift_actuator] = ground;
@@ -1655,9 +1663,11 @@ mjData* MujocoActuatorPlant::data() noexcept
 }
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-void MujocoActuatorPlant::bind_person(std::string person_name)
+void MujocoActuatorPlant::bind_person(
+    std::string person_name,
+    const double initial_yaw_rad)
 {
-    impl_->bind_person(std::move(person_name));
+    impl_->bind_person(std::move(person_name), initial_yaw_rad);
 }
 
 std::uint32_t MujocoActuatorPlant::apply_person_command(
