@@ -209,6 +209,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
          rpc_people = config.person_rpc_inputs,
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
+         configure_runtime = std::move(config.configure_runtime),
          asset_name]() mutable
         -> runner::HakoniwaRunnerResources {
         auto endpoint = std::make_unique<::hakoniwa::pdu::Endpoint>(
@@ -254,6 +255,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         : initial->yaw_rad);
             }
 #endif
+            runtime::RuntimeExtensions extensions;
+            if (configure_runtime) configure_runtime(extensions, *endpoint);
             auto runtime_instance = runtime::build_runtime(
                 definition,
                 plant,
@@ -332,6 +335,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 }
 #elif defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
                 , {}, {}
+#else
+                , {}, {}
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
                 ,
@@ -368,6 +373,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     return reader;
                 }
 #endif
+                , std::move(extensions)
                 );
 
             for (const auto& key : lockstep_keys) {
@@ -562,7 +568,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 async_rpc_inputs.push_back(std::move(input));
             }
 #endif
-            return {
+            runner::HakoniwaRunnerResources resources {
                 std::move(runtime_instance),
                 std::move(plant),
                 std::move(endpoint),
@@ -571,8 +577,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 std::move(async_rpc_inputs),
 #endif
             };
+            return std::move(resources);
         } catch (...) {
-            endpoint->close();
+            if (endpoint) endpoint->close();
             throw;
         }
     };

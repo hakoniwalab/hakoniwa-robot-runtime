@@ -1,5 +1,6 @@
 #include "runtime/actuator_runtime.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -38,12 +39,14 @@ ActuatorRuntime::ActuatorRuntime(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     , std::vector<std::shared_ptr<IDirectiveController>> directive_controllers
 #endif
+    , std::vector<std::shared_ptr<IRequestPublisher>> request_publishers
     )
     : sources_(std::move(sources))
     , controllers_(std::move(controllers))
     , arbiter_(std::move(arbiter))
     , plant_(std::move(plant))
     , publishers_(std::move(publishers))
+    , request_publishers_(std::move(request_publishers))
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     , directive_controllers_(std::move(directive_controllers))
 #endif
@@ -87,6 +90,13 @@ ActuatorRuntime::ActuatorRuntime(
             || !publisher_ids.emplace(publisher->id()).second) {
             throw std::invalid_argument("publisher IDs must be non-empty and unique");
         }
+        for (const auto& publisher : request_publishers_) {
+            require_non_null(publisher, "request publisher");
+            if (publisher->id().empty()
+                || !publisher_ids.emplace(publisher->id()).second) {
+                throw std::invalid_argument("publisher IDs must be non-empty and unique");
+            }
+        }
     }
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
@@ -128,7 +138,8 @@ RuntimeStepContext ActuatorRuntime::prepare_step_context(
 
 ActuatorRuntime::ControllerInputMap ActuatorRuntime::poll_sources(
     const RuntimeStepContext& context,
-    std::vector<ComponentStatus>& statuses)
+    std::vector<ComponentStatus>& statuses,
+    std::vector<ProcessedInput>& processed_inputs)
 {
     ControllerInputMap inputs;
     inputs.reserve(sources_.size());
@@ -142,7 +153,10 @@ ActuatorRuntime::ControllerInputMap ActuatorRuntime::poll_sources(
                 throw std::runtime_error(
                     "command source returned input with a different source ID");
             }
-            if (!input_is_active(metadata, context)) {
+            const bool active = input_is_active(metadata, context);
+            processed_inputs.push_back({metadata,
+                active ? InputDelivery::Unsupported : InputDelivery::Inactive, {}});
+            if (!active) {
                 polled.input.reset();
                 polled.status.state = ComponentState::Degraded;
                 polled.status.detail = "input is expired or from future simulation time";
@@ -158,7 +172,8 @@ std::vector<ControllerOutput> ActuatorRuntime::update_controllers(
     const ControllerInputMap& inputs,
     const RobotState& current_state,
     const RuntimeStepContext& context,
-    std::vector<ComponentStatus>& statuses)
+    std::vector<ComponentStatus>& statuses,
+    std::vector<ProcessedInput>& processed_inputs)
 {
     std::vector<ControllerOutput> outputs;
     outputs.reserve(controllers_.size());
@@ -182,6 +197,14 @@ std::vector<ControllerOutput> ActuatorRuntime::update_controllers(
                 throw std::runtime_error(
                     "controller produced a command for a different source ID");
             }
+        }
+        if (input != nullptr) {
+            auto receipt = std::find_if(processed_inputs.begin(), processed_inputs.end(),
+                [&](const ProcessedInput& item) {
+                    return item.metadata.source_id == controller->source_id();
+                });
+            receipt->delivery = InputDelivery::Delivered;
+            receipt->controller_statuses.push_back(output.status);
         }
         statuses.push_back(output.status);
         outputs.push_back(std::move(output));
@@ -258,6 +281,19 @@ void ActuatorRuntime::publish_state(
     }
 }
 
+void ActuatorRuntime::publish_requests(
+    const RobotState& state,
+    const RuntimeStepContext& context,
+    const std::vector<ProcessedInput>& inputs,
+    const ArbitrationResult& arbitration,
+    std::vector<ComponentStatus>& statuses)
+{
+    statuses.reserve(request_publishers_.size());
+    for (const auto& publisher : request_publishers_) {
+        statuses.push_back(publisher->publish(state, context, inputs, arbitration));
+    }
+}
+
 RuntimeStepReport ActuatorRuntime::step(const bool publish)
 {
     RuntimeStepReport report;
@@ -270,14 +306,15 @@ RuntimeStepReport ActuatorRuntime::step(const bool publish)
     const auto context = prepare_step_context(current_state);
     report.completed_step = context;
 
-    // 3. Consume the latest received value from each independent input channel.
-    // Endpoint receive callbacks run asynchronously and stage the latest value;
-    // poll_sources() only transfers that staged value into this Runtime step.
-    const auto inputs = poll_sources(context, report.source_statuses);
+    // 3. Consume at most one received value per source. Readers may use latest
+    // value or FIFO semantics; transport reception never blocks the step.
+    const auto inputs = poll_sources(
+        context, report.source_statuses, report.processed_inputs);
 
     // 4. Let every Controller generate its candidate ActuatorCommands.
     const auto outputs = update_controllers(
-        inputs, current_state, context, report.controller_statuses);
+        inputs, current_state, context, report.controller_statuses,
+        report.processed_inputs);
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     // Plant Directive Controllers use a distinct output type. Their
@@ -301,7 +338,11 @@ RuntimeStepReport ActuatorRuntime::step(const bool publish)
     // 7. Carry selection feedback forward. The next time comes from Plant state.
     report.next_step = complete_step(next_state, report.arbitration);
 
-    // 8. Publish the updated physical state using the Plant-derived context.
+    // 8. Complete request responses at their actual physical step, including substeps.
+    publish_requests(next_state, report.next_step, report.processed_inputs,
+        report.arbitration, report.request_publisher_statuses);
+
+    // 9. Publish the updated physical state using the Plant-derived context.
     if (publish) {
         publish_state(next_state, report.next_step, report.publisher_statuses);
     }
@@ -326,6 +367,9 @@ RobotState ActuatorRuntime::reset(const std::uint64_t simulation_time_usec)
     }
 #endif
     for (const auto& publisher : publishers_) {
+        publisher->reset();
+    }
+    for (const auto& publisher : request_publishers_) {
         publisher->reset();
     }
     return state;

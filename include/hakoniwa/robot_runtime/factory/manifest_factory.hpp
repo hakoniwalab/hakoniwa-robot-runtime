@@ -3,9 +3,13 @@
 #include "hakoniwa/robot_runtime/runner/runner.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+namespace hakoniwa::pdu { class Endpoint; }
+namespace hakoniwa::robot_runtime::runtime { struct RuntimeExtensions; }
 
 namespace hakoniwa::robot_runtime::factory {
 
@@ -39,6 +43,13 @@ struct ManifestFactoryConfig {
     std::string async_rpc_service_definition_path;
     /** Optional JSONL destination for person contact edges. */
     std::string person_contact_log_path;
+    /** Add standard Runtime components without replacing the Plant or Runner.
+     * The callback runs after the Endpoint and Plant are created, before
+     * default PDU readers are subscribed and the Runtime is assembled.
+     */
+    std::function<void(
+        runtime::RuntimeExtensions&,
+        ::hakoniwa::pdu::Endpoint&)> configure_runtime;
 };
 
 /**

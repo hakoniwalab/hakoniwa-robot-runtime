@@ -194,6 +194,19 @@ struct ControllerInputMetadata {
     std::optional<std::uint64_t> expires_at_usec;
 };
 
+enum class InputDelivery {
+    Delivered,
+    Inactive,
+    Unsupported,
+};
+
+/** Source input observed in one step; domain-specific acceptance is decided by its Controller. */
+struct ProcessedInput {
+    ControllerInputMetadata metadata;
+    InputDelivery delivery {InputDelivery::Unsupported};
+    std::vector<ComponentStatus> controller_statuses;
+};
+
 struct ControllerOutput {
     std::string controller_id;
     ComponentStatus status;

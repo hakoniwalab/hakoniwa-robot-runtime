@@ -1,5 +1,6 @@
 #include "runtime/runtime_factory.hpp"
 
+#include <algorithm>
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/controller/hold_controller.hpp"
 #include "runtime/controller/joint_trajectory_controller.hpp"
@@ -17,7 +18,9 @@
 #endif
 
 #include <stdexcept>
+#include <iterator>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -37,12 +40,18 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     , const ImpulseCollisionWriterFactory& impulse_writer_factory
     , const GeomFrictionReaderFactory& geom_friction_reader_factory
 #endif
+    , RuntimeExtensions extensions
     )
 {
     if (plant == nullptr) {
         throw std::invalid_argument("Actuator Plant must be provided");
     }
-    if (!reader_factory) {
+    const auto active_actuator = std::any_of(
+        definition.actuators.begin(), definition.actuators.end(),
+        [&](const auto& actuator) {
+            return !extensions.replaced_control_components.contains(actuator.component_id);
+        });
+    if (active_actuator && !reader_factory) {
         throw std::invalid_argument(
             "Float64 event reader factory must be provided");
     }
@@ -70,12 +79,21 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
             "geom friction reader factory is required by the Runtime definition");
     }
 #endif
-    if (!definition.trajectory_controllers.empty()
-        && !trajectory_reader_factory) {
+    const auto active_trajectory = std::any_of(
+        definition.trajectory_controllers.begin(), definition.trajectory_controllers.end(),
+        [&](const auto& controller) {
+            return !extensions.replaced_control_components.contains(controller.component_id);
+        });
+    const auto active_manual = std::any_of(
+        definition.manual_controllers.begin(), definition.manual_controllers.end(),
+        [&](const auto& controller) {
+            return !extensions.replaced_control_components.contains(controller.component_id);
+        });
+    if (active_trajectory && !trajectory_reader_factory) {
         throw std::invalid_argument(
             "trajectory event reader factory is required by the Runtime definition");
     }
-    if (!definition.manual_controllers.empty() && !joy_reader_factory) {
+    if (active_manual && !joy_reader_factory) {
         throw std::invalid_argument(
             "Joy event reader factory is required by the Runtime definition");
     }
@@ -88,6 +106,33 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     if (definition.manual_controllers.size() > 1) {
         throw std::invalid_argument(
             "only one arm Manual Controller is supported");
+    }
+
+    auto replacements = extensions.replaced_control_components;
+    for (const auto& actuator : definition.actuators) {
+        replacements.erase(actuator.component_id);
+    }
+    for (const auto& manual : definition.manual_controllers) {
+        replacements.erase(manual.component_id);
+    }
+    for (const auto& trajectory : definition.trajectory_controllers) {
+        replacements.erase(trajectory.component_id);
+    }
+    if (!replacements.empty()) {
+        throw std::invalid_argument(
+            "unknown manifest control component replacement: " + *replacements.begin());
+    }
+    if (extensions.controllers.size() != extensions.priorities.size()) {
+        throw std::invalid_argument(
+            "each additional controller requires an arbiter priority");
+    }
+    for (std::size_t index = 0; index < extensions.controllers.size(); ++index) {
+        if (!extensions.controllers[index]
+            || extensions.controllers[index]->id()
+                != extensions.priorities[index].controller_id) {
+            throw std::invalid_argument(
+                "additional controller and arbiter priority IDs must match");
+        }
     }
 
     std::vector<std::shared_ptr<ICommandSource>> sources;
@@ -119,6 +164,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     constexpr const char* scalar_control_group = "scalar-pdu-direct";
 
     for (const auto& actuator_config : definition.actuators) {
+        if (extensions.replaced_control_components.contains(actuator_config.component_id)) {
+            continue;
+        }
         auto reader = reader_factory(actuator_config);
         if (reader == nullptr) {
             throw std::invalid_argument(
@@ -184,8 +232,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         actuator_by_id.emplace(actuator.component_id, &actuator);
     }
 
-    if (!definition.manual_controllers.empty()
-        || !definition.trajectory_controllers.empty()) {
+    if (active_manual || active_trajectory) {
         std::vector<HoldActuatorBinding> hold_actuators;
         for (const auto& actuator : definition.actuators) {
             if (actuator.command_type == ActuatorCommandType::Position) {
@@ -201,6 +248,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 
     for (const auto& manual_config : definition.manual_controllers) {
+        if (extensions.replaced_control_components.contains(manual_config.component_id)) {
+            continue;
+        }
         auto reader = joy_reader_factory(manual_config);
         if (reader == nullptr) {
             throw std::invalid_argument(
@@ -266,6 +316,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 
     for (const auto& trajectory_config : definition.trajectory_controllers) {
+        if (extensions.replaced_control_components.contains(trajectory_config.component_id)) {
+            continue;
+        }
         auto reader = trajectory_reader_factory(trajectory_config);
         if (reader == nullptr) {
             throw std::invalid_argument(
@@ -390,6 +443,19 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #endif
 
+    sources.insert(sources.end(),
+        std::make_move_iterator(extensions.sources.begin()),
+        std::make_move_iterator(extensions.sources.end()));
+    controllers.insert(controllers.end(),
+        std::make_move_iterator(extensions.controllers.begin()),
+        std::make_move_iterator(extensions.controllers.end()));
+    priorities.insert(priorities.end(),
+        std::make_move_iterator(extensions.priorities.begin()),
+        std::make_move_iterator(extensions.priorities.end()));
+    publishers.insert(publishers.end(),
+        std::make_move_iterator(extensions.publishers.begin()),
+        std::make_move_iterator(extensions.publishers.end()));
+
     auto arbiter = std::make_shared<PriorityCommandArbiter>(
         std::move(priorities));
     return std::make_unique<ActuatorRuntime>(
@@ -401,6 +467,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         , std::move(directive_controllers)
 #endif
+        , std::move(extensions.request_publishers)
         );
 }
 
