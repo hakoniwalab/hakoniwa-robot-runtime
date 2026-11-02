@@ -607,10 +607,19 @@ ManifestFactory
 include/hakoniwa/robot_runtime/factory/manifest_factory.hpp
 ```
 
-`ManifestFactoryConfig.configure_resources` は、既存の Plant と Endpoint を使う
-Application 専用の Runtime 構成が必要な場合の任意フックです。指定時は既定の
-Runtime と入力購読を生成せず、Runner 起動前にフックを呼び出します。
-フックは `resources.runtime` を設定する必要があり、省略時は従来の構成を維持します。
+`ManifestFactoryConfig.configure_runtime` は、Endpoint と Plant を生成した後、
+既定の PDU 入力を購読する前に `RuntimeExtensions` を設定する任意の構成点です。
+`replaced_control_components` に manifest の actuator / manual / trajectory
+component ID を指定すると、その component の既定 Source / Controller を生成
+しません。指定 ID が存在しない場合はエラーとし、追加 Controller にはそれぞれ
+Arbiter priority を指定します。追加の Source / Controller / Publisher は既定の
+RuntimeFactory が標準の5段階に組み込みます。Plant、Runner、manifest の
+state output は差し替えず、省略時は従来の構成を維持します。
+
+非ロックステップ RPC の場合は I/O スレッドで要求を保持し、CommandSource
+がステップごとに非ブロッキングで取得し、Controller が制御入力を更新します。
+RPC 応答は Plant の更新後に Publisher が送信します。受理応答は動作完了を
+意味しません。通信の受信や制御を Publisher に置かない構成です。
 
 ## 7. Adapter Boundary
 

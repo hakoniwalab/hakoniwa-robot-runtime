@@ -8,7 +8,8 @@
 #include <string>
 #include <vector>
 
-namespace hakoniwa::robot_runtime::runner { struct HakoniwaRunnerResources; }
+namespace hakoniwa::pdu { class Endpoint; }
+namespace hakoniwa::robot_runtime::runtime { struct RuntimeExtensions; }
 
 namespace hakoniwa::robot_runtime::factory {
 
@@ -42,13 +43,13 @@ struct ManifestFactoryConfig {
     std::string async_rpc_service_definition_path;
     /** Optional JSONL destination for person contact edges. */
     std::string person_contact_log_path;
-    /** Optional application composition hook; called before the Runner starts.
-     * When set, replaces default Runtime composition; must assign resources.runtime.
-     * Reuses the resolved Plant/Endpoint without subscribing discarded inputs.
-     * Application callbacks run before physics, not on transport threads.
+    /** Add standard Runtime components without replacing the Plant or Runner.
+     * The callback runs after the Endpoint and Plant are created, before
+     * default PDU readers are subscribed and the Runtime is assembled.
      */
-    std::function<void(runner::HakoniwaRunnerResources&)> configure_resources;
-
+    std::function<void(
+        runtime::RuntimeExtensions&,
+        ::hakoniwa::pdu::Endpoint&)> configure_runtime;
 };
 
 /**

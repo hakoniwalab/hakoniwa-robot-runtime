@@ -1,6 +1,7 @@
 #pragma once
 
 #include "runtime/actuator_runtime.hpp"
+#include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/publisher/joint_state_publisher.hpp"
 #include "runtime/publisher/multi_dof_joint_state_publisher.hpp"
@@ -16,8 +17,20 @@
 
 #include <functional>
 #include <memory>
+#include <unordered_set>
+#include <vector>
 
 namespace hakoniwa::robot_runtime::runtime {
+
+struct RuntimeExtensions {
+    /** Manifest control components replaced by application-provided controls. */
+    std::unordered_set<std::string> replaced_control_components;
+    std::vector<std::shared_ptr<ICommandSource>> sources;
+    std::vector<std::shared_ptr<IController>> controllers;
+    /** One priority per controller, in the same order and with the same ID. */
+    std::vector<ControllerPriority> priorities;
+    std::vector<std::shared_ptr<IStatePublisher>> publishers;
+};
 
 using Float64EventReaderFactory = std::function<
     std::shared_ptr<IFloat64EventReader>(const RuntimeActuatorConfig&)>;
@@ -51,7 +64,9 @@ using GeomFrictionReaderFactory = std::function<
  * RuntimeFactory owns Runtime composition only. It does not choose the
  * transport, physics backend, or execution Runner. Those concrete choices are
  * made by the outer composition root and injected here through the Plant and
- * reader/writer factories.
+ * reader/writer factories. RuntimeExtensions can replace named manifest control
+ * components and contribute additional five-stage components; default state
+ * outputs, physical Plant, and Runner are preserved.
  */
 [[nodiscard]] std::unique_ptr<ActuatorRuntime> build_runtime(
     const RuntimeDefinition& definition,
@@ -67,6 +82,7 @@ using GeomFrictionReaderFactory = std::function<
     , const ImpulseCollisionWriterFactory& impulse_writer_factory = {}
     , const GeomFrictionReaderFactory& geom_friction_reader_factory = {}
 #endif
+    , RuntimeExtensions extensions = {}
     );
 
 } // namespace hakoniwa::robot_runtime::runtime

@@ -209,7 +209,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
          rpc_people = config.person_rpc_inputs,
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
-         configure_resources = std::move(config.configure_resources),
+         configure_runtime = std::move(config.configure_runtime),
          asset_name]() mutable
         -> runner::HakoniwaRunnerResources {
         auto endpoint = std::make_unique<::hakoniwa::pdu::Endpoint>(
@@ -255,9 +255,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         : initial->yaw_rad);
             }
 #endif
-            auto runtime_instance = configure_resources
-                ? std::unique_ptr<runtime::ActuatorRuntime>{}
-                : runtime::build_runtime(
+            runtime::RuntimeExtensions extensions;
+            if (configure_runtime) configure_runtime(extensions, *endpoint);
+            auto runtime_instance = runtime::build_runtime(
                 definition,
                 plant,
                 [&](const runtime::RuntimeActuatorConfig& actuator) {
@@ -335,6 +335,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 }
 #elif defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
                 , {}, {}
+#else
+                , {}, {}
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
                 ,
@@ -371,6 +373,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     return reader;
                 }
 #endif
+                , std::move(extensions)
                 );
 
             for (const auto& key : lockstep_keys) {
@@ -574,9 +577,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 std::move(async_rpc_inputs),
 #endif
             };
-            if (configure_resources) configure_resources(resources);
-            if (!resources.runtime) throw std::runtime_error("Application did not compose a Runtime");
-            return resources;
+            return std::move(resources);
         } catch (...) {
             if (endpoint) endpoint->close();
             throw;
