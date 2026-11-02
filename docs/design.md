@@ -607,6 +607,11 @@ ManifestFactory
 include/hakoniwa/robot_runtime/factory/manifest_factory.hpp
 ```
 
+`ManifestFactoryConfig.configure_resources` は、既存の Plant と Endpoint を使う
+Application 専用の Runtime 構成が必要な場合の任意フックです。指定時は既定の
+Runtime と入力購読を生成せず、Runner 起動前にフックを呼び出します。
+フックは `resources.runtime` を設定する必要があり、省略時は従来の構成を維持します。
+
 ## 7. Adapter Boundary
 
 外部技術と Runtime 内部 interface の変換は Adapter に隔離します。

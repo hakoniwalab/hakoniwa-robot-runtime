@@ -209,6 +209,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
          rpc_people = config.person_rpc_inputs,
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
+         configure_resources = std::move(config.configure_resources),
          asset_name]() mutable
         -> runner::HakoniwaRunnerResources {
         auto endpoint = std::make_unique<::hakoniwa::pdu::Endpoint>(
@@ -254,7 +255,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         : initial->yaw_rad);
             }
 #endif
-            auto runtime_instance = runtime::build_runtime(
+            auto runtime_instance = configure_resources
+                ? std::unique_ptr<runtime::ActuatorRuntime>{}
+                : runtime::build_runtime(
                 definition,
                 plant,
                 [&](const runtime::RuntimeActuatorConfig& actuator) {
@@ -562,7 +565,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 async_rpc_inputs.push_back(std::move(input));
             }
 #endif
-            return {
+            runner::HakoniwaRunnerResources resources {
                 std::move(runtime_instance),
                 std::move(plant),
                 std::move(endpoint),
@@ -571,8 +574,11 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 std::move(async_rpc_inputs),
 #endif
             };
+            if (configure_resources) configure_resources(resources);
+            if (!resources.runtime) throw std::runtime_error("Application did not compose a Runtime");
+            return resources;
         } catch (...) {
-            endpoint->close();
+            if (endpoint) endpoint->close();
             throw;
         }
     };
