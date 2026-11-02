@@ -3,6 +3,7 @@
 #include "runtime/arbiter/command_arbiter.hpp"
 #include "runtime/controller/controller.hpp"
 #include "runtime/plant/actuator_plant.hpp"
+#include "runtime/publisher/request_publisher.hpp"
 #include "runtime/publisher/state_publisher.hpp"
 #include "runtime/source/command_source.hpp"
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
@@ -24,6 +25,8 @@ struct RuntimeStepReport {
     std::vector<ComponentStatus> source_statuses;
     std::vector<ComponentStatus> controller_statuses;
     ArbitrationResult arbitration;
+    std::vector<ProcessedInput> processed_inputs;
+    std::vector<ComponentStatus> request_publisher_statuses;
     std::vector<ComponentStatus> publisher_statuses;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<ComponentStatus> directive_controller_statuses;
@@ -51,6 +54,7 @@ public:
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         , std::vector<std::shared_ptr<IDirectiveController>> directive_controllers = {}
 #endif
+        , std::vector<std::shared_ptr<IRequestPublisher>> request_publishers = {}
         );
 
     /**
@@ -76,12 +80,14 @@ private:
         const RobotState& current_state) const;
     [[nodiscard]] ControllerInputMap poll_sources(
         const RuntimeStepContext& context,
-        std::vector<ComponentStatus>& statuses);
+        std::vector<ComponentStatus>& statuses,
+        std::vector<ProcessedInput>& processed_inputs);
     [[nodiscard]] std::vector<ControllerOutput> update_controllers(
         const ControllerInputMap& inputs,
         const RobotState& current_state,
         const RuntimeStepContext& context,
-        std::vector<ComponentStatus>& statuses);
+        std::vector<ComponentStatus>& statuses,
+        std::vector<ProcessedInput>& processed_inputs);
     [[nodiscard]] RobotState step_plant(
         const std::vector<ActuatorCommand>& commands
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
@@ -101,12 +107,19 @@ private:
         const RobotState& state,
         const RuntimeStepContext& context,
         std::vector<ComponentStatus>& statuses);
+    void publish_requests(
+        const RobotState& state,
+        const RuntimeStepContext& context,
+        const std::vector<ProcessedInput>& inputs,
+        const ArbitrationResult& arbitration,
+        std::vector<ComponentStatus>& statuses);
 
     std::vector<std::shared_ptr<ICommandSource>> sources_;
     std::vector<std::shared_ptr<IController>> controllers_;
     std::shared_ptr<ICommandArbiter> arbiter_;
     std::shared_ptr<IActuatorPlant> plant_;
     std::vector<std::shared_ptr<IStatePublisher>> publishers_;
+    std::vector<std::shared_ptr<IRequestPublisher>> request_publishers_;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<std::shared_ptr<IDirectiveController>> directive_controllers_;
 #endif

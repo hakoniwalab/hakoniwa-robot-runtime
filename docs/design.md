@@ -187,6 +187,27 @@ physical step 完了後の `RobotState` を外部表現へ変換して送信し�
 - transport 固有 write は adapter へ委譲する
 - publish failure によって完了済み physical step を rollback しない
 
+#### 非ロックステップ要求の応答
+
+`RuntimeExtensions.request_publishers` は `IRequestPublisher` を通常の Publisher
+と並べて追加します。通信スレッドは `NonLockstepRequestQueue<Request>` に
+要求を保持し、Source の `poll()` は毎ステップ最大1件を FIFO で取り出します。
+通常の PDU reader の最新値方式や既存ロックステップ RPC は変更しません。
+
+Runtime は各入力について source ID・sequence と配送状態
+（Delivered / Inactive / Unsupported）、処理した Controller の状態を記録し、
+Arbiter の結果と物理更新後の `RobotState` とともに Request Publisher に渡します。
+`IRequestPublisher::publish()` は `step(false)` を含む毎物理ステップで呼びます。
+`Delivered` は Controller への配送であり、指令の受理・Arbiter での採用・
+動作完了を保証しません。応答前に Controller の結果と選択結果を確認します。
+状態照会にはそのステップの実測値、継続動作の受理にはそのステップの結果を使い、
+到達完了は後続の観測で判断します。停止方法や応答の内容はロボット固有です。
+
+キューの容量超過、wall-clock 期限、取消、リセット時の未処理要求は transport
+adapter 側が管理します。停止・一時停止中は物理更新がないため正常応答を
+作らず、タイムアウトした未処理要求は再開後に実行しないようキューから除外します。
+すでに処理を開始した要求については通信途絶時に結果不明となり得ます。
+
 ### 2.6 Plant Directive extension（opt-in）
 
 Plant Directive は、Arbiter で選択される制御候補ではなく、外部から与えられた

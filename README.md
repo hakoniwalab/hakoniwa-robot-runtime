@@ -74,6 +74,24 @@ PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint
 - command type / expiration / finite value / limit / fallback などの最終 guard は Plant 入口で行います。
 - transport、physics backend、execution policy は Runtime core から分離します。
 
+## 非ロックステップのサービス要求
+
+`RuntimeExtensions` に `ICommandSource` / `IController` / `IRequestPublisher`
+を追加できます。`NonLockstepRequestQueue<Request>` は transport スレッドからの
+要求を容量制限付き FIFO に保持し、Source が各物理ステップで非ブロック取得します。
+受信待ち中も Plant は進み、既存のロックステップ RPC 入力は変更しません。
+
+Runtime は入力の source ID・sequence、配送先 Controller の状態、Arbiter の選択、
+物理更新後の状態を Request Publisher に渡します。通常の状態出力を間引く
+physics substep でも、要求応答はそのステップの物理更新後に送れます。
+この通知は「到達完了」を意味しません。受理条件、照会結果、停止動作、
+通信失敗時の応答は Robot Pack 側が定義します。
+
+キュー上の取消は `remove_if()`、リセット時の破棄は `drain()` を使います。
+一時停止中は物理ステップがなく、応答を発行できません。transport は独立した
+wall-clock 期限と取消通知を持つ必要があります。すでに Controller に渡った
+要求の通信途絶・取消は実行済みか不明になる場合があり、非常停止を保証しません。
+
 ## 現在のスコープ
 
 現在の実装は joint / scalar actuator を中心とした Runtime を正本としています。ロボットアームで実運用・検証され、opt-inのmobile-base拡張としてAckermann controllerとMultiDOF body-state output、opt-inのPlant Directive拡張として外部body同期（Mirror）とImpulse collision output、geom frictionの外部設定を提供します。Runtime 自体は特定のロボット機種やアーム専用 API を前提にしない構造です。

@@ -30,6 +30,8 @@ struct RuntimeExtensions {
     /** One priority per controller, in the same order and with the same ID. */
     std::vector<ControllerPriority> priorities;
     std::vector<std::shared_ptr<IStatePublisher>> publishers;
+    /** Post-step request responses, including steps without state publication. */
+    std::vector<std::shared_ptr<IRequestPublisher>> request_publishers;
 };
 
 using Float64EventReaderFactory = std::function<

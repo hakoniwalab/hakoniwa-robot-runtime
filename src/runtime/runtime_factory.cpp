@@ -467,6 +467,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         , std::move(directive_controllers)
 #endif
+        , std::move(extensions.request_publishers)
         );
 }
 
