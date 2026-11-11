@@ -11,7 +11,7 @@ namespace hakoniwa::robot_runtime::runtime {
 
 /**
  * Publishes the measured values of named joint sensors as one JointState,
- * rate-limited on simulation time like JointStatePublisher.
+ * stamped with the measurement time (ROS), rate-limited on simulation time like JointStatePublisher.
  *
  * Each entry is named by the MJCF joint the sensor measures and carries the
  * sensor's latest position and velocity, and its joint torque as effort when

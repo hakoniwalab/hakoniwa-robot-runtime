@@ -66,7 +66,9 @@ ComponentStatus SensorImuPublisher::publish(
             "sensor " + sensor_name_ + " has no IMU values"};
     }
     ImuOutput output;
-    output.simulation_time_usec = state.sample_time_usec;
+    // ROS: the stamp is when the values were measured (for an IMU, the latest
+    // of the gyroscope and accelerometer measurements).
+    output.simulation_time_usec = reading->sample_time_usec;
     output.frame_id = sensor_name_;
     output.angular_velocity = reading->angular_velocity;
     output.linear_acceleration = reading->linear_acceleration;

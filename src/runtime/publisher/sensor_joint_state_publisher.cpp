@@ -1,5 +1,6 @@
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -61,8 +62,10 @@ ComponentStatus SensorJointStatePublisher::publish(
         readings.emplace(reading.sensor_name, &reading);
     }
 
+    // ROS: the stamp is when the values were measured. Sensors in one
+    // JointState may measure at different times; the latest one is used.
     JointStateOutput output;
-    output.simulation_time_usec = state.sample_time_usec;
+    output.simulation_time_usec = 0;
     output.names.reserve(sensor_names_.size());
     output.position.reserve(sensor_names_.size());
     output.velocity.reserve(sensor_names_.size());
@@ -76,6 +79,8 @@ ComponentStatus SensorJointStatePublisher::publish(
             // Not every sensor has measured yet; try again next step.
             return {component_id_, ComponentState::Ready, {}};
         }
+        output.simulation_time_usec =
+            std::max(output.simulation_time_usec, found->second->sample_time_usec);
         output.names.push_back(found->second->mount_name);
         output.position.push_back(found->second->position);
         output.velocity.push_back(found->second->velocity);

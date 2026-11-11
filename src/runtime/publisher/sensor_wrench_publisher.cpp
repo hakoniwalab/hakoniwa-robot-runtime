@@ -66,7 +66,8 @@ ComponentStatus SensorWrenchPublisher::publish(
             "sensor " + sensor_name_ + " has no wrench"};
     }
     WrenchOutput output;
-    output.simulation_time_usec = state.sample_time_usec;
+    // ROS: the stamp is when the values were measured.
+    output.simulation_time_usec = reading->sample_time_usec;
     output.frame_id = sensor_name_;
     output.force = reading->force;
     output.torque = reading->torque;
