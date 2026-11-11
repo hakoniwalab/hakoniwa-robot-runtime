@@ -32,6 +32,11 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * body frame. The truth is the wrench the tool side (that body's subtree)
  * exerts on the robot side, in the sensor axes, torque about the sensor
  * origin, at the state after the step.
+ *
+ * IMUs: mounted like force-torque sensors. The truth is the angular velocity
+ * and the specific force (acceleration including -gravity, as an ideal
+ * accelerometer measures) at the sensor point, in the sensor axes, at the
+ * state after the step.
  */
 class MujocoSensorStage final : public runtime::ISensorStage {
 public:
@@ -56,6 +61,7 @@ private:
     struct Sensor;
     void step_joint(Sensor& sensor, std::uint64_t local_time_ns);
     void step_force_torque(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_imu(Sensor& sensor, std::uint64_t local_time_ns);
 
     const mjModel* model_;
     mjData* data_;

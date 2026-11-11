@@ -13,6 +13,9 @@
         },
         "joint": {
           "keys": ["update_rate", "delay", "encoder", "velocity", "torque"]
+        },
+        "imu": {
+          "keys": ["components.sensors.imu", "components.sensors.gyro", "components.sensors.acc"]
         }
       }
     },

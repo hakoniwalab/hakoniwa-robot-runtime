@@ -151,7 +151,7 @@ struct BodyState {
 /**
  * Latest measured value of one sensor, held between its samples.
  * Joint sensors: position, velocity and, when configured, the joint torque.
- * Force-torque sensors: the wrench.
+ * Force-torque sensors: the wrench. IMUs: angular velocity and specific force.
  */
 struct SensorReading {
     std::string sensor_name;
@@ -168,6 +168,10 @@ struct SensorReading {
     bool has_wrench {false};
     std::array<double, 3> force {0.0, 0.0, 0.0};   ///< [N]
     std::array<double, 3> torque {0.0, 0.0, 0.0};  ///< [N m]
+    /// IMUs: the latest gyroscope and accelerometer values, sensor axes.
+    bool has_imu {false};
+    std::array<double, 3> angular_velocity {0.0, 0.0, 0.0};     ///< [rad/s]
+    std::array<double, 3> linear_acceleration {0.0, 0.0, 0.0};  ///< specific force [m/s^2]
 };
 #endif
 

@@ -27,6 +27,11 @@ struct MujocoSensorStage::Sensor {
     mjtNum mount_position[3] {0.0, 0.0, 0.0};
     mjtNum mount_rotation[9] {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     std::unique_ptr<sa::IForceTorqueSensorAdapter> force_torque_adapter;
+    // IMUs (mounted like force-torque sensors)
+    bool imu {false};
+    bool gyro_sampled {false};
+    bool accel_sampled {false};
+    std::unique_ptr<sa::IImuSensorAdapter> imu_adapter;
 
     runtime::SensorReading reading;
 };
@@ -148,6 +153,39 @@ MujocoSensorStage::MujocoSensorStage(
             rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
             sensor->reading.mount_name = config.mjcf_body;
             needs_dynamics_ = true;
+        } else if (config.type == "imu") {
+            const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
+            if (body_id < 0) {
+                throw std::invalid_argument(owner + ": MJCF body not found: " + config.mjcf_body);
+            }
+            if (body_id == 0) {
+                throw std::invalid_argument(owner + ": an IMU cannot be mounted on the world");
+            }
+            if (implementation->create_imu == nullptr) {
+                throw std::invalid_argument(owner + ": implementation " + config.implementation
+                    + " has no IMU adapter");
+            }
+            sa::ImuAdapterSetup setup;
+            setup.config_path = config.definition_path;
+            setup.vehicle_name = config.pdu_robot;
+            setup.sensor_name = config.name;
+            setup.physics_step_ns = physics_step_usec * 1000;
+            setup.has_random_seed = true;
+            setup.random_seed = seed;
+            sensor->imu_adapter = implementation->create_imu(setup, error);
+            if (sensor->imu_adapter == nullptr) {
+                throw std::invalid_argument(owner + ": cannot create the "
+                    + config.implementation + " IMU adapter: " + error);
+            }
+            sensor->imu = true;
+            sensor->body_id = body_id;
+            sensor->root_id = model_->body_rootid[body_id];
+            for (int axis = 0; axis < 3; ++axis) {
+                sensor->mount_position[axis] = config.position_m[static_cast<std::size_t>(axis)];
+            }
+            rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
+            sensor->reading.mount_name = config.mjcf_body;
+            needs_dynamics_ = true;
         } else {
             throw std::invalid_argument(owner + ": type " + config.type
                 + " is not supported by the MuJoCo sensor stage yet");
@@ -238,6 +276,64 @@ void MujocoSensorStage::step_force_torque(Sensor& sensor, std::uint64_t local_ti
     }
 }
 
+void MujocoSensorStage::step_imu(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    // Sensor origin and axes in the world: the body pose composed with the mount.
+    const mjtNum* body_rotation = data_->xmat + 9 * sensor.body_id;
+    mjtNum origin[3];
+    mju_mulMatVec(origin, body_rotation, sensor.mount_position, 3, 3);
+    mju_addTo3(origin, data_->xpos + 3 * sensor.body_id);
+    mjtNum rotation[9];  // world <- sensor
+    mju_mulMatMat(rotation, body_rotation, sensor.mount_rotation, 3, 3, 3);
+
+    // Velocity and acceleration of the body at the sensor point (world axes).
+    // cvel and cacc are given at the subtree COM of the root; cacc includes
+    // -gravity, so the classical acceleration below is the specific force an
+    // ideal accelerometer measures: a = a_spatial(p) + w x v(p), the same as
+    // mj_objectAcceleration.
+    const mjtNum* com = data_->subtree_com + 3 * sensor.root_id;
+    mjtNum velocity[6], acceleration[6];
+    mju_transformSpatial(velocity, data_->cvel + 6 * sensor.body_id, 0, origin, com, nullptr);
+    mju_transformSpatial(acceleration, data_->cacc + 6 * sensor.body_id, 0, origin, com, nullptr);
+    mjtNum coriolis[3];
+    mju_cross(coriolis, velocity, velocity + 3);
+    mjtNum specific_force_world[3];
+    mju_add3(specific_force_world, acceleration + 3, coriolis);
+
+    mjtNum angular_velocity[3], specific_force[3];
+    mju_mulMatTVec3(angular_velocity, rotation, velocity);
+    mju_mulMatTVec3(specific_force, rotation, specific_force_world);
+
+    sa::ImuTruth truth;
+    truth.sim_time_ns = local_time_ns;
+    truth.angular_velocity = {angular_velocity[0], angular_velocity[1], angular_velocity[2]};
+    truth.specific_force = {specific_force[0], specific_force[1], specific_force[2]};
+    mjtNum q[4];
+    mju_mat2Quat(q, rotation);  // sensor -> world
+    truth.orientation_world_to_sensor = {q[0], -q[1], -q[2], -q[3]};
+    truth.gravity_world = {model_->opt.gravity[0], model_->opt.gravity[1], model_->opt.gravity[2]};
+
+    sa::ImuSample sample;
+    std::string error;
+    if (!sensor.imu_adapter->step(truth, sample, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    sensor.reading.updated = sample.gyro.updated || sample.accel.updated;
+    if (sample.gyro.updated) {
+        sensor.gyro_sampled = true;
+        sensor.reading.angular_velocity = {sample.gyro.value.x, sample.gyro.value.y, sample.gyro.value.z};
+        sensor.reading.sample_time_usec = first_step_time_usec_ + sample.gyro.sample_time_ns / 1000;
+    }
+    if (sample.accel.updated) {
+        sensor.accel_sampled = true;
+        sensor.reading.linear_acceleration = {sample.accel.value.x, sample.accel.value.y, sample.accel.value.z};
+        sensor.reading.sample_time_usec = first_step_time_usec_ + sample.accel.sample_time_ns / 1000;
+    }
+    // Published once both the gyroscope and the accelerometer have measured.
+    sensor.reading.has_imu = sensor.gyro_sampled && sensor.accel_sampled;
+    sensor.reading.has_sample = sensor.reading.has_imu;
+}
+
 void MujocoSensorStage::step(runtime::RobotState& state)
 {
     if (steps_ == 0) {
@@ -260,6 +356,8 @@ void MujocoSensorStage::step(runtime::RobotState& state)
     for (auto& sensor : sensors_) {
         if (sensor->force_torque) {
             step_force_torque(*sensor, local_time_ns);
+        } else if (sensor->imu) {
+            step_imu(*sensor, local_time_ns);
         } else {
             step_joint(*sensor, local_time_ns);
         }
@@ -275,7 +373,9 @@ void MujocoSensorStage::reset()
         std::string error;
         const bool reset = sensor->force_torque
             ? sensor->force_torque_adapter->reset(error)
-            : sensor->joint_adapter->reset(error);
+            : (sensor->imu ? sensor->imu_adapter->reset(error) : sensor->joint_adapter->reset(error));
+        sensor->gyro_sampled = false;
+        sensor->accel_sampled = false;
         if (!reset) {
             throw std::runtime_error("sensor " + sensor->name + " reset failed: " + error);
         }

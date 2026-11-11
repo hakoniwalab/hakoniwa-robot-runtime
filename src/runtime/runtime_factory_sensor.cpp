@@ -167,9 +167,9 @@ bool load_sensor(
     if (!known_types.contains(output.type)) {
         return fail(error, named + ": unknown sensor type \"" + output.type + "\"");
     }
-    if (output.type != "joint" && output.type != "force_torque") {
+    if (output.type != "joint" && output.type != "force_torque" && output.type != "imu") {
         return fail(error, named + ": sensor type \"" + output.type
-            + "\" is not supported by this Runtime yet (supported: joint, force_torque)");
+            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu)");
     }
     if (!sensor.contains("mount") || !load_mount(sensor, output, named, error)) {
         if (!sensor.contains("mount")) {
@@ -187,16 +187,9 @@ bool load_sensor(
     if (!read_json(definition_path, definition, error)) {
         return false;
     }
-    if (definition.is_object() && definition.contains("type")
-        && definition.at("type").is_string()
-        && definition.at("type").get<std::string>() != output.type) {
-        return fail(error, named + ": definition " + definition_path.string()
-            + " is for sensor type \"" + definition.at("type").get<std::string>()
-            + "\", not \"" + output.type + "\"");
-    }
     output.measures_torque = definition.is_object() && definition.contains("torque");
     if (!sensor::validate_sensor_definition(
-            catalog, linked, output.implementation, definition,
+            catalog, linked, output.implementation, output.type, definition,
             named + " (" + definition_path.string() + ")", error)) {
         return false;
     }
@@ -269,13 +262,14 @@ bool load_sensor_output(
     }
     const bool joint_state = message_type == "sensor_msgs/JointState";
     const bool wrench = message_type == "geometry_msgs/WrenchStamped";
-    if (!joint_state && !wrench) {
-        return fail(error, owner
-            + ": message_type must be sensor_msgs/JointState or geometry_msgs/WrenchStamped");
+    const bool imu = message_type == "sensor_msgs/Imu";
+    if (!joint_state && !wrench && !imu) {
+        return fail(error, owner + ": message_type must be sensor_msgs/JointState,"
+            " geometry_msgs/WrenchStamped or sensor_msgs/Imu");
     }
     output.message_type = message_type;
-    if (wrench && root.at("sensors").size() != 1) {
-        return fail(error, owner + ": a geometry_msgs/WrenchStamped output carries exactly one sensor");
+    if (!joint_state && root.at("sensors").size() != 1) {
+        return fail(error, owner + ": a " + message_type + " output carries exactly one sensor");
     }
     std::unordered_set<std::string> seen;
     for (const auto& item : root.at("sensors")) {
@@ -290,10 +284,10 @@ bool load_sensor_output(
         if (found == sensors.end()) {
             return fail(error, owner + ": no sensor named " + name);
         }
-        const std::string expected_type = joint_state ? "joint" : "force_torque";
+        const std::string expected_type = joint_state ? "joint" : (wrench ? "force_torque" : "imu");
         if (found->second->type != expected_type) {
-            return fail(error, owner + ": sensor " + name + " is a " + found->second->type
-                + " sensor and cannot go into " + message_type);
+            return fail(error, owner + ": sensor " + name + " is of type " + found->second->type
+                + " and cannot go into " + message_type);
         }
         if (joint_state && !output.sensors.empty()
             && sensors.at(output.sensors.front())->measures_torque != found->second->measures_torque) {

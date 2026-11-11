@@ -77,19 +77,19 @@ void test_shipped_catalog_lists_the_three_implementations(const SensorCatalog& c
 void test_supported_definitions_pass(const SensorCatalog& catalog)
 {
     std::string error;
-    CHECK(validate_sensor_definition(catalog, kAllLinked, "hakoniwa", sts3215(), "sts.json", &error));
+    CHECK(validate_sensor_definition(catalog, kAllLinked, "hakoniwa", "joint", sts3215(), "sts.json", &error));
     CHECK(error.empty());
     auto with_schema = sts3215();
     with_schema["$schema"] = "https://example/sensor.schema.json";
-    CHECK(validate_sensor_definition(catalog, kAllLinked, "hakoniwa", with_schema, "sts.json", &error));
+    CHECK(validate_sensor_definition(catalog, kAllLinked, "hakoniwa", "joint", with_schema, "sts.json", &error));
     CHECK(validate_sensor_definition(
-        catalog, kAllLinked, "gazebo", gazebo_force_torque(), "ft.json", &error));
+        catalog, kAllLinked, "gazebo", "force_torque", gazebo_force_torque(), "ft.json", &error));
 }
 
 void test_unknown_implementation_fails(const SensorCatalog& catalog)
 {
     std::string error;
-    CHECK(!validate_sensor_definition(catalog, kAllLinked, "gazebo2", sts3215(), "sts.json", &error));
+    CHECK(!validate_sensor_definition(catalog, kAllLinked, "gazebo2", "joint", sts3215(), "sts.json", &error));
     CHECK(contains(error, "sts.json"));
     CHECK(contains(error, "unknown sensor implementation \"gazebo2\""));
     CHECK(contains(error, "known: airsim, gazebo, hakoniwa"));
@@ -98,12 +98,12 @@ void test_unknown_implementation_fails(const SensorCatalog& catalog)
 void test_unsupported_sensor_type_fails(const SensorCatalog& catalog)
 {
     std::string error;
-    CHECK(!validate_sensor_definition(catalog, kAllLinked, "gazebo", sts3215(), "sts.json", &error));
+    CHECK(!validate_sensor_definition(catalog, kAllLinked, "gazebo", "joint", sts3215(), "sts.json", &error));
     CHECK(contains(error, "\"gazebo\" does not provide sensor type \"joint\""));
 
     error.clear();
     CHECK(!validate_sensor_definition(
-        catalog, kAllLinked, "airsim", gazebo_force_torque(), "ft.json", &error));
+        catalog, kAllLinked, "airsim", "force_torque", gazebo_force_torque(), "ft.json", &error));
     CHECK(contains(error, "\"airsim\" does not provide sensor type \"force_torque\""));
 }
 
@@ -113,12 +113,12 @@ void test_unsupported_keys_fail_and_are_all_named(const SensorCatalog& catalog)
     definition["nonlinearity"] = 0.002;
     definition["crosstalk"] = 0.01;
     std::string error;
-    CHECK(!validate_sensor_definition(catalog, kAllLinked, "gazebo", definition, "ft.json", &error));
+    CHECK(!validate_sensor_definition(catalog, kAllLinked, "gazebo", "force_torque", definition, "ft.json", &error));
     CHECK(contains(error, "gazebo/force_torque does not support: crosstalk, nonlinearity"));
 
     // The same keys are supported by another implementation.
     error.clear();
-    CHECK(validate_sensor_definition(catalog, kAllLinked, "hakoniwa", definition, "ft.json", &error));
+    CHECK(validate_sensor_definition(catalog, kAllLinked, "hakoniwa", "force_torque", definition, "ft.json", &error));
 }
 
 void test_misspelt_key_fails(const SensorCatalog& catalog)
@@ -126,23 +126,29 @@ void test_misspelt_key_fails(const SensorCatalog& catalog)
     auto definition = sts3215();
     definition["encodr"] = json::object();
     std::string error;
-    CHECK(!validate_sensor_definition(catalog, kAllLinked, "hakoniwa", definition, "sts.json", &error));
+    CHECK(!validate_sensor_definition(catalog, kAllLinked, "hakoniwa", "joint", definition, "sts.json", &error));
     CHECK(contains(error, "hakoniwa/joint does not support: encodr"));
 }
 
-void test_definition_without_type_fails(const SensorCatalog& catalog)
+void test_definition_type_is_optional_but_must_match(const SensorCatalog& catalog)
 {
+    // Some formats (the drone_config IMU section) have no "type"; the sensor
+    // instance gives it.
     auto definition = sts3215();
     definition.erase("type");
     std::string error;
-    CHECK(!validate_sensor_definition(catalog, kAllLinked, "hakoniwa", definition, "sts.json", &error));
-    CHECK(contains(error, "requires a string \"type\""));
+    CHECK(validate_sensor_definition(catalog, kAllLinked, "hakoniwa", "joint", definition, "sts.json", &error));
+
+    // A definition that has a type must agree with the sensor instance.
+    error.clear();
+    CHECK(!validate_sensor_definition(catalog, kAllLinked, "hakoniwa", "force_torque", sts3215(), "sts.json", &error));
+    CHECK(contains(error, "type does not match the sensor type \"force_torque\""));
 }
 
 void test_catalog_entry_not_linked_fails(const SensorCatalog& catalog)
 {
     std::string error;
-    CHECK(!validate_sensor_definition(catalog, {"gazebo"}, "hakoniwa", sts3215(), "sts.json", &error));
+    CHECK(!validate_sensor_definition(catalog, {"gazebo"}, "hakoniwa", "joint", sts3215(), "sts.json", &error));
     CHECK(contains(error, "\"hakoniwa\" is in the catalog but not linked"));
 }
 
@@ -151,7 +157,7 @@ void test_unsupported_keys_are_reported_before_linking(const SensorCatalog& cata
     auto definition = sts3215();
     definition["encodr"] = 1;
     std::string error;
-    CHECK(!validate_sensor_definition(catalog, {}, "hakoniwa", definition, "sts.json", &error));
+    CHECK(!validate_sensor_definition(catalog, {}, "hakoniwa", "joint", definition, "sts.json", &error));
     CHECK(contains(error, "does not support: encodr"));
 }
 
@@ -219,7 +225,7 @@ int main(int argc, char** argv)
     test_unsupported_sensor_type_fails(catalog);
     test_unsupported_keys_fail_and_are_all_named(catalog);
     test_misspelt_key_fails(catalog);
-    test_definition_without_type_fails(catalog);
+    test_definition_type_is_optional_but_must_match(catalog);
     test_catalog_entry_not_linked_fails(catalog);
     test_unsupported_keys_are_reported_before_linking(catalog);
     test_key_path_rules();

@@ -163,6 +163,7 @@ bool validate_sensor_definition(
     const SensorCatalog& catalog,
     const std::set<std::string>& linked_implementations,
     const std::string& implementation,
+    const std::string& sensor_type,
     const json& definition,
     const std::string& source,
     std::string* error)
@@ -176,11 +177,16 @@ bool validate_sensor_definition(
         return fail(error, source + ": unknown sensor implementation \""
             + implementation + "\" (known: " + join(known) + ")");
     }
-    if (!definition.is_object() || !definition.contains("type")
-        || !definition.at("type").is_string()) {
-        return fail(error, source + ": sensor definition requires a string \"type\"");
+    if (!definition.is_object()) {
+        return fail(error, source + ": sensor definition must be a JSON object");
     }
-    const auto type = definition.at("type").get<std::string>();
+    if (definition.contains("type")
+        && (!definition.at("type").is_string()
+            || definition.at("type").get<std::string>() != sensor_type)) {
+        return fail(error, source + ": sensor definition type does not match the sensor type \""
+            + sensor_type + "\"");
+    }
+    const auto& type = sensor_type;
     const auto sensor = found->second.find(type);
     if (sensor == found->second.end()) {
         return fail(error, source + ": sensor implementation \"" + implementation

@@ -45,7 +45,9 @@ struct SensorCatalog {
 /**
  * Checks a sensor definition against the catalog, in this order:
  *  1. the implementation is in the catalog,
- *  2. the implementation provides the definition's sensor type,
+ *  2. the implementation provides the sensor type (from the sensor instance;
+ *     a definition that has a top-level "type" must agree with it - some
+ *     formats, such as the drone_config IMU section, have none),
  *  3. every key of the definition is supported by that implementation,
  *  4. the implementation is linked into this application.
  * Fails with a message naming the definition source and every problem found
@@ -55,6 +57,7 @@ struct SensorCatalog {
     const SensorCatalog& catalog,
     const std::set<std::string>& linked_implementations,
     const std::string& implementation,
+    const std::string& sensor_type,
     const nlohmann::json& definition,
     const std::string& source,
     std::string* error);
