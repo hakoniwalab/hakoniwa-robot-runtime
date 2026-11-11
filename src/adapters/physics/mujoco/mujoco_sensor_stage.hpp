@@ -51,7 +51,8 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * axes; the barometer gets the sensor altitude above sea level; the GPS gets
  * the antenna position and velocity in NWU and as WGS-84 coordinates.
  *
- * LiDARs (2D and 3D) and rangefinders: mounted like IMUs, usually on a housing body. The world's ray
+ * LiDARs (2D and 3D), rangefinders and depth cameras (measured by rays):
+ * mounted like IMUs, usually on a housing body. The world's ray
  * caster casts the rays at the state after the step (the stage runs
  * mj_forward once after mj_step). The rays never hit the subtree of the
  * exclusion root, by default the mount body, so the robot stays visible.
@@ -95,6 +96,7 @@ private:
     void step_imu(Sensor& sensor, std::uint64_t local_time_ns);
     void step_lidar(Sensor& sensor, std::uint64_t local_time_ns);
     void step_rangefinder(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_depth_camera(Sensor& sensor, std::uint64_t local_time_ns);
     void step_mag(Sensor& sensor, std::uint64_t local_time_ns);
     void step_baro(Sensor& sensor, std::uint64_t local_time_ns);
     void step_gps(Sensor& sensor, std::uint64_t local_time_ns);

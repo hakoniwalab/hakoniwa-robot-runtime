@@ -241,6 +241,7 @@ struct RuntimeSensorOutputConfig {
     std::string pdu_robot;
     std::string pdu_name;
     std::string message_type;        ///< sensor_msgs/JointState or geometry_msgs/WrenchStamped
+    std::string camera_info_pdu_name;  ///< sensor_msgs/Image outputs: the CameraInfo channel
     double update_rate_hz {0.0};
     std::vector<std::string> sensors;
 };

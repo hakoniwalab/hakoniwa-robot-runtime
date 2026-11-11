@@ -43,6 +43,8 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/point_cloud2_pdu_writer.hpp"
 #include "runtime/publisher/sensor_range_publisher.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/range_pdu_writer.hpp"
+#include "runtime/publisher/sensor_depth_image_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/depth_image_pdu_writer.hpp"
 #include "runtime/publisher/sensor_magnetic_field_publisher.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/magnetic_field_pdu_writer.hpp"
 #include "runtime/publisher/sensor_fluid_pressure_publisher.hpp"
@@ -659,6 +661,19 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                                     *endpoint,
                                     output.pdu_robot,
                                     output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/Image") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorDepthImagePublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::DepthImagePduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name,
+                                    output.camera_info_pdu_name)));
                         continue;
                     }
                     if (output.message_type == "sensor_msgs/Range") {

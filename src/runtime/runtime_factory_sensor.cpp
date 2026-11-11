@@ -125,7 +125,7 @@ bool load_mount(
         }
         return required_string(mount, "mjcf_joint", output.mjcf_joint, error, owner + ".mount");
     }
-    if (output.type == "lidar" || output.type == "rangefinder") {
+    if (output.type == "lidar" || output.type == "rangefinder" || output.type == "depth_camera") {
         // A range sensor may name the root body whose subtree its rays never
         // hit; by default only the mount body (the sensor housing) is skipped.
         if (!only_keys(mount, {"mjcf_body", "position_m", "orientation_deg", "exclude_mjcf_body"},
@@ -183,9 +183,10 @@ bool load_sensor(
     }
     if (output.type != "joint" && output.type != "force_torque" && output.type != "imu"
         && output.type != "lidar" && output.type != "rangefinder"
-        && output.type != "mag" && output.type != "baro" && output.type != "gps") {
+        && output.type != "mag" && output.type != "baro" && output.type != "gps"
+        && output.type != "depth_camera") {
         return fail(error, named + ": sensor type \"" + output.type
-            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar, rangefinder, mag, baro, gps)");
+            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar, rangefinder, mag, baro, gps, depth_camera)");
     }
     if (!sensor.contains("mount") || !load_mount(sensor, output, named, error)) {
         if (!sensor.contains("mount")) {
@@ -363,11 +364,13 @@ bool load_sensor_output(
     const bool magnetic = message_type == "sensor_msgs/MagneticField";
     const bool pressure = message_type == "sensor_msgs/FluidPressure";
     const bool fix = message_type == "sensor_msgs/NavSatFix";
-    if (!joint_state && !wrench && !imu && !scan && !cloud && !range && !magnetic && !pressure && !fix) {
+    const bool image = message_type == "sensor_msgs/Image";
+    if (!joint_state && !wrench && !imu && !scan && !cloud && !range && !magnetic && !pressure && !fix
+        && !image) {
         return fail(error, owner + ": message_type must be sensor_msgs/JointState,"
             " geometry_msgs/WrenchStamped, sensor_msgs/Imu, sensor_msgs/LaserScan,"
             " sensor_msgs/PointCloud2, sensor_msgs/Range, sensor_msgs/MagneticField,"
-            " sensor_msgs/FluidPressure or sensor_msgs/NavSatFix");
+            " sensor_msgs/FluidPressure, sensor_msgs/NavSatFix or sensor_msgs/Image");
     }
     output.message_type = message_type;
     if (!joint_state && root.at("sensors").size() != 1) {
@@ -388,7 +391,7 @@ bool load_sensor_output(
         }
         const std::string expected_type = joint_state ? "joint"
             : wrench ? "force_torque" : imu ? "imu" : range ? "rangefinder"
-            : magnetic ? "mag" : pressure ? "baro" : fix ? "gps" : "lidar";
+            : magnetic ? "mag" : pressure ? "baro" : fix ? "gps" : image ? "depth_camera" : "lidar";
         if (found->second->type != expected_type) {
             return fail(error, owner + ": sensor " + name + " is of type " + found->second->type
                 + " and cannot go into " + message_type);
@@ -406,8 +409,19 @@ bool load_sensor_output(
         output.sensors.push_back(name);
     }
     const auto& pdu = root.at("pdu_config");
-    if (!only_keys(pdu, {"pdu_name", "message_type", "update_rate_hz"}, owner + ".pdu_config", error)
+    if (!only_keys(pdu, image
+                ? std::unordered_set<std::string>{"pdu_name", "camera_info_pdu_name", "message_type", "update_rate_hz"}
+                : std::unordered_set<std::string>{"pdu_name", "message_type", "update_rate_hz"},
+            owner + ".pdu_config", error)
         || !required_string(pdu, "pdu_name", output.pdu_name, error, owner + ".pdu_config")) {
+        return false;
+    }
+    // ROS: an image goes with its CameraInfo on a second channel, same stamp.
+    if (image
+        && (!required_string(pdu, "camera_info_pdu_name", output.camera_info_pdu_name, error,
+                owner + ".pdu_config")
+            || !verify_pdu_binding(context, output.pdu_robot, output.camera_info_pdu_name,
+                "sensor_msgs/CameraInfo", 1, error))) {
         return false;
     }
     if (!pdu.contains("update_rate_hz") || !pdu.at("update_rate_hz").is_number()

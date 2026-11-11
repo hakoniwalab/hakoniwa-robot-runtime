@@ -4,9 +4,11 @@
 
 #include <array>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace hakoniwa::robot_runtime::adapters::mujoco {
 
@@ -37,9 +39,11 @@ struct MujocoSensorStage::Sensor {
     // through ray_caster
     bool lidar {false};
     bool rangefinder {false};
+    bool depth_camera {false};
     std::shared_ptr<sa::IRayCaster> ray_caster;
     std::unique_ptr<sa::ILidarSensorAdapter> lidar_adapter;
     std::unique_ptr<sa::IRangefinderSensorAdapter> rangefinder_adapter;
+    std::unique_ptr<sa::IDepthCameraSensorAdapter> depth_camera_adapter;
     // Magnetometers, barometers and GPS receivers (mounted like IMUs)
     bool mag {false};
     bool baro {false};
@@ -104,6 +108,53 @@ std::array<double, 3> nwu_to_geodetic(const runtime::RuntimeSensorWorld& world, 
         lat = std::atan2(z, p * (1.0 - e2 * n / (n + h)));
     }
     return {lat / kDegToRad, lon / kDegToRad, h};
+}
+
+// Mean number of the sensor's own surfaces (geoms under the excluded roots)
+// a ray crosses before it leaves them, over 26 directions from the sensor
+// origin. A housing gives about 1 (its own wall); more means the origin sits
+// inside other parts, such as layered robot link meshes, and every ray is
+// cast again through each of them.
+double own_surfaces_per_ray(
+    const mjModel* model, mjData* data, const double origin[3], const std::vector<int>& roots)
+{
+    auto excluded = [&](int geom) {
+        for (int b = model->geom_bodyid[geom]; b > 0; b = model->body_parentid[b]) {
+            for (const int root : roots) {
+                if (b == root) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    int crossings = 0;
+    int rays = 0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            for (int z = -1; z <= 1; ++z) {
+                if (x == 0 && y == 0 && z == 0) {
+                    continue;
+                }
+                mjtNum dir[3] = {static_cast<mjtNum>(x), static_cast<mjtNum>(y), static_cast<mjtNum>(z)};
+                mju_normalize3(dir);
+                mjtNum start[3] = {origin[0], origin[1], origin[2]};
+                ++rays;
+                for (int attempt = 0; attempt < 32; ++attempt) {
+                    int geom = -1;
+                    const mjtNum dist = mj_ray(model, data, start, dir, nullptr, 1, -1, &geom, nullptr);
+                    if (dist < 0 || !excluded(geom)) {
+                        break;
+                    }
+                    ++crossings;
+                    for (int r = 0; r < 3; ++r) {
+                        start[r] += dir[r] * (dist + 1e-6);
+                    }
+                }
+            }
+        }
+    }
+    return rays > 0 ? static_cast<double>(crossings) / rays : 0.0;
 }
 
 } // namespace
@@ -289,8 +340,10 @@ MujocoSensorStage::MujocoSensorStage(
             rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
             sensor->reading.mount_name = config.mjcf_body;
             needs_kinematics_ = true;
-        } else if (config.type == "lidar" || config.type == "rangefinder") {
+        } else if (config.type == "lidar" || config.type == "rangefinder"
+            || config.type == "depth_camera") {
             const bool is_lidar = config.type == "lidar";
+            const bool is_depth = config.type == "depth_camera";
             const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
             if (body_id < 0) {
                 throw std::invalid_argument(owner + ": MJCF body not found: " + config.mjcf_body);
@@ -305,9 +358,10 @@ MujocoSensorStage::MujocoSensorStage(
                     + config.exclude_mjcf_body);
             }
             if (is_lidar ? implementation->create_lidar == nullptr
-                         : implementation->create_rangefinder == nullptr) {
+                : is_depth ? implementation->create_depth_camera == nullptr
+                : implementation->create_rangefinder == nullptr) {
                 throw std::invalid_argument(owner + ": implementation " + config.implementation
-                    + (is_lidar ? " has no LiDAR adapter" : " has no rangefinder adapter"));
+                    + " has no " + config.type + " adapter");
             }
             if (!ray_caster_factory) {
                 throw std::invalid_argument(owner + ": the world provides no ray caster");
@@ -334,7 +388,14 @@ MujocoSensorStage::MujocoSensorStage(
                 setup.random_seed = seed;
                 setup.ray_caster = sensor->ray_caster.get();
             };
-            if (is_lidar) {
+            if (is_depth) {
+                // Only the ray caster is given: a definition that renders
+                // (method render) is rejected by the adapter at creation.
+                sa::DepthCameraAdapterSetup setup;
+                fill(setup);
+                sensor->depth_camera_adapter = implementation->create_depth_camera(setup, error);
+                sensor->depth_camera = sensor->depth_camera_adapter != nullptr;
+            } else if (is_lidar) {
                 sa::LidarAdapterSetup setup;
                 fill(setup);
                 sensor->lidar_adapter = implementation->create_lidar(setup, error);
@@ -345,7 +406,7 @@ MujocoSensorStage::MujocoSensorStage(
                 sensor->rangefinder_adapter = implementation->create_rangefinder(setup, error);
                 sensor->rangefinder = sensor->rangefinder_adapter != nullptr;
             }
-            if (!sensor->lidar && !sensor->rangefinder) {
+            if (!sensor->lidar && !sensor->rangefinder && !sensor->depth_camera) {
                 throw std::invalid_argument(owner + ": cannot create the "
                     + config.implementation + " " + config.type + " adapter: " + error);
             }
@@ -356,6 +417,24 @@ MujocoSensorStage::MujocoSensorStage(
             mju_copy(sensor->mount_rotation, mount_rotation, 9);
             sensor->reading.mount_name = config.mjcf_body;
             needs_kinematics_ = true;
+            {
+                // A mount inside the robot's own parts is the user's choice, but
+                // it slows every ray: warn, do not stop.
+                std::vector<int> roots {body_id};
+                if (!config.exclude_mjcf_body.empty()) {
+                    roots.push_back(mj_name2id(model_, mjOBJ_BODY, config.exclude_mjcf_body.c_str()));
+                }
+                double origin[3], rotation[9];
+                mount_pose(*sensor, origin, rotation);
+                const double surfaces = own_surfaces_per_ray(model_, data_, origin, roots);
+                if (surfaces > 1.0 + 1e-9) {
+                    std::cerr << "[WARN] " << owner << ": rays cross " << surfaces
+                              << " of its own surfaces on average before leaving the mount body"
+                                 " (a housing gives 1). The sensor is inside parts of the robot,"
+                                 " such as link meshes, which slows every ray. Mount it on a"
+                                 " housing body (see sensor-pdu.md, mounting).\n";
+                }
+            }
         } else {
             throw std::invalid_argument(owner + ": type " + config.type
                 + " is not supported by the MuJoCo sensor stage yet");
@@ -656,6 +735,38 @@ void MujocoSensorStage::step_rangefinder(Sensor& sensor, std::uint64_t local_tim
     sensor.reading.range.variance = sample.variance;
 }
 
+void MujocoSensorStage::step_depth_camera(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    const auto truth = sensor_pose(sensor, local_time_ns);
+    sa::DepthImage image;
+    std::string error;
+    if (!sensor.depth_camera_adapter->step(truth, image, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    sensor.reading.updated = image.updated;
+    if (!image.updated) {
+        return;
+    }
+    auto reading = std::make_shared<runtime::DepthImageReading>();
+    reading->width = image.width;
+    reading->height = image.height;
+    reading->planar = image.depth_type == sa::DepthType::kPlanar;
+    const std::size_t count = static_cast<std::size_t>(image.width) * image.height;
+    if (image.data != nullptr) {
+        reading->depths.assign(image.data, image.data + count);
+    }
+    reading->info.width = image.info.width;
+    reading->info.height = image.info.height;
+    reading->info.distortion_model = image.info.distortion_model;
+    reading->info.d = image.info.d;
+    reading->info.k = image.info.k;
+    reading->info.r = image.info.r;
+    reading->info.p = image.info.p;
+    sensor.reading.has_sample = true;
+    sensor.reading.sample_time_usec = first_step_time_usec_ + image.sample_time_ns / 1000;
+    sensor.reading.depth_image = std::move(reading);
+}
+
 void MujocoSensorStage::step_lidar(Sensor& sensor, std::uint64_t local_time_ns)
 {
     const auto truth = sensor_pose(sensor, local_time_ns);
@@ -734,6 +845,8 @@ void MujocoSensorStage::step(runtime::RobotState& state)
             step_lidar(*sensor, local_time_ns);
         } else if (sensor->rangefinder) {
             step_rangefinder(*sensor, local_time_ns);
+        } else if (sensor->depth_camera) {
+            step_depth_camera(*sensor, local_time_ns);
         } else if (sensor->mag) {
             step_mag(*sensor, local_time_ns);
         } else if (sensor->baro) {
@@ -762,6 +875,8 @@ void MujocoSensorStage::reset()
             reset = sensor->lidar_adapter->reset(error);
         } else if (sensor->rangefinder) {
             reset = sensor->rangefinder_adapter->reset(error);
+        } else if (sensor->depth_camera) {
+            reset = sensor->depth_camera_adapter->reset(error);
         } else if (sensor->mag) {
             reset = sensor->mag_adapter->reset(error);
         } else if (sensor->baro) {

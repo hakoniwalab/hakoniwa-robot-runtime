@@ -197,6 +197,26 @@ struct RangeReading {
     double variance {0.0};            ///< [m^2], 0 when unknown
 };
 
+/** Camera model, shaped like sensor_msgs/CameraInfo (optical frame). */
+struct CameraInfoReading {
+    std::uint32_t width {0};
+    std::uint32_t height {0};
+    std::string distortion_model;    ///< empty without distortion
+    std::vector<double> d;
+    std::array<double, 9> k {};
+    std::array<double, 9> r {};
+    std::array<double, 12> p {};
+};
+
+/** One depth image, shaped like sensor_msgs/Image (32FC1, metres). */
+struct DepthImageReading {
+    std::uint32_t width {0};
+    std::uint32_t height {0};
+    bool planar {true};              ///< distance from the camera plane, else along the ray
+    std::vector<float> depths;       ///< width * height, rows from the top; REP 117 outside the range
+    CameraInfoReading info;
+};
+
 /** One GPS fix, shaped like sensor_msgs/NavSatFix (WGS-84). */
 struct GpsFixReading {
     double latitude_deg {0.0};
@@ -239,6 +259,8 @@ struct SensorReading {
     /// Barometers: the latest measured static pressure [Pa].
     bool has_pressure {false};
     double pressure_pa {0.0};
+    /// Depth cameras: the latest image, shared and never changed.
+    std::shared_ptr<const DepthImageReading> depth_image;
     /// GPS receivers: the latest fix.
     bool has_fix {false};
     GpsFixReading fix;

@@ -31,7 +31,8 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `mag` | 使える | body | 世界の地磁気（設定の強さ・偏角・伏角）をセンサの軸に回したもの | `sensor_msgs/MagneticField` | 1 つ |
 | `baro` | 使える | body | センサの海抜高度と、海面の気圧・気温 | `sensor_msgs/FluidPressure` | 1 つ |
 | `gps` | 使える | body | アンテナの位置と速度（NWU と WGS-84） | `sensor_msgs/NavSatFix` | 1 つ |
-| `depth_camera`・`rgb_camera` | 予定 | 測距用の body | — | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ |
+| `rgb_camera` | 予定 | 測距用の body | — | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ |
+| `depth_camera` | 使える（レイで測る方式） | 測距用の body | 画素ごとのレイの距離（ワールドのレイの部品） | `sensor_msgs/Image`（32FC1）と `sensor_msgs/CameraInfo` | 1 つ |
 
 - LiDAR の走査の終わりの姿勢（`geometry_msgs/Pose`）と、GPS の速度（`geometry_msgs/TwistStamped`）は予定です。
 - 地磁気・気圧・GPS は、世界が地球のどこにあるか（Runtime の設定 `sensors.world`、[configuration.md 4.4](configuration.md#44-sensorsopt-in)）を使います。MuJoCo の世界の軸は x が北、y が西、z が上（NWU）です。設定が無いと起動時に止まります。
@@ -53,6 +54,7 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 
 - 測距用の body には、ふつうセンサの筐体を付けます。筐体は MJCF の body（形状あり）として先にモデルに入れておきます。レイは、筐体とその下の body には当たりません。
 - ロボット自身は既定で見えます（実機と同じ）。`exclude_mjcf_body` に body を書くと、その body とその下にもレイが当たらなくなります（たとえば `base` でアーム全体を隠す）。
+- レイを使うセンサ（LiDAR、測距、深度カメラ）をロボットの部品のメッシュの中に付けると、レイが自分の面を何枚もくぐって遅くなります。起動時に、レイが自分の面を平均 1 枚（筐体の壁）より多くくぐるときは `[WARN]` を出します（止めません）。筐体の body に付けてください。
 - 力覚センサの `mjcf_body` は工具側の根の body です。その body より下が工具側、上がロボット側になります。
 
 ## 3. 欄ごとの決まり（実装済みの型）
@@ -159,3 +161,14 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `latitude`・`longitude` | WGS-84 [度] |
 | `altitude` | 楕円体からの高さ [m]（ジオイドのモデルは持たない） |
 | `position_covariance`・`position_covariance_type` | 受信機が精度を報告するなら、水平・垂直の精度の 2 乗を対角に入れて 2（DIAGONAL_KNOWN）。報告しないなら 0 と 0（UNKNOWN） |
+
+### 3.10 `sensor_msgs/Image` と `sensor_msgs/CameraInfo`（`depth_camera`）
+
+出力の設定の `pdu_name` に Image、`camera_info_pdu_name` に CameraInfo を出します。2 つは同じ時刻と `frame_id` です。
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp`・`header.frame_id` | 測定時刻、センサ名（2 つとも同じ） |
+| Image `encoding`・`is_bigendian`・`step` | `32FC1`、0、幅 × 4 |
+| Image `data` | 深度 [m]、上の行から。定義の `depth_type` が `planar` なら光軸方向の距離、`perspective` ならレイ方向の距離。範囲の外は REP-117 に従い +inf か -inf |
+| CameraInfo `width`・`height`・`K`・`R`・`P`・`distortion_model`・`D` | 実装が返すカメラの形（光学の軸：x 右、y 下、z 前）。画素の中心は整数の座標 |

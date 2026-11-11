@@ -54,11 +54,11 @@
           "then": {"properties": {"mount": {"$ref": "#/$defs/joint_mount"}}}
         },
         {
-          "if": {"properties": {"type": {"enum": ["lidar", "rangefinder"]}}},
+          "if": {"properties": {"type": {"enum": ["lidar", "rangefinder", "depth_camera"]}}},
           "then": {"properties": {"mount": {"$ref": "#/$defs/range_mount"}}}
         },
         {
-          "if": {"properties": {"type": {"not": {"enum": ["joint", "lidar", "rangefinder"]}}}},
+          "if": {"properties": {"type": {"not": {"enum": ["joint", "lidar", "rangefinder", "depth_camera"]}}}},
           "then": {"properties": {"mount": {"$ref": "#/$defs/body_mount"}}}
         }
       ]

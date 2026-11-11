@@ -31,6 +31,9 @@
         },
         "gps": {
           "keys": ["components.sensors.gps"]
+        },
+        "depth_camera": {
+          "keys": ["update_rate", "method", "image", "horizontal_fov", "depth_type", "clip", "range", "no_return", "accuracy"]
         }
       }
     },
