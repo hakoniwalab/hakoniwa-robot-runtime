@@ -32,10 +32,13 @@ struct MujocoSensorStage::Sensor {
     bool gyro_sampled {false};
     bool accel_sampled {false};
     std::unique_ptr<sa::IImuSensorAdapter> imu_adapter;
-    // 2D LiDARs (mounted like IMUs); the adapter casts through ray_caster
+    // LiDARs and rangefinders (mounted like IMUs); the adapter casts
+    // through ray_caster
     bool lidar {false};
+    bool rangefinder {false};
     std::shared_ptr<sa::IRayCaster> ray_caster;
     std::unique_ptr<sa::ILidarSensorAdapter> lidar_adapter;
+    std::unique_ptr<sa::IRangefinderSensorAdapter> rangefinder_adapter;
 
     runtime::SensorReading reading;
 };
@@ -191,23 +194,25 @@ MujocoSensorStage::MujocoSensorStage(
             rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
             sensor->reading.mount_name = config.mjcf_body;
             needs_dynamics_ = true;
-        } else if (config.type == "lidar") {
+        } else if (config.type == "lidar" || config.type == "rangefinder") {
+            const bool is_lidar = config.type == "lidar";
             const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
             if (body_id < 0) {
                 throw std::invalid_argument(owner + ": MJCF body not found: " + config.mjcf_body);
             }
             if (body_id == 0) {
                 throw std::invalid_argument(owner
-                    + ": a LiDAR is mounted on a body (its housing), not on the world");
+                    + ": a range sensor is mounted on a body (its housing), not on the world");
             }
             if (!config.exclude_mjcf_body.empty()
                 && mj_name2id(model_, mjOBJ_BODY, config.exclude_mjcf_body.c_str()) <= 0) {
                 throw std::invalid_argument(owner + ": MJCF body to exclude not found: "
                     + config.exclude_mjcf_body);
             }
-            if (implementation->create_lidar == nullptr) {
+            if (is_lidar ? implementation->create_lidar == nullptr
+                         : implementation->create_rangefinder == nullptr) {
                 throw std::invalid_argument(owner + ": implementation " + config.implementation
-                    + " has no LiDAR adapter");
+                    + (is_lidar ? " has no LiDAR adapter" : " has no rangefinder adapter"));
             }
             if (!ray_caster_factory) {
                 throw std::invalid_argument(owner + ": the world provides no ray caster");
@@ -225,20 +230,30 @@ MujocoSensorStage::MujocoSensorStage(
             if (sensor->ray_caster == nullptr) {
                 throw std::invalid_argument(owner + ": the world provides no ray caster");
             }
-            sa::LidarAdapterSetup setup;
-            setup.config_path = config.definition_path;
-            setup.vehicle_name = config.pdu_robot;
-            setup.sensor_name = config.name;
-            setup.physics_step_ns = physics_step_usec * 1000;
-            setup.has_random_seed = true;
-            setup.random_seed = seed;
-            setup.ray_caster = sensor->ray_caster.get();
-            sensor->lidar_adapter = implementation->create_lidar(setup, error);
-            if (sensor->lidar_adapter == nullptr) {
-                throw std::invalid_argument(owner + ": cannot create the "
-                    + config.implementation + " LiDAR adapter: " + error);
+            auto fill = [&](sa::RangeImageAdapterSetup& setup) {
+                setup.config_path = config.definition_path;
+                setup.vehicle_name = config.pdu_robot;
+                setup.sensor_name = config.name;
+                setup.physics_step_ns = physics_step_usec * 1000;
+                setup.has_random_seed = true;
+                setup.random_seed = seed;
+                setup.ray_caster = sensor->ray_caster.get();
+            };
+            if (is_lidar) {
+                sa::LidarAdapterSetup setup;
+                fill(setup);
+                sensor->lidar_adapter = implementation->create_lidar(setup, error);
+                sensor->lidar = sensor->lidar_adapter != nullptr;
+            } else {
+                sa::RangefinderAdapterSetup setup;
+                fill(setup);
+                sensor->rangefinder_adapter = implementation->create_rangefinder(setup, error);
+                sensor->rangefinder = sensor->rangefinder_adapter != nullptr;
             }
-            sensor->lidar = true;
+            if (!sensor->lidar && !sensor->rangefinder) {
+                throw std::invalid_argument(owner + ": cannot create the "
+                    + config.implementation + " " + config.type + " adapter: " + error);
+            }
             sensor->body_id = body_id;
             for (int axis = 0; axis < 3; ++axis) {
                 sensor->mount_position[axis] = config.position_m[static_cast<std::size_t>(axis)];
@@ -394,7 +409,7 @@ void MujocoSensorStage::step_imu(Sensor& sensor, std::uint64_t local_time_ns)
     sensor.reading.has_sample = sensor.reading.has_imu;
 }
 
-void MujocoSensorStage::step_lidar(Sensor& sensor, std::uint64_t local_time_ns)
+sa::SensorPoseTruth MujocoSensorStage::sensor_pose(const Sensor& sensor, std::uint64_t local_time_ns) const
 {
     // Sensor pose in the world: the body pose composed with the mount (the
     // same pose the ray caster casts from).
@@ -411,7 +426,35 @@ void MujocoSensorStage::step_lidar(Sensor& sensor, std::uint64_t local_time_ns)
     mjtNum q[4];
     mju_mat2Quat(q, rotation);  // sensor -> world
     truth.orientation_world_to_sensor = {q[0], -q[1], -q[2], -q[3]};
+    return truth;
+}
 
+void MujocoSensorStage::step_rangefinder(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    const auto truth = sensor_pose(sensor, local_time_ns);
+    sa::RangeSample sample;
+    std::string error;
+    if (!sensor.rangefinder_adapter->step(truth, sample, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    sensor.reading.updated = sample.updated;
+    if (!sample.updated) {
+        return;
+    }
+    sensor.reading.has_sample = true;
+    sensor.reading.has_range = true;
+    sensor.reading.sample_time_usec = first_step_time_usec_ + sample.sample_time_ns / 1000;
+    sensor.reading.range.radiation_type = static_cast<std::uint8_t>(sample.radiation_type);
+    sensor.reading.range.field_of_view = sample.field_of_view;
+    sensor.reading.range.min_range = sample.min_range;
+    sensor.reading.range.max_range = sample.max_range;
+    sensor.reading.range.range = sample.range;
+    sensor.reading.range.variance = sample.variance;
+}
+
+void MujocoSensorStage::step_lidar(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    const auto truth = sensor_pose(sensor, local_time_ns);
     sa::LidarScan scan;
     std::string error;
     if (!sensor.lidar_adapter->step(truth, scan, error)) {
@@ -421,27 +464,37 @@ void MujocoSensorStage::step_lidar(Sensor& sensor, std::uint64_t local_time_ns)
     if (!scan.updated) {
         return;
     }
-    if (scan.vertical_count != 1) {
-        throw std::runtime_error("sensor " + sensor.name
-            + ": a 3D scan cannot be published as sensor_msgs/LaserScan");
-    }
-    auto reading = std::make_shared<runtime::LaserScanReading>();
+    auto reading = std::make_shared<runtime::LidarScanReading>();
     reading->angle_min = scan.angle_min;
     reading->angle_max = scan.angle_max;
     reading->angle_increment = scan.angle_increment;
+    reading->vertical_angle_min = scan.vertical_angle_min;
+    reading->vertical_angle_max = scan.vertical_angle_max;
+    reading->vertical_angle_increment = scan.vertical_angle_increment;
+    reading->horizontal_count = scan.horizontal_count;
+    reading->vertical_count = scan.vertical_count;
     reading->time_increment = scan.time_increment;
     reading->scan_time = scan.scan_time;
     reading->range_min = scan.range_min;
     reading->range_max = scan.range_max;
-    const std::size_t count = scan.horizontal_count;
+    const std::size_t count =
+        static_cast<std::size_t>(scan.horizontal_count) * scan.vertical_count;
     if (count > 0 && scan.ranges != nullptr) {
         reading->ranges.assign(scan.ranges, scan.ranges + count);
     }
     if (count > 0 && scan.intensities != nullptr) {
         reading->intensities.assign(scan.intensities, scan.intensities + count);
     }
+    if (scan.points != nullptr) {
+        reading->points.reserve(scan.point_count);
+        for (std::uint32_t i = 0; i < scan.point_count; ++i) {
+            const auto& point = scan.points[i];
+            reading->points.push_back(
+                {point.x, point.y, point.z, point.intensity, point.ring, point.time_offset});
+        }
+    }
     sensor.reading.has_sample = true;
-    // ROS LaserScan: the stamp is the time of the first ray.
+    // ROS LaserScan and PointCloud2: the stamp is the time of the first ray.
     sensor.reading.sample_time_usec = first_step_time_usec_ + scan.sample_time_ns / 1000;
     sensor.reading.scan = std::move(reading);
 }
@@ -475,6 +528,8 @@ void MujocoSensorStage::step(runtime::RobotState& state)
             step_imu(*sensor, local_time_ns);
         } else if (sensor->lidar) {
             step_lidar(*sensor, local_time_ns);
+        } else if (sensor->rangefinder) {
+            step_rangefinder(*sensor, local_time_ns);
         } else {
             step_joint(*sensor, local_time_ns);
         }
@@ -495,6 +550,8 @@ void MujocoSensorStage::reset()
             reset = sensor->imu_adapter->reset(error);
         } else if (sensor->lidar) {
             reset = sensor->lidar_adapter->reset(error);
+        } else if (sensor->rangefinder) {
+            reset = sensor->rangefinder_adapter->reset(error);
         } else {
             reset = sensor->joint_adapter->reset(error);
         }

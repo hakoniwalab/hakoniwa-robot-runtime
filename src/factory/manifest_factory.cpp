@@ -39,6 +39,10 @@
 #include "runtime/publisher/sensor_imu_publisher.hpp"
 #include "runtime/publisher/sensor_laser_scan_publisher.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/laser_scan_pdu_writer.hpp"
+#include "runtime/publisher/sensor_point_cloud_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/point_cloud2_pdu_writer.hpp"
+#include "runtime/publisher/sensor_range_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/range_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/imu_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/wrench_stamped_pdu_writer.hpp"
 #include "runtime/sensor/sensor_registry.hpp"
@@ -597,6 +601,30 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                                 output.sensors.front(),
                                 output.update_rate_hz,
                                 std::make_shared<adapters::hakoniwa::ImuPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/PointCloud2") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorPointCloudPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::PointCloud2PduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/Range") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorRangePublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::RangePduWriter>(
                                     *endpoint,
                                     output.pdu_robot,
                                     output.pdu_name)));

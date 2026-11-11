@@ -65,6 +65,10 @@ ComponentStatus SensorLaserScanPublisher::publish(
         return {component_id_, ComponentState::Error,
             "sensor " + sensor_name_ + " has no scan"};
     }
+    if (reading->scan->vertical_count != 1) {
+        return {component_id_, ComponentState::Error,
+            "sensor " + sensor_name_ + " is a 3D LiDAR; publish it as sensor_msgs/PointCloud2"};
+    }
     LaserScanOutput output;
     // ROS LaserScan: the stamp is the time of the first ray of the scan.
     output.simulation_time_usec = reading->sample_time_usec;

@@ -208,6 +208,7 @@ struct RuntimeSensorConfig {
     std::string implementation;
     std::string definition_path;     ///< resolved sensor definition file
     bool measures_torque {false};    ///< joint sensor whose definition has "torque"
+    bool scans_3d {false};           ///< LiDAR whose definition has more than one vertical sample
     std::string mjcf_joint;          ///< joint mount
     std::string mjcf_body;           ///< body mount
     std::array<double, 3> position_m {0.0, 0.0, 0.0};

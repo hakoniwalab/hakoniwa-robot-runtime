@@ -125,7 +125,7 @@ bool load_mount(
         }
         return required_string(mount, "mjcf_joint", output.mjcf_joint, error, owner + ".mount");
     }
-    if (output.type == "lidar") {
+    if (output.type == "lidar" || output.type == "rangefinder") {
         // A range sensor may name the root body whose subtree its rays never
         // hit; by default only the mount body (the sensor housing) is skipped.
         if (!only_keys(mount, {"mjcf_body", "position_m", "orientation_deg", "exclude_mjcf_body"},
@@ -182,9 +182,9 @@ bool load_sensor(
         return fail(error, named + ": unknown sensor type \"" + output.type + "\"");
     }
     if (output.type != "joint" && output.type != "force_torque" && output.type != "imu"
-        && output.type != "lidar") {
+        && output.type != "lidar" && output.type != "rangefinder") {
         return fail(error, named + ": sensor type \"" + output.type
-            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar)");
+            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar, rangefinder)");
     }
     if (!sensor.contains("mount") || !load_mount(sensor, output, named, error)) {
         if (!sensor.contains("mount")) {
@@ -203,6 +203,14 @@ bool load_sensor(
         return false;
     }
     output.measures_torque = definition.is_object() && definition.contains("torque");
+    if (output.type == "lidar" && definition.is_object()) {
+        const auto scan = definition.find("scan");
+        if (scan != definition.end() && scan->is_object()) {
+            const auto vertical = scan->find("vertical");
+            output.scans_3d = vertical != scan->end() && vertical->is_object()
+                && vertical->value("samples", 1) > 1;
+        }
+    }
     if (!sensor::validate_sensor_definition(
             catalog, linked, output.implementation, output.type, definition,
             named + " (" + definition_path.string() + ")", error)) {
@@ -279,9 +287,12 @@ bool load_sensor_output(
     const bool wrench = message_type == "geometry_msgs/WrenchStamped";
     const bool imu = message_type == "sensor_msgs/Imu";
     const bool scan = message_type == "sensor_msgs/LaserScan";
-    if (!joint_state && !wrench && !imu && !scan) {
+    const bool cloud = message_type == "sensor_msgs/PointCloud2";
+    const bool range = message_type == "sensor_msgs/Range";
+    if (!joint_state && !wrench && !imu && !scan && !cloud && !range) {
         return fail(error, owner + ": message_type must be sensor_msgs/JointState,"
-            " geometry_msgs/WrenchStamped, sensor_msgs/Imu or sensor_msgs/LaserScan");
+            " geometry_msgs/WrenchStamped, sensor_msgs/Imu, sensor_msgs/LaserScan,"
+            " sensor_msgs/PointCloud2 or sensor_msgs/Range");
     }
     output.message_type = message_type;
     if (!joint_state && root.at("sensors").size() != 1) {
@@ -301,10 +312,14 @@ bool load_sensor_output(
             return fail(error, owner + ": no sensor named " + name);
         }
         const std::string expected_type = joint_state ? "joint"
-            : (wrench ? "force_torque" : (imu ? "imu" : "lidar"));
+            : (wrench ? "force_torque" : (imu ? "imu" : (range ? "rangefinder" : "lidar")));
         if (found->second->type != expected_type) {
             return fail(error, owner + ": sensor " + name + " is of type " + found->second->type
                 + " and cannot go into " + message_type);
+        }
+        if (scan && found->second->scans_3d) {
+            return fail(error, owner + ": sensor " + name + " is a 3D LiDAR and cannot go into "
+                + message_type + "; use sensor_msgs/PointCloud2");
         }
         if (joint_state && !output.sensors.empty()
             && sensors.at(output.sensors.front())->measures_torque != found->second->measures_torque) {

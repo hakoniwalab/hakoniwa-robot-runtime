@@ -26,9 +26,10 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `mag` | `sensor_msgs/MagneticField` | 1 つ | 予定 |
 | `baro` | `sensor_msgs/FluidPressure` | 1 つ | 予定 |
 | `gps` | `sensor_msgs/NavSatFix`（速度は `geometry_msgs/TwistStamped`） | 1 つ | 予定 |
-| `rangefinder` | `sensor_msgs/Range` | 1 つ | 予定 |
+| `rangefinder` | `sensor_msgs/Range` | 1 つ | 実装済み |
 | `lidar`（2D） | `sensor_msgs/LaserScan` | 1 つ | 実装済み |
-| `lidar`（3D） | `sensor_msgs/PointCloud2`（と走査の終わりの姿勢 `geometry_msgs/Pose`） | 1 つ | 予定 |
+| `lidar`（2D・3D） | `sensor_msgs/PointCloud2` | 1 つ | 実装済み |
+| `lidar`（走査の終わりの姿勢） | `geometry_msgs/Pose` | 1 つ | 予定 |
 | `depth_camera`・`rgb_camera` | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ | 予定 |
 
 予定の型は、箱庭の外部センサプラグインが使っている型と同じにします。
@@ -86,3 +87,30 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `intensities` | 強度を測らない実装では空 |
 
 1 回の走査が終わるまでは送りません。送る周期が走査より速いときは、同じ走査をもう一度送ります（時刻は同じ）。
+
+3D の LiDAR（定義の `scan.vertical.samples` が 2 以上）を LaserScan に出す設定は、起動時に止まります。
+
+### 3.5 `sensor_msgs/PointCloud2`（`lidar`、2D・3D）
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp` | 走査の最初のレイの測定時刻 |
+| `header.frame_id` | センサ名 |
+| `height`・`width` | 1 と、返った点の数（範囲内の点だけ） |
+| `fields` | x, y, z, intensity（float32）、ring（uint16、0 が一番下の段）、time（float32、走査の始まりからの秒） |
+| `point_step`・`row_step` | 22 と 22 × 点の数 |
+| `is_bigendian`・`is_dense` | false、true |
+
+点の位置はセンサの軸（FLU）で、その点を測った時のものです。
+
+### 3.6 `sensor_msgs/Range`（`rangefinder`）
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp` | 測定時刻 |
+| `header.frame_id` | センサ名 |
+| `radiation_type` | 0 超音波、1 赤外線、2 レーザー（定義の `radiation_type`） |
+| `field_of_view` | 円錐の全角 [rad]。1 本のビームなら 0 |
+| `min_range`・`max_range` | 測れる範囲 [m] |
+| `range` | センサの x 軸方向に測った距離 [m]。範囲の外は REP-117 に従い +inf か -inf |
+| `variance` | 実装が知っていれば分散 [m²]、知らなければ 0 |

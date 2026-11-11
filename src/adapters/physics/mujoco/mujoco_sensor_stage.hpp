@@ -45,7 +45,7 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * accelerometer measures) at the sensor point, in the sensor axes, at the
  * state after the step.
  *
- * 2D LiDARs: mounted like IMUs, usually on a housing body. The world's ray
+ * LiDARs (2D and 3D) and rangefinders: mounted like IMUs, usually on a housing body. The world's ray
  * caster casts the rays at the state after the step (the stage runs
  * mj_forward once after mj_step). The rays never hit the subtree of the
  * exclusion root, by default the mount body, so the robot stays visible.
@@ -87,6 +87,9 @@ private:
     void step_force_torque(Sensor& sensor, std::uint64_t local_time_ns);
     void step_imu(Sensor& sensor, std::uint64_t local_time_ns);
     void step_lidar(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_rangefinder(Sensor& sensor, std::uint64_t local_time_ns);
+    [[nodiscard]] ::hakoniwa::sensor_adapter::SensorPoseTruth sensor_pose(
+        const Sensor& sensor, std::uint64_t local_time_ns) const;
 
     const mjModel* model_;
     mjData* data_;

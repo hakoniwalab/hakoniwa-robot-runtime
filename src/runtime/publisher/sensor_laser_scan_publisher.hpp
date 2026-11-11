@@ -11,7 +11,7 @@ namespace hakoniwa::robot_runtime::runtime {
 struct LaserScanOutput {
     std::uint64_t simulation_time_usec {0};  ///< time of the first ray
     std::string frame_id;
-    const LaserScanReading* scan {nullptr};  ///< valid during send()
+    const LidarScanReading* scan {nullptr};  ///< valid during send()
 };
 
 class ILaserScanWriter {

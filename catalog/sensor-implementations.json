@@ -19,6 +19,9 @@
         },
         "lidar": {
           "keys": ["update_rate", "scan_mode", "scan", "range", "no_return", "accuracy"]
+        },
+        "rangefinder": {
+          "keys": ["update_rate", "radiation_type", "cone", "range", "no_return", "accuracy"]
         }
       }
     },
