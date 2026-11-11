@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hakoniwa.dev/schemas/sensor-output.schema.json",
+  "title": "Hakoniwa Robot Runtime sensor output",
+  "description": "How measured values of named sensors are published. The sensors are defined separately (sensor-instances.schema.json). The Runtime checks at start-up that every name exists and that the sensor types fit the message type (sensor_msgs/JointState: joint sensors, one entry per sensor in the listed order).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "sensors", "pdu_config"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": 1},
+    "sensors": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "pdu_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pdu_name", "message_type", "update_rate_hz"],
+      "properties": {
+        "pdu_name": {"type": "string", "minLength": 1},
+        "message_type": {"enum": ["sensor_msgs/JointState"]},
+        "update_rate_hz": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

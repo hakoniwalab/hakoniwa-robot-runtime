@@ -198,6 +198,31 @@ struct RuntimeGeomFrictionConfig {
  * message bindings, command types, limits, and controller relationships have
  * already been validated and normalized for Runtime composition.
  */
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+/** One sensor of a `sensor` component (schemas/components/sensor-instances.schema.json). */
+struct RuntimeSensorConfig {
+    std::string component_id;
+    std::string pdu_robot;
+    std::string name;
+    std::string type;
+    std::string implementation;
+    std::string definition_path;     ///< resolved sensor definition file
+    std::string mjcf_joint;          ///< joint mount
+    std::string mjcf_body;           ///< body mount
+    std::array<double, 3> position_m {0.0, 0.0, 0.0};
+    std::array<double, 3> orientation_deg {0.0, 0.0, 0.0};  ///< roll, pitch, yaw
+};
+
+/** A `sensor_joint_state` output (schemas/components/sensor-output.schema.json). */
+struct RuntimeSensorOutputConfig {
+    std::string component_id;
+    std::string pdu_robot;
+    std::string pdu_name;
+    double update_rate_hz {0.0};
+    std::vector<std::string> sensors;
+};
+#endif
+
 struct RuntimeDefinition {
     std::string model_path;
     std::vector<RuntimeInitialBodyPoseConfig> initial_body_poses;
@@ -213,6 +238,11 @@ struct RuntimeDefinition {
     std::vector<RuntimeMirrorBodyConfig> mirror_bodies;
     std::vector<RuntimeImpulseCollisionOutputConfig> impulse_collision_outputs;
     std::vector<RuntimeGeomFrictionConfig> geom_frictions;
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    std::vector<RuntimeSensorConfig> sensors;
+    std::vector<RuntimeSensorOutputConfig> sensor_outputs;
+    std::uint64_t sensor_seed {0};
 #endif
 };
 

@@ -146,12 +146,32 @@ struct BodyState {
 };
 
 /** Physical-state snapshot observed at the Plant's `sample_time_usec`. */
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+/**
+ * Latest measured value of one sensor, held between its samples.
+ * Phase 1 carries joint sensors only (position and velocity of one joint).
+ */
+struct SensorReading {
+    std::string sensor_name;
+    std::string mount_name;          ///< MJCF joint the sensor measures
+    bool has_sample {false};         ///< false until the first sample
+    bool updated {false};            ///< a new sample was taken in this step
+    std::uint64_t sample_time_usec {0};
+    double position {0.0};
+    double velocity {0.0};
+};
+#endif
+
 struct RobotState {
     std::vector<ActuatorState> actuators;
     std::uint64_t sample_time_usec {0};
     std::vector<BodyState> bodies;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<MirrorContactState> mirror_contacts;
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    /** Filled by the sensor stage after the physics step. */
+    std::vector<SensorReading> sensor_readings;
 #endif
 };
 

@@ -32,6 +32,11 @@
 #include "runner/runner_factory.hpp"
 #include "runtime/runtime_factory.hpp"
 #include "runtime/runtime_factory_manifest.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+#include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
+#include "runtime/publisher/sensor_joint_state_publisher.hpp"
+#include "runtime/sensor/sensor_registry.hpp"
+#endif
 
 #include <memory>
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
@@ -560,6 +565,31 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         return true;
                     });
                 async_rpc_inputs.push_back(std::move(input));
+            }
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+            if (!definition.sensors.empty()) {
+                auto stage = std::make_shared<adapters::mujoco::MujocoSensorStage>(
+                    plant->model(),
+                    plant->data(),
+                    definition.sensors,
+                    definition.sensor_seed,
+                    plant->delta_time_usec(),
+                    runtime::sensor::sensor_implementation_registry());
+                std::vector<std::shared_ptr<runtime::IStatePublisher>> sensor_publishers;
+                for (const auto& output : definition.sensor_outputs) {
+                    sensor_publishers.push_back(
+                        std::make_shared<runtime::SensorJointStatePublisher>(
+                            output.component_id,
+                            output.sensors,
+                            output.update_rate_hz,
+                            std::make_shared<adapters::hakoniwa::JointStatePduWriter>(
+                                *endpoint,
+                                output.pdu_robot,
+                                output.pdu_name)));
+                }
+                runtime_instance->attach_sensors(
+                    std::move(stage), std::move(sensor_publishers));
             }
 #endif
             return {
