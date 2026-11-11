@@ -32,6 +32,10 @@ struct MujocoSensorStage::Sensor {
     bool gyro_sampled {false};
     bool accel_sampled {false};
     std::unique_ptr<sa::IImuSensorAdapter> imu_adapter;
+    // 2D LiDARs (mounted like IMUs); the adapter casts through ray_caster
+    bool lidar {false};
+    std::shared_ptr<sa::IRayCaster> ray_caster;
+    std::unique_ptr<sa::ILidarSensorAdapter> lidar_adapter;
 
     runtime::SensorReading reading;
 };
@@ -63,7 +67,8 @@ MujocoSensorStage::MujocoSensorStage(
     const std::vector<runtime::RuntimeSensorConfig>& sensors,
     const std::uint64_t seed,
     const std::uint64_t physics_step_usec,
-    const runtime::sensor::SensorImplementationRegistry& registry)
+    const runtime::sensor::SensorImplementationRegistry& registry,
+    const RayCasterFactory& ray_caster_factory)
     : model_(model)
     , data_(data)
     , physics_step_usec_(physics_step_usec)
@@ -186,6 +191,61 @@ MujocoSensorStage::MujocoSensorStage(
             rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
             sensor->reading.mount_name = config.mjcf_body;
             needs_dynamics_ = true;
+        } else if (config.type == "lidar") {
+            const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
+            if (body_id < 0) {
+                throw std::invalid_argument(owner + ": MJCF body not found: " + config.mjcf_body);
+            }
+            if (body_id == 0) {
+                throw std::invalid_argument(owner
+                    + ": a LiDAR is mounted on a body (its housing), not on the world");
+            }
+            if (!config.exclude_mjcf_body.empty()
+                && mj_name2id(model_, mjOBJ_BODY, config.exclude_mjcf_body.c_str()) <= 0) {
+                throw std::invalid_argument(owner + ": MJCF body to exclude not found: "
+                    + config.exclude_mjcf_body);
+            }
+            if (implementation->create_lidar == nullptr) {
+                throw std::invalid_argument(owner + ": implementation " + config.implementation
+                    + " has no LiDAR adapter");
+            }
+            if (!ray_caster_factory) {
+                throw std::invalid_argument(owner + ": the world provides no ray caster");
+            }
+            mjtNum mount_rotation[9];
+            rotation_from_rpy_deg(config.orientation_deg, mount_rotation);
+            mjtNum q[4];
+            mju_mat2Quat(q, mount_rotation);
+            RayCasterMount mount;
+            mount.body = config.mjcf_body;
+            mount.position_m = config.position_m;
+            mount.orientation_wxyz = {q[0], q[1], q[2], q[3]};
+            mount.exclude_root_body = config.exclude_mjcf_body;
+            sensor->ray_caster = ray_caster_factory(mount);
+            if (sensor->ray_caster == nullptr) {
+                throw std::invalid_argument(owner + ": the world provides no ray caster");
+            }
+            sa::LidarAdapterSetup setup;
+            setup.config_path = config.definition_path;
+            setup.vehicle_name = config.pdu_robot;
+            setup.sensor_name = config.name;
+            setup.physics_step_ns = physics_step_usec * 1000;
+            setup.has_random_seed = true;
+            setup.random_seed = seed;
+            setup.ray_caster = sensor->ray_caster.get();
+            sensor->lidar_adapter = implementation->create_lidar(setup, error);
+            if (sensor->lidar_adapter == nullptr) {
+                throw std::invalid_argument(owner + ": cannot create the "
+                    + config.implementation + " LiDAR adapter: " + error);
+            }
+            sensor->lidar = true;
+            sensor->body_id = body_id;
+            for (int axis = 0; axis < 3; ++axis) {
+                sensor->mount_position[axis] = config.position_m[static_cast<std::size_t>(axis)];
+            }
+            mju_copy(sensor->mount_rotation, mount_rotation, 9);
+            sensor->reading.mount_name = config.mjcf_body;
+            needs_kinematics_ = true;
         } else {
             throw std::invalid_argument(owner + ": type " + config.type
                 + " is not supported by the MuJoCo sensor stage yet");
@@ -334,6 +394,58 @@ void MujocoSensorStage::step_imu(Sensor& sensor, std::uint64_t local_time_ns)
     sensor.reading.has_sample = sensor.reading.has_imu;
 }
 
+void MujocoSensorStage::step_lidar(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    // Sensor pose in the world: the body pose composed with the mount (the
+    // same pose the ray caster casts from).
+    const mjtNum* body_rotation = data_->xmat + 9 * sensor.body_id;
+    mjtNum origin[3];
+    mju_mulMatVec(origin, body_rotation, sensor.mount_position, 3, 3);
+    mju_addTo3(origin, data_->xpos + 3 * sensor.body_id);
+    mjtNum rotation[9];  // world <- sensor
+    mju_mulMatMat(rotation, body_rotation, sensor.mount_rotation, 3, 3, 3);
+
+    sa::SensorPoseTruth truth;
+    truth.sim_time_ns = local_time_ns;
+    truth.position_world = {origin[0], origin[1], origin[2]};
+    mjtNum q[4];
+    mju_mat2Quat(q, rotation);  // sensor -> world
+    truth.orientation_world_to_sensor = {q[0], -q[1], -q[2], -q[3]};
+
+    sa::LidarScan scan;
+    std::string error;
+    if (!sensor.lidar_adapter->step(truth, scan, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    sensor.reading.updated = scan.updated;
+    if (!scan.updated) {
+        return;
+    }
+    if (scan.vertical_count != 1) {
+        throw std::runtime_error("sensor " + sensor.name
+            + ": a 3D scan cannot be published as sensor_msgs/LaserScan");
+    }
+    auto reading = std::make_shared<runtime::LaserScanReading>();
+    reading->angle_min = scan.angle_min;
+    reading->angle_max = scan.angle_max;
+    reading->angle_increment = scan.angle_increment;
+    reading->time_increment = scan.time_increment;
+    reading->scan_time = scan.scan_time;
+    reading->range_min = scan.range_min;
+    reading->range_max = scan.range_max;
+    const std::size_t count = scan.horizontal_count;
+    if (count > 0 && scan.ranges != nullptr) {
+        reading->ranges.assign(scan.ranges, scan.ranges + count);
+    }
+    if (count > 0 && scan.intensities != nullptr) {
+        reading->intensities.assign(scan.intensities, scan.intensities + count);
+    }
+    sensor.reading.has_sample = true;
+    // ROS LaserScan: the stamp is the time of the first ray.
+    sensor.reading.sample_time_usec = first_step_time_usec_ + scan.sample_time_ns / 1000;
+    sensor.reading.scan = std::move(reading);
+}
+
 void MujocoSensorStage::step(runtime::RobotState& state)
 {
     if (steps_ == 0) {
@@ -349,6 +461,9 @@ void MujocoSensorStage::step(runtime::RobotState& state)
         // state before it. Both calls only recompute derived quantities.
         mj_forward(model_, data_);
         mj_rnePostConstraint(model_, data_);
+    } else if (needs_kinematics_) {
+        // Geom poses at the state after the step, for the rays.
+        mj_forward(model_, data_);
     }
 
     state.sensor_readings.clear();
@@ -358,6 +473,8 @@ void MujocoSensorStage::step(runtime::RobotState& state)
             step_force_torque(*sensor, local_time_ns);
         } else if (sensor->imu) {
             step_imu(*sensor, local_time_ns);
+        } else if (sensor->lidar) {
+            step_lidar(*sensor, local_time_ns);
         } else {
             step_joint(*sensor, local_time_ns);
         }
@@ -371,9 +488,16 @@ void MujocoSensorStage::reset()
     first_step_time_usec_ = 0;
     for (auto& sensor : sensors_) {
         std::string error;
-        const bool reset = sensor->force_torque
-            ? sensor->force_torque_adapter->reset(error)
-            : (sensor->imu ? sensor->imu_adapter->reset(error) : sensor->joint_adapter->reset(error));
+        bool reset = false;
+        if (sensor->force_torque) {
+            reset = sensor->force_torque_adapter->reset(error);
+        } else if (sensor->imu) {
+            reset = sensor->imu_adapter->reset(error);
+        } else if (sensor->lidar) {
+            reset = sensor->lidar_adapter->reset(error);
+        } else {
+            reset = sensor->joint_adapter->reset(error);
+        }
         sensor->gyro_sampled = false;
         sensor->accel_sampled = false;
         if (!reset) {

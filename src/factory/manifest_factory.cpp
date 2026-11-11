@@ -37,6 +37,8 @@
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
 #include "runtime/publisher/sensor_wrench_publisher.hpp"
 #include "runtime/publisher/sensor_imu_publisher.hpp"
+#include "runtime/publisher/sensor_laser_scan_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/laser_scan_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/imu_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/wrench_stamped_pdu_writer.hpp"
 #include "runtime/sensor/sensor_registry.hpp"
@@ -579,7 +581,13 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     definition.sensors,
                     definition.sensor_seed,
                     plant->delta_time_usec(),
-                    runtime::sensor::sensor_implementation_registry());
+                    runtime::sensor::sensor_implementation_registry(),
+                    // Called only while the stage is built; the plant owns the world.
+                    [plant_ptr = plant.get()](
+                        const adapters::mujoco::MujocoSensorStage::RayCasterMount& mount) {
+                        return plant_ptr->create_ray_caster(mount.body, mount.position_m,
+                            mount.orientation_wxyz, mount.exclude_root_body);
+                    });
                 std::vector<std::shared_ptr<runtime::IStatePublisher>> sensor_publishers;
                 for (const auto& output : definition.sensor_outputs) {
                     if (output.message_type == "sensor_msgs/Imu") {
@@ -589,6 +597,18 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                                 output.sensors.front(),
                                 output.update_rate_hz,
                                 std::make_shared<adapters::hakoniwa::ImuPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/LaserScan") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorLaserScanPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::LaserScanPduWriter>(
                                     *endpoint,
                                     output.pdu_robot,
                                     output.pdu_name)));

@@ -16,6 +16,9 @@
         },
         "imu": {
           "keys": ["components.sensors.imu", "components.sensors.gyro", "components.sensors.acc"]
+        },
+        "lidar": {
+          "keys": ["update_rate", "scan_mode", "scan", "range", "no_return", "accuracy"]
         }
       }
     },

@@ -27,7 +27,8 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `baro` | `sensor_msgs/FluidPressure` | 1 つ | 予定 |
 | `gps` | `sensor_msgs/NavSatFix`（速度は `geometry_msgs/TwistStamped`） | 1 つ | 予定 |
 | `rangefinder` | `sensor_msgs/Range` | 1 つ | 予定 |
-| `lidar` | 2D は `sensor_msgs/LaserScan`、3D は `sensor_msgs/PointCloud2`（と走査の終わりの姿勢 `geometry_msgs/Pose`） | 1 つ | 予定 |
+| `lidar`（2D） | `sensor_msgs/LaserScan` | 1 つ | 実装済み |
+| `lidar`（3D） | `sensor_msgs/PointCloud2`（と走査の終わりの姿勢 `geometry_msgs/Pose`） | 1 つ | 予定 |
 | `depth_camera`・`rgb_camera` | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ | 予定 |
 
 予定の型は、箱庭の外部センサプラグインが使っている型と同じにします。
@@ -71,3 +72,17 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `angular_velocity_covariance`・`linear_acceleration_covariance` | 0（不明） |
 
 ジャイロと加速度計の両方が 1 回測るまでは送りません。
+
+### 3.4 `sensor_msgs/LaserScan`（`lidar`、2D）
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp` | 走査の最初のレイの測定時刻 |
+| `header.frame_id` | センサ名 |
+| `angle_min`・`angle_max`・`angle_increment` | センサの z 軸まわりの角度 [rad]。0 が前、左が正 |
+| `time_increment`・`scan_time` | レイの間の時間と、走査の間の時間 [s] |
+| `range_min`・`range_max` | 測れる範囲 [m] |
+| `ranges` | 測定した距離 [m]。範囲の外は REP-117 に従い +inf（遠すぎる・返らない）か -inf（近すぎる） |
+| `intensities` | 強度を測らない実装では空 |
+
+1 回の走査が終わるまでは送りません。送る周期が走査より速いときは、同じ走査をもう一度送ります（時刻は同じ）。

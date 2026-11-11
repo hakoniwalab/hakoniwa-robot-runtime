@@ -1,5 +1,9 @@
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR \
+    && !defined(HAKO_MUJOCO_ROBOTS_ENABLE_RAY_CASTER)
+#error "A sensor build needs HAKO_MUJOCO_ROBOTS_ENABLE_RAY_CASTER for the world's ray caster"
+#endif
 #include "physics/physics_impl.hpp"
 
 #include <mujoco/mujoco.h>
@@ -1661,6 +1665,26 @@ mjData* MujocoActuatorPlant::data() noexcept
 {
     return impl_->world->getData();
 }
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+std::shared_ptr<::hakoniwa::sensor_adapter::IRayCaster> MujocoActuatorPlant::create_ray_caster(
+    const std::string& mount_body,
+    const std::array<double, 3>& position_m,
+    const std::array<double, 4>& orientation_wxyz,
+    const std::string& exclude_root_body)
+{
+    hako::robots::physics::RayCasterSpec spec;
+    spec.mount_body = mount_body;
+    for (std::size_t i = 0; i < 3; ++i) {
+        spec.position[i] = position_m[i];
+    }
+    for (std::size_t i = 0; i < 4; ++i) {
+        spec.orientation[i] = orientation_wxyz[i];
+    }
+    spec.exclude_root_body = exclude_root_body;
+    return impl_->world->createRayCaster(spec);
+}
+#endif
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
 void MujocoActuatorPlant::bind_person(

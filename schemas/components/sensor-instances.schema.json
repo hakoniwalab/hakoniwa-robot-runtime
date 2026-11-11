@@ -36,9 +36,10 @@
           "minLength": 1
         },
         "mount": {
-          "oneOf": [
+          "anyOf": [
             {"$ref": "#/$defs/joint_mount"},
-            {"$ref": "#/$defs/body_mount"}
+            {"$ref": "#/$defs/body_mount"},
+            {"$ref": "#/$defs/range_mount"}
           ]
         },
         "definition": {
@@ -50,8 +51,15 @@
       "allOf": [
         {
           "if": {"properties": {"type": {"const": "joint"}}},
-          "then": {"properties": {"mount": {"$ref": "#/$defs/joint_mount"}}},
-          "else": {"properties": {"mount": {"$ref": "#/$defs/body_mount"}}}
+          "then": {"properties": {"mount": {"$ref": "#/$defs/joint_mount"}}}
+        },
+        {
+          "if": {"properties": {"type": {"enum": ["lidar", "rangefinder"]}}},
+          "then": {"properties": {"mount": {"$ref": "#/$defs/range_mount"}}}
+        },
+        {
+          "if": {"properties": {"type": {"not": {"enum": ["joint", "lidar", "rangefinder"]}}}},
+          "then": {"properties": {"mount": {"$ref": "#/$defs/body_mount"}}}
         }
       ]
     },
@@ -62,6 +70,22 @@
       "required": ["mjcf_joint"],
       "properties": {
         "mjcf_joint": {"type": "string", "minLength": 1}
+      }
+    },
+    "range_mount": {
+      "description": "A range sensor is fixed to an MJCF body, usually its housing, like a body mount. Its rays never hit the subtree of exclude_mjcf_body; by default that is the mount body, so the robot the sensor looks at stays visible, as with a real sensor.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mjcf_body"],
+      "properties": {
+        "mjcf_body": {"type": "string", "minLength": 1},
+        "position_m": {"$ref": "#/$defs/body_mount/properties/position_m"},
+        "orientation_deg": {"$ref": "#/$defs/body_mount/properties/orientation_deg"},
+        "exclude_mjcf_body": {
+          "description": "Root body whose subtree is never hit, for example the robot base to hide the whole robot.",
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "body_mount": {

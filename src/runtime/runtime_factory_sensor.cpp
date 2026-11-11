@@ -125,9 +125,23 @@ bool load_mount(
         }
         return required_string(mount, "mjcf_joint", output.mjcf_joint, error, owner + ".mount");
     }
-    if (!only_keys(mount, {"mjcf_body", "position_m", "orientation_deg"},
-            owner + ".mount (body mount)", error)
-        || !required_string(mount, "mjcf_body", output.mjcf_body, error, owner + ".mount")
+    if (output.type == "lidar") {
+        // A range sensor may name the root body whose subtree its rays never
+        // hit; by default only the mount body (the sensor housing) is skipped.
+        if (!only_keys(mount, {"mjcf_body", "position_m", "orientation_deg", "exclude_mjcf_body"},
+                owner + ".mount (range sensor)", error)) {
+            return false;
+        }
+        if (mount.contains("exclude_mjcf_body")
+            && !required_string(mount, "exclude_mjcf_body", output.exclude_mjcf_body, error,
+                owner + ".mount")) {
+            return false;
+        }
+    } else if (!only_keys(mount, {"mjcf_body", "position_m", "orientation_deg"},
+            owner + ".mount (body mount)", error)) {
+        return false;
+    }
+    if (!required_string(mount, "mjcf_body", output.mjcf_body, error, owner + ".mount")
         || !load_number_array(mount, "position_m", output.position_m, owner + ".mount", error)
         || !load_orientation(mount, output.orientation_deg, owner + ".mount", error)) {
         return false;
@@ -167,9 +181,10 @@ bool load_sensor(
     if (!known_types.contains(output.type)) {
         return fail(error, named + ": unknown sensor type \"" + output.type + "\"");
     }
-    if (output.type != "joint" && output.type != "force_torque" && output.type != "imu") {
+    if (output.type != "joint" && output.type != "force_torque" && output.type != "imu"
+        && output.type != "lidar") {
         return fail(error, named + ": sensor type \"" + output.type
-            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu)");
+            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar)");
     }
     if (!sensor.contains("mount") || !load_mount(sensor, output, named, error)) {
         if (!sensor.contains("mount")) {
@@ -263,9 +278,10 @@ bool load_sensor_output(
     const bool joint_state = message_type == "sensor_msgs/JointState";
     const bool wrench = message_type == "geometry_msgs/WrenchStamped";
     const bool imu = message_type == "sensor_msgs/Imu";
-    if (!joint_state && !wrench && !imu) {
+    const bool scan = message_type == "sensor_msgs/LaserScan";
+    if (!joint_state && !wrench && !imu && !scan) {
         return fail(error, owner + ": message_type must be sensor_msgs/JointState,"
-            " geometry_msgs/WrenchStamped or sensor_msgs/Imu");
+            " geometry_msgs/WrenchStamped, sensor_msgs/Imu or sensor_msgs/LaserScan");
     }
     output.message_type = message_type;
     if (!joint_state && root.at("sensors").size() != 1) {
@@ -284,7 +300,8 @@ bool load_sensor_output(
         if (found == sensors.end()) {
             return fail(error, owner + ": no sensor named " + name);
         }
-        const std::string expected_type = joint_state ? "joint" : (wrench ? "force_torque" : "imu");
+        const std::string expected_type = joint_state ? "joint"
+            : (wrench ? "force_torque" : (imu ? "imu" : "lidar"));
         if (found->second->type != expected_type) {
             return fail(error, owner + ": sensor " + name + " is of type " + found->second->type
                 + " and cannot go into " + message_type);

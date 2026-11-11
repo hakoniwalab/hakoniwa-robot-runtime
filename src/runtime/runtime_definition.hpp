@@ -212,6 +212,9 @@ struct RuntimeSensorConfig {
     std::string mjcf_body;           ///< body mount
     std::array<double, 3> position_m {0.0, 0.0, 0.0};
     std::array<double, 3> orientation_deg {0.0, 0.0, 0.0};  ///< roll, pitch, yaw
+    /// Range sensors: the root body whose subtree the rays never hit. Empty
+    /// means the mount body (the sensor housing).
+    std::string exclude_mjcf_body;
 };
 
 /** A sensor output (schemas/components/sensor-output.schema.json). */

@@ -21,7 +21,7 @@
       "required": ["pdu_name", "message_type", "update_rate_hz"],
       "properties": {
         "pdu_name": {"type": "string", "minLength": 1},
-        "message_type": {"enum": ["sensor_msgs/JointState", "geometry_msgs/WrenchStamped", "sensor_msgs/Imu"]},
+        "message_type": {"enum": ["sensor_msgs/JointState", "geometry_msgs/WrenchStamped", "sensor_msgs/Imu", "sensor_msgs/LaserScan"]},
         "update_rate_hz": {"type": "number", "exclusiveMinimum": 0}
       }
     }

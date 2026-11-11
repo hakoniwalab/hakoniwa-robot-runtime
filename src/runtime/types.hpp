@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <memory>
 #include <vector>
 
 namespace hakoniwa::robot_runtime::runtime {
@@ -153,6 +154,19 @@ struct BodyState {
  * Joint sensors: position, velocity and, when configured, the joint torque.
  * Force-torque sensors: the wrench. IMUs: angular velocity and specific force.
  */
+/** One complete 2D LiDAR scan, shaped like sensor_msgs/LaserScan. */
+struct LaserScanReading {
+    double angle_min {0.0};          ///< [rad], 0 = forward, positive to the left
+    double angle_max {0.0};
+    double angle_increment {0.0};
+    double time_increment {0.0};     ///< between two rays [s]
+    double scan_time {0.0};          ///< between two scans [s]
+    double range_min {0.0};          ///< [m]
+    double range_max {0.0};
+    std::vector<float> ranges;       ///< [m], REP 117 (+inf/-inf outside the range)
+    std::vector<float> intensities;
+};
+
 struct SensorReading {
     std::string sensor_name;
     std::string mount_name;          ///< MJCF joint or body the sensor is mounted on
@@ -172,6 +186,9 @@ struct SensorReading {
     bool has_imu {false};
     std::array<double, 3> angular_velocity {0.0, 0.0, 0.0};     ///< [rad/s]
     std::array<double, 3> linear_acceleration {0.0, 0.0, 0.0};  ///< specific force [m/s^2]
+    /// 2D LiDARs: the latest complete scan, shared and never changed (a new
+    /// scan replaces it), so copying a reading every step stays cheap.
+    std::shared_ptr<const LaserScanReading> scan;
 };
 #endif
 
