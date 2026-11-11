@@ -22,6 +22,15 @@
         },
         "rangefinder": {
           "keys": ["update_rate", "radiation_type", "cone", "range", "no_return", "accuracy"]
+        },
+        "mag": {
+          "keys": ["components.sensors.mag", "components.sensors.imu.mount"]
+        },
+        "baro": {
+          "keys": ["components.sensors.baro"]
+        },
+        "gps": {
+          "keys": ["components.sensors.gps"]
         }
       }
     },

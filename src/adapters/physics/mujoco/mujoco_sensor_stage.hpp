@@ -45,6 +45,12 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * accelerometer measures) at the sensor point, in the sensor axes, at the
  * state after the step.
  *
+ * Magnetometers, barometers and GPS receivers: mounted like IMUs. The world
+ * axes are NWU (x north, y west, z up) from runtime_config.sensors.world.origin.
+ * The magnetic field is the configured earth field rotated into the sensor
+ * axes; the barometer gets the sensor altitude above sea level; the GPS gets
+ * the antenna position and velocity in NWU and as WGS-84 coordinates.
+ *
  * LiDARs (2D and 3D) and rangefinders: mounted like IMUs, usually on a housing body. The world's ray
  * caster casts the rays at the state after the step (the stage runs
  * mj_forward once after mj_step). The rays never hit the subtree of the
@@ -75,7 +81,8 @@ public:
         std::uint64_t seed,
         std::uint64_t physics_step_usec,
         const runtime::sensor::SensorImplementationRegistry& registry,
-        const RayCasterFactory& ray_caster_factory = {});
+        const RayCasterFactory& ray_caster_factory = {},
+        const runtime::RuntimeSensorWorld& world = {});
     ~MujocoSensorStage() override;
 
     void step(runtime::RobotState& state) override;
@@ -88,6 +95,10 @@ private:
     void step_imu(Sensor& sensor, std::uint64_t local_time_ns);
     void step_lidar(Sensor& sensor, std::uint64_t local_time_ns);
     void step_rangefinder(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_mag(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_baro(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_gps(Sensor& sensor, std::uint64_t local_time_ns);
+    void mount_pose(const Sensor& sensor, double origin[3], double rotation[9]) const;
     [[nodiscard]] ::hakoniwa::sensor_adapter::SensorPoseTruth sensor_pose(
         const Sensor& sensor, std::uint64_t local_time_ns) const;
 
@@ -98,6 +109,7 @@ private:
     // Rays need the geom poses of the state after the step.
     bool needs_kinematics_ {false};
     std::uint64_t physics_step_usec_;
+    runtime::RuntimeSensorWorld world_;
     // Sensor adapters count time from 0 in whole physics steps. The stage
     // keeps that count and the Runtime time of its first step since reset.
     std::uint64_t steps_ {0};

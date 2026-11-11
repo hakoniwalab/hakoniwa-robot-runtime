@@ -43,6 +43,12 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/point_cloud2_pdu_writer.hpp"
 #include "runtime/publisher/sensor_range_publisher.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/range_pdu_writer.hpp"
+#include "runtime/publisher/sensor_magnetic_field_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/magnetic_field_pdu_writer.hpp"
+#include "runtime/publisher/sensor_fluid_pressure_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/fluid_pressure_pdu_writer.hpp"
+#include "runtime/publisher/sensor_nav_sat_fix_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/nav_sat_fix_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/imu_pdu_writer.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/wrench_stamped_pdu_writer.hpp"
 #include "runtime/sensor/sensor_registry.hpp"
@@ -591,7 +597,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         const adapters::mujoco::MujocoSensorStage::RayCasterMount& mount) {
                         return plant_ptr->create_ray_caster(mount.body, mount.position_m,
                             mount.orientation_wxyz, mount.exclude_root_body);
-                    });
+                    },
+                    definition.sensor_world);
                 std::vector<std::shared_ptr<runtime::IStatePublisher>> sensor_publishers;
                 for (const auto& output : definition.sensor_outputs) {
                     if (output.message_type == "sensor_msgs/Imu") {
@@ -613,6 +620,42 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                                 output.sensors.front(),
                                 output.update_rate_hz,
                                 std::make_shared<adapters::hakoniwa::PointCloud2PduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/MagneticField") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorMagneticFieldPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::MagneticFieldPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/FluidPressure") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorFluidPressurePublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::FluidPressurePduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/NavSatFix") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorNavSatFixPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::NavSatFixPduWriter>(
                                     *endpoint,
                                     output.pdu_robot,
                                     output.pdu_name)));

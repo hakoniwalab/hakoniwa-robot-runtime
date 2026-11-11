@@ -830,11 +830,23 @@ freejointを複数回指定できません。
 
 ### 4.4 `sensors`（opt-in）
 
-センサの乱数の種です。センサごとの乱数の列は、この種とロボット名・センサ名から作ります。同じ種なら、同じ入力に対して同じ測定値になります。
+センサの乱数の種と、世界が地球のどこにあるかです。
+
+- `seed`：センサごとの乱数の列は、この種とロボット名・センサ名から作ります。同じ種なら、同じ入力に対して同じ測定値になります。
+- `world.origin`：MuJoCo の世界の原点の WGS-84 の位置（緯度・経度 [度]、海抜の高さ [m]）。GPS と気圧センサが使い、無いと起動時に止まります。世界の軸は x が北、y が西、z が上（NWU）です。ジオイドのモデルは持たないので、高さは楕円体からの高さとしても使います。
+- `world.magnetic_field`：その場所の地磁気（強さ [nT]、偏角 [度、東が正]、伏角 [度、下向きが正]）。地磁気センサが使い、無いと起動時に止まります。地磁気のモデル（WMM など）からは計算しません。
+- `world.atmosphere`：海面の気圧 [Pa] と気温 [°C]。省略すると標準大気（101325 Pa、15 °C）です。
 
 ```json
 {
-  "sensors": {"seed": 1}
+  "sensors": {
+    "seed": 1,
+    "world": {
+      "origin": {"latitude_deg": 35.681236, "longitude_deg": 139.767125, "altitude_m": 40.0},
+      "magnetic_field": {"intensity_nT": 46000.0, "declination_deg": -7.5, "inclination_deg": 49.5},
+      "atmosphere": {"sea_level_pressure_pa": 101325.0, "sea_level_temperature_c": 15.0}
+    }
+  }
 }
 ```
 

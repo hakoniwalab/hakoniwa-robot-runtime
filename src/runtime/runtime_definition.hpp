@@ -218,6 +218,23 @@ struct RuntimeSensorConfig {
     std::string exclude_mjcf_body;
 };
 
+/**
+ * Where the simulated world is on the earth (runtime_config.sensors.world).
+ * The MuJoCo world axes are NWU (x north, y west, z up) from origin.
+ */
+struct RuntimeSensorWorld {
+    bool has_origin {false};
+    double latitude_deg {0.0};
+    double longitude_deg {0.0};
+    double altitude_m {0.0};              ///< of the world origin, above sea level
+    bool has_magnetic_field {false};
+    double magnetic_intensity_nT {0.0};
+    double magnetic_declination_deg {0.0};  ///< east of true north is positive
+    double magnetic_inclination_deg {0.0};  ///< downward is positive
+    double sea_level_pressure_pa {101325.0};
+    double sea_level_temperature_c {15.0};
+};
+
 /** A sensor output (schemas/components/sensor-output.schema.json). */
 struct RuntimeSensorOutputConfig {
     std::string component_id;
@@ -249,6 +266,7 @@ struct RuntimeDefinition {
     std::vector<RuntimeSensorConfig> sensors;
     std::vector<RuntimeSensorOutputConfig> sensor_outputs;
     std::uint64_t sensor_seed {0};
+    RuntimeSensorWorld sensor_world;
 #endif
 };
 

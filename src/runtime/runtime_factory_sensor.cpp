@@ -182,9 +182,10 @@ bool load_sensor(
         return fail(error, named + ": unknown sensor type \"" + output.type + "\"");
     }
     if (output.type != "joint" && output.type != "force_torque" && output.type != "imu"
-        && output.type != "lidar" && output.type != "rangefinder") {
+        && output.type != "lidar" && output.type != "rangefinder"
+        && output.type != "mag" && output.type != "baro" && output.type != "gps") {
         return fail(error, named + ": sensor type \"" + output.type
-            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar, rangefinder)");
+            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar, rangefinder, mag, baro, gps)");
     }
     if (!sensor.contains("mount") || !load_mount(sensor, output, named, error)) {
         if (!sensor.contains("mount")) {
@@ -229,20 +230,90 @@ bool load_sensor(
     return true;
 }
 
+bool number_field(const json& object, const char* key, double& value, const std::string& owner,
+    std::string* error, bool required)
+{
+    if (!object.contains(key)) {
+        return required ? fail(error, owner + "." + key + " is required") : true;
+    }
+    if (!object.at(key).is_number() || !std::isfinite(object.at(key).get<double>())) {
+        return fail(error, owner + "." + key + " must be a finite number");
+    }
+    value = object.at(key).get<double>();
+    return true;
+}
+
+bool load_sensor_world(const json& world_value, RuntimeSensorWorld& world, std::string* error)
+{
+    const std::string owner = "runtime config sensors.world";
+    if (!world_value.is_object()
+        || !only_keys(world_value, {"origin", "magnetic_field", "atmosphere"}, owner, error)) {
+        return fail(error, owner + " must be an object of origin, magnetic_field and atmosphere");
+    }
+    if (world_value.contains("origin")) {
+        const auto& origin = world_value.at("origin");
+        const std::string name = owner + ".origin";
+        if (!origin.is_object()
+            || !only_keys(origin, {"latitude_deg", "longitude_deg", "altitude_m"}, name, error)
+            || !number_field(origin, "latitude_deg", world.latitude_deg, name, error, true)
+            || !number_field(origin, "longitude_deg", world.longitude_deg, name, error, true)
+            || !number_field(origin, "altitude_m", world.altitude_m, name, error, true)) {
+            return fail(error, name + " needs latitude_deg, longitude_deg and altitude_m");
+        }
+        if (std::fabs(world.latitude_deg) > 90.0 || std::fabs(world.longitude_deg) > 180.0) {
+            return fail(error, name + ": latitude must be within +-90 and longitude within +-180 degrees");
+        }
+        world.has_origin = true;
+    }
+    if (world_value.contains("magnetic_field")) {
+        const auto& field = world_value.at("magnetic_field");
+        const std::string name = owner + ".magnetic_field";
+        if (!field.is_object()
+            || !only_keys(field, {"intensity_nT", "declination_deg", "inclination_deg"}, name, error)
+            || !number_field(field, "intensity_nT", world.magnetic_intensity_nT, name, error, true)
+            || !number_field(field, "declination_deg", world.magnetic_declination_deg, name, error, true)
+            || !number_field(field, "inclination_deg", world.magnetic_inclination_deg, name, error, true)) {
+            return fail(error, name + " needs intensity_nT, declination_deg and inclination_deg");
+        }
+        if (world.magnetic_intensity_nT <= 0.0) {
+            return fail(error, name + ".intensity_nT must be positive");
+        }
+        world.has_magnetic_field = true;
+    }
+    if (world_value.contains("atmosphere")) {
+        const auto& atmosphere = world_value.at("atmosphere");
+        const std::string name = owner + ".atmosphere";
+        if (!atmosphere.is_object()
+            || !only_keys(atmosphere, {"sea_level_pressure_pa", "sea_level_temperature_c"}, name, error)
+            || !number_field(atmosphere, "sea_level_pressure_pa", world.sea_level_pressure_pa, name, error, false)
+            || !number_field(atmosphere, "sea_level_temperature_c", world.sea_level_temperature_c, name, error, false)) {
+            return fail(error, name + " may hold sea_level_pressure_pa and sea_level_temperature_c");
+        }
+        if (world.sea_level_pressure_pa <= 0.0) {
+            return fail(error, name + ".sea_level_pressure_pa must be positive");
+        }
+    }
+    return true;
+}
+
 bool load_sensor_seed(const json& runtime_root, RuntimeDefinition& definition, std::string* error)
 {
     if (!runtime_root.is_object() || !runtime_root.contains("sensors")) {
         return true;
     }
     const auto& sensors = runtime_root.at("sensors");
-    if (!sensors.is_object() || !only_keys(sensors, {"seed"}, "runtime config sensors", error)) {
-        return fail(error, "runtime config \"sensors\" must be an object with an optional seed");
+    if (!sensors.is_object() || !only_keys(sensors, {"seed", "world"}, "runtime config sensors", error)) {
+        return fail(error, "runtime config \"sensors\" must be an object with an optional seed and world");
     }
     if (sensors.contains("seed")) {
         if (!sensors.at("seed").is_number_unsigned()) {
             return fail(error, "runtime config sensors.seed must be a non-negative integer");
         }
         definition.sensor_seed = sensors.at("seed").get<std::uint64_t>();
+    }
+    if (sensors.contains("world")
+        && !load_sensor_world(sensors.at("world"), definition.sensor_world, error)) {
+        return false;
     }
     return true;
 }
@@ -289,10 +360,14 @@ bool load_sensor_output(
     const bool scan = message_type == "sensor_msgs/LaserScan";
     const bool cloud = message_type == "sensor_msgs/PointCloud2";
     const bool range = message_type == "sensor_msgs/Range";
-    if (!joint_state && !wrench && !imu && !scan && !cloud && !range) {
+    const bool magnetic = message_type == "sensor_msgs/MagneticField";
+    const bool pressure = message_type == "sensor_msgs/FluidPressure";
+    const bool fix = message_type == "sensor_msgs/NavSatFix";
+    if (!joint_state && !wrench && !imu && !scan && !cloud && !range && !magnetic && !pressure && !fix) {
         return fail(error, owner + ": message_type must be sensor_msgs/JointState,"
             " geometry_msgs/WrenchStamped, sensor_msgs/Imu, sensor_msgs/LaserScan,"
-            " sensor_msgs/PointCloud2 or sensor_msgs/Range");
+            " sensor_msgs/PointCloud2, sensor_msgs/Range, sensor_msgs/MagneticField,"
+            " sensor_msgs/FluidPressure or sensor_msgs/NavSatFix");
     }
     output.message_type = message_type;
     if (!joint_state && root.at("sensors").size() != 1) {
@@ -312,7 +387,8 @@ bool load_sensor_output(
             return fail(error, owner + ": no sensor named " + name);
         }
         const std::string expected_type = joint_state ? "joint"
-            : (wrench ? "force_torque" : (imu ? "imu" : (range ? "rangefinder" : "lidar")));
+            : wrench ? "force_torque" : imu ? "imu" : range ? "rangefinder"
+            : magnetic ? "mag" : pressure ? "baro" : fix ? "gps" : "lidar";
         if (found->second->type != expected_type) {
             return fail(error, owner + ": sensor " + name + " is of type " + found->second->type
                 + " and cannot go into " + message_type);
@@ -420,6 +496,20 @@ bool load_sensor_definitions(
                 return fail(error, "duplicate sensor name: " + sensor_config.name);
             }
             definition.sensors.push_back(std::move(sensor_config));
+        }
+    }
+
+    // Sensors that need to know where the world is on the earth.
+    for (const auto& sensor_config : definition.sensors) {
+        const std::string owner = "sensor " + sensor_config.name;
+        if ((sensor_config.type == "gps" || sensor_config.type == "baro")
+            && !definition.sensor_world.has_origin) {
+            return fail(error, owner + ": a " + sensor_config.type
+                + " needs runtime config sensors.world.origin (where the world is on the earth)");
+        }
+        if (sensor_config.type == "mag" && !definition.sensor_world.has_magnetic_field) {
+            return fail(error, owner + ": a magnetometer needs runtime config"
+                " sensors.world.magnetic_field (the earth field at the world)");
         }
     }
 

@@ -197,6 +197,17 @@ struct RangeReading {
     double variance {0.0};            ///< [m^2], 0 when unknown
 };
 
+/** One GPS fix, shaped like sensor_msgs/NavSatFix (WGS-84). */
+struct GpsFixReading {
+    double latitude_deg {0.0};
+    double longitude_deg {0.0};
+    double altitude_m {0.0};
+    std::array<double, 3> velocity_nwu {0.0, 0.0, 0.0};  ///< [m/s]
+    double horizontal_accuracy_m {0.0};  ///< 0 when the receiver does not report it
+    double vertical_accuracy_m {0.0};
+    std::uint32_t fix_type {0};          ///< 0 no fix, 2 2D, 3 3D
+};
+
 struct SensorReading {
     std::string sensor_name;
     std::string mount_name;          ///< MJCF joint or body the sensor is mounted on
@@ -222,6 +233,15 @@ struct SensorReading {
     /// Rangefinders: the latest measured range.
     bool has_range {false};
     RangeReading range;
+    /// Magnetometers: the latest measured field [nT], sensor axes.
+    bool has_magnetic_field {false};
+    std::array<double, 3> magnetic_field_nT {0.0, 0.0, 0.0};
+    /// Barometers: the latest measured static pressure [Pa].
+    bool has_pressure {false};
+    double pressure_pa {0.0};
+    /// GPS receivers: the latest fix.
+    bool has_fix {false};
+    GpsFixReading fix;
 };
 #endif
 

@@ -28,12 +28,13 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `lidar`（2D） | 使える | 測距用の body | ワールドのレイの部品で走査した距離 | `sensor_msgs/LaserScan` または `sensor_msgs/PointCloud2` | 1 つ |
 | `lidar`（3D） | 使える | 測距用の body | 同上 | `sensor_msgs/PointCloud2` | 1 つ |
 | `rangefinder` | 使える | 測距用の body | 同上（1 本、または円錐） | `sensor_msgs/Range` | 1 つ |
-| `mag` | 予定 | body | — | `sensor_msgs/MagneticField` | 1 つ |
-| `baro` | 予定 | body | — | `sensor_msgs/FluidPressure` | 1 つ |
-| `gps` | 予定 | body | — | `sensor_msgs/NavSatFix`（速度は `geometry_msgs/TwistStamped`） | 1 つ |
+| `mag` | 使える | body | 世界の地磁気（設定の強さ・偏角・伏角）をセンサの軸に回したもの | `sensor_msgs/MagneticField` | 1 つ |
+| `baro` | 使える | body | センサの海抜高度と、海面の気圧・気温 | `sensor_msgs/FluidPressure` | 1 つ |
+| `gps` | 使える | body | アンテナの位置と速度（NWU と WGS-84） | `sensor_msgs/NavSatFix` | 1 つ |
 | `depth_camera`・`rgb_camera` | 予定 | 測距用の body | — | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ |
 
-- LiDAR の走査の終わりの姿勢（`geometry_msgs/Pose`）は予定です。
+- LiDAR の走査の終わりの姿勢（`geometry_msgs/Pose`）と、GPS の速度（`geometry_msgs/TwistStamped`）は予定です。
+- 地磁気・気圧・GPS は、世界が地球のどこにあるか（Runtime の設定 `sensors.world`、[configuration.md 4.4](configuration.md#44-sensorsopt-in)）を使います。MuJoCo の世界の軸は x が北、y が西、z が上（NWU）です。設定が無いと起動時に止まります。
 - 予定の型は、箱庭の外部センサプラグインが使っている型と同じにします。
 - 出力の設定（[`schemas/components/sensor-output.schema.json`](../schemas/components/sensor-output.schema.json)）で、`pdu_config.message_type` にこの表の型を書きます。センサの種別と型が合わない出力、3D の LiDAR を LaserScan に出す出力は、起動時に止まります。
 - 設定の書き方の全体（Asset Manifest、センサの設定、出力の設定、乱数の種）は [configuration.md 3.4](configuration.md#34-センサopt-in) にあります。スキーマは [sensor-instances.schema.json](../schemas/components/sensor-instances.schema.json) と [sensor-output.schema.json](../schemas/components/sensor-output.schema.json) です。
@@ -132,3 +133,29 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `min_range`・`max_range` | 測れる範囲 [m] |
 | `range` | センサの x 軸方向に測った距離 [m]。範囲の外は REP-117 に従い +inf か -inf |
 | `variance` | 実装が知っていれば分散 [m²]、知らなければ 0 |
+
+### 3.7 `sensor_msgs/MagneticField`（`mag`）
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp`・`header.frame_id` | 測定時刻、センサ名 |
+| `magnetic_field` | 測定した磁場、センサの軸。単位は ROS の決まりどおりテスラ（センサの値 nT × 1e-9） |
+| `magnetic_field_covariance` | 0（不明） |
+
+### 3.8 `sensor_msgs/FluidPressure`（`baro`）
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp`・`header.frame_id` | 測定時刻、センサ名 |
+| `fluid_pressure` | 測定した静圧 [Pa] |
+| `variance` | 0（不明） |
+
+### 3.9 `sensor_msgs/NavSatFix`（`gps`）
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp`・`header.frame_id` | 測定時刻、センサ名 |
+| `status.status`・`status.service` | 受信機が 2D・3D の測位なら 0（FIX）、無ければ -1（NO_FIX）。`service` は 1（GPS） |
+| `latitude`・`longitude` | WGS-84 [度] |
+| `altitude` | 楕円体からの高さ [m]（ジオイドのモデルは持たない） |
+| `position_covariance`・`position_covariance_type` | 受信機が精度を報告するなら、水平・垂直の精度の 2 乗を対角に入れて 2（DIAGONAL_KNOWN）。報告しないなら 0 と 0（UNKNOWN） |

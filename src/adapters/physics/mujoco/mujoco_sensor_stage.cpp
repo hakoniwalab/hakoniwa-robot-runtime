@@ -2,6 +2,7 @@
 
 #include <mujoco/mujoco.h>
 
+#include <array>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -39,6 +40,13 @@ struct MujocoSensorStage::Sensor {
     std::shared_ptr<sa::IRayCaster> ray_caster;
     std::unique_ptr<sa::ILidarSensorAdapter> lidar_adapter;
     std::unique_ptr<sa::IRangefinderSensorAdapter> rangefinder_adapter;
+    // Magnetometers, barometers and GPS receivers (mounted like IMUs)
+    bool mag {false};
+    bool baro {false};
+    bool gps {false};
+    std::unique_ptr<sa::IMagSensorAdapter> mag_adapter;
+    std::unique_ptr<sa::IBaroSensorAdapter> baro_adapter;
+    std::unique_ptr<sa::IGpsSensorAdapter> gps_adapter;
 
     runtime::SensorReading reading;
 };
@@ -62,6 +70,42 @@ void rotation_from_rpy_deg(const std::array<double, 3>& rpy_deg, mjtNum rotation
     rotation[6] = -sp;     rotation[7] = cp * sr;                rotation[8] = cp * cr;
 }
 
+// A local NWU position [m] from the world origin to WGS-84 latitude,
+// longitude [deg] and height [m] above the ellipsoid (through ECEF).
+std::array<double, 3> nwu_to_geodetic(const runtime::RuntimeSensorWorld& world, const double nwu[3])
+{
+    constexpr double a = 6378137.0;
+    constexpr double f = 1.0 / 298.257223563;
+    constexpr double e2 = f * (2.0 - f);
+    const double lat0 = world.latitude_deg * kDegToRad;
+    const double lon0 = world.longitude_deg * kDegToRad;
+    const double h0 = world.altitude_m;
+    const double n0 = a / std::sqrt(1.0 - e2 * std::sin(lat0) * std::sin(lat0));
+    const double x0 = (n0 + h0) * std::cos(lat0) * std::cos(lon0);
+    const double y0 = (n0 + h0) * std::cos(lat0) * std::sin(lon0);
+    const double z0 = (n0 * (1.0 - e2) + h0) * std::sin(lat0);
+    // NWU to ENU, then ENU to ECEF at the origin.
+    const double east = -nwu[1];
+    const double north = nwu[0];
+    const double up = nwu[2];
+    const double sl = std::sin(lat0), cl = std::cos(lat0);
+    const double so = std::sin(lon0), co = std::cos(lon0);
+    const double x = x0 - so * east - sl * co * north + cl * co * up;
+    const double y = y0 + co * east - sl * so * north + cl * so * up;
+    const double z = z0 + cl * north + sl * up;
+    // ECEF to geodetic (iterative; converges well below a millimetre).
+    const double lon = std::atan2(y, x);
+    const double p = std::hypot(x, y);
+    double lat = std::atan2(z, p * (1.0 - e2));
+    double h = 0.0;
+    for (int i = 0; i < 10; ++i) {
+        const double n = a / std::sqrt(1.0 - e2 * std::sin(lat) * std::sin(lat));
+        h = p / std::cos(lat) - n;
+        lat = std::atan2(z, p * (1.0 - e2 * n / (n + h)));
+    }
+    return {lat / kDegToRad, lon / kDegToRad, h};
+}
+
 } // namespace
 
 MujocoSensorStage::MujocoSensorStage(
@@ -71,10 +115,12 @@ MujocoSensorStage::MujocoSensorStage(
     const std::uint64_t seed,
     const std::uint64_t physics_step_usec,
     const runtime::sensor::SensorImplementationRegistry& registry,
-    const RayCasterFactory& ray_caster_factory)
+    const RayCasterFactory& ray_caster_factory,
+    const runtime::RuntimeSensorWorld& world)
     : model_(model)
     , data_(data)
     , physics_step_usec_(physics_step_usec)
+    , world_(world)
 {
     if (model_ == nullptr || data_ == nullptr) {
         throw std::invalid_argument("sensor stage requires a MuJoCo model and data");
@@ -194,6 +240,55 @@ MujocoSensorStage::MujocoSensorStage(
             rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
             sensor->reading.mount_name = config.mjcf_body;
             needs_dynamics_ = true;
+        } else if (config.type == "mag" || config.type == "baro" || config.type == "gps") {
+            const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
+            if (body_id < 0) {
+                throw std::invalid_argument(owner + ": MJCF body not found: " + config.mjcf_body);
+            }
+            auto fill = [&](sa::SensorAdapterSetup& setup) {
+                setup.config_path = config.definition_path;
+                setup.vehicle_name = config.pdu_robot;
+                setup.sensor_name = config.name;
+                setup.physics_step_ns = physics_step_usec * 1000;
+                setup.has_random_seed = true;
+                setup.random_seed = seed;
+            };
+            const bool provided = config.type == "mag" ? implementation->create_mag != nullptr
+                : config.type == "baro" ? implementation->create_baro != nullptr
+                : implementation->create_gps != nullptr;
+            if (!provided) {
+                throw std::invalid_argument(owner + ": implementation " + config.implementation
+                    + " has no " + config.type + " adapter");
+            }
+            if (config.type == "mag") {
+                sa::MagAdapterSetup setup;
+                fill(setup);
+                sensor->mag_adapter = implementation->create_mag(setup, error);
+                sensor->mag = sensor->mag_adapter != nullptr;
+            } else if (config.type == "baro") {
+                sa::BaroAdapterSetup setup;
+                fill(setup);
+                sensor->baro_adapter = implementation->create_baro(setup, error);
+                sensor->baro = sensor->baro_adapter != nullptr;
+            } else {
+                sa::GpsAdapterSetup setup;
+                fill(setup);
+                setup.origin = {world_.latitude_deg, world_.longitude_deg, world_.altitude_m};
+                sensor->gps_adapter = implementation->create_gps(setup, error);
+                sensor->gps = sensor->gps_adapter != nullptr;
+            }
+            if (!sensor->mag && !sensor->baro && !sensor->gps) {
+                throw std::invalid_argument(owner + ": cannot create the "
+                    + config.implementation + " " + config.type + " adapter: " + error);
+            }
+            sensor->body_id = body_id;
+            sensor->root_id = model_->body_rootid[body_id];
+            for (int axis = 0; axis < 3; ++axis) {
+                sensor->mount_position[axis] = config.position_m[static_cast<std::size_t>(axis)];
+            }
+            rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
+            sensor->reading.mount_name = config.mjcf_body;
+            needs_kinematics_ = true;
         } else if (config.type == "lidar" || config.type == "rangefinder") {
             const bool is_lidar = config.type == "lidar";
             const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
@@ -409,6 +504,115 @@ void MujocoSensorStage::step_imu(Sensor& sensor, std::uint64_t local_time_ns)
     sensor.reading.has_sample = sensor.reading.has_imu;
 }
 
+void MujocoSensorStage::mount_pose(const Sensor& sensor, double origin[3], double rotation[9]) const
+{
+    // The body pose composed with the mount: origin in the world, and the
+    // rotation world <- sensor (row-major).
+    const mjtNum* body_rotation = data_->xmat + 9 * sensor.body_id;
+    mju_mulMatVec(origin, body_rotation, sensor.mount_position, 3, 3);
+    mju_addTo3(origin, data_->xpos + 3 * sensor.body_id);
+    mju_mulMatMat(rotation, body_rotation, sensor.mount_rotation, 3, 3, 3);
+}
+
+void MujocoSensorStage::step_mag(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    mjtNum origin[3], rotation[9];
+    mount_pose(sensor, origin, rotation);
+    // The earth field in NED from intensity, declination and inclination,
+    // then NWU (x north, y west, z up), then the sensor axes.
+    const double f = world_.magnetic_intensity_nT;
+    const double d = world_.magnetic_declination_deg * kDegToRad;
+    const double i = world_.magnetic_inclination_deg * kDegToRad;
+    const mjtNum field_world[3] = {
+        f * std::cos(i) * std::cos(d),
+        -f * std::cos(i) * std::sin(d),
+        -f * std::sin(i)};
+    mjtNum field[3];
+    mju_mulMatTVec3(field, rotation, field_world);
+
+    sa::MagTruth truth;
+    truth.sim_time_ns = local_time_ns;
+    truth.magnetic_field = {field[0], field[1], field[2]};
+    truth.magnetic_field_world = {field_world[0], field_world[1], field_world[2]};
+    mjtNum q[4];
+    mju_mat2Quat(q, rotation);  // sensor -> world
+    truth.orientation_world_to_sensor = {q[0], -q[1], -q[2], -q[3]};
+
+    sa::MagSample sample;
+    std::string error;
+    if (!sensor.mag_adapter->step(truth, sample, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    sensor.reading.updated = sample.updated;
+    if (sample.updated) {
+        sensor.reading.has_sample = true;
+        sensor.reading.has_magnetic_field = true;
+        sensor.reading.sample_time_usec = first_step_time_usec_ + sample.sample_time_ns / 1000;
+        sensor.reading.magnetic_field_nT = {sample.value.x, sample.value.y, sample.value.z};
+    }
+}
+
+void MujocoSensorStage::step_baro(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    mjtNum origin[3], rotation[9];
+    mount_pose(sensor, origin, rotation);
+    sa::BaroTruth truth;
+    truth.sim_time_ns = local_time_ns;
+    truth.altitude_m = world_.altitude_m + origin[2];
+    truth.sea_level_pressure_pa = world_.sea_level_pressure_pa;
+    truth.sea_level_temperature_c = world_.sea_level_temperature_c;
+
+    sa::BaroSample sample;
+    std::string error;
+    if (!sensor.baro_adapter->step(truth, sample, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    sensor.reading.updated = sample.updated;
+    if (sample.updated) {
+        sensor.reading.has_sample = true;
+        sensor.reading.has_pressure = true;
+        sensor.reading.sample_time_usec = first_step_time_usec_ + sample.sample_time_ns / 1000;
+        sensor.reading.pressure_pa = sample.pressure_pa;
+    }
+}
+
+void MujocoSensorStage::step_gps(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    mjtNum origin[3], rotation[9];
+    mount_pose(sensor, origin, rotation);
+    // Velocity of the antenna point (world axes, NWU): cvel moved to the point.
+    mjtNum velocity[6];
+    mju_transformSpatial(velocity, data_->cvel + 6 * sensor.body_id, 0, origin,
+        data_->subtree_com + 3 * sensor.root_id, nullptr);
+
+    sa::GpsTruth truth;
+    truth.sim_time_ns = local_time_ns;
+    truth.position_nwu = {origin[0], origin[1], origin[2]};
+    truth.velocity_nwu = {velocity[3], velocity[4], velocity[5]};
+    const auto geodetic = nwu_to_geodetic(world_, origin);
+    truth.position = {geodetic[0], geodetic[1], geodetic[2]};
+
+    sa::GpsSample sample;
+    std::string error;
+    if (!sensor.gps_adapter->step(truth, sample, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    sensor.reading.updated = sample.updated;
+    if (sample.updated) {
+        sensor.reading.has_sample = true;
+        sensor.reading.has_fix = true;
+        sensor.reading.sample_time_usec = first_step_time_usec_ + sample.sample_time_ns / 1000;
+        auto& fix = sensor.reading.fix;
+        fix.latitude_deg = sample.position.latitude_deg;
+        fix.longitude_deg = sample.position.longitude_deg;
+        fix.altitude_m = sample.position.altitude_m;
+        fix.velocity_nwu = {sample.velocity_nwu.x, sample.velocity_nwu.y, sample.velocity_nwu.z};
+        fix.horizontal_accuracy_m = sample.horizontal_accuracy_m;
+        fix.vertical_accuracy_m = sample.vertical_accuracy_m;
+        fix.fix_type = sample.fix_type;
+    }
+}
+
 sa::SensorPoseTruth MujocoSensorStage::sensor_pose(const Sensor& sensor, std::uint64_t local_time_ns) const
 {
     // Sensor pose in the world: the body pose composed with the mount (the
@@ -530,6 +734,12 @@ void MujocoSensorStage::step(runtime::RobotState& state)
             step_lidar(*sensor, local_time_ns);
         } else if (sensor->rangefinder) {
             step_rangefinder(*sensor, local_time_ns);
+        } else if (sensor->mag) {
+            step_mag(*sensor, local_time_ns);
+        } else if (sensor->baro) {
+            step_baro(*sensor, local_time_ns);
+        } else if (sensor->gps) {
+            step_gps(*sensor, local_time_ns);
         } else {
             step_joint(*sensor, local_time_ns);
         }
@@ -552,6 +762,12 @@ void MujocoSensorStage::reset()
             reset = sensor->lidar_adapter->reset(error);
         } else if (sensor->rangefinder) {
             reset = sensor->rangefinder_adapter->reset(error);
+        } else if (sensor->mag) {
+            reset = sensor->mag_adapter->reset(error);
+        } else if (sensor->baro) {
+            reset = sensor->baro_adapter->reset(error);
+        } else if (sensor->gps) {
+            reset = sensor->gps_adapter->reset(error);
         } else {
             reset = sensor->joint_adapter->reset(error);
         }

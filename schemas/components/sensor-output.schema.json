@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hakoniwa.dev/schemas/sensor-output.schema.json",
   "title": "Hakoniwa Robot Runtime sensor output",
-  "description": "How measured values of named sensors are published. The sensors are defined separately (sensor-instances.schema.json). The Runtime checks at start-up that every name exists and that the sensor types fit the message type (sensor_msgs/JointState: joint sensors, one entry per sensor in the listed order; geometry_msgs/WrenchStamped: exactly one force-torque sensor; sensor_msgs/Imu: exactly one IMU; sensor_msgs/LaserScan: exactly one 2D LiDAR; sensor_msgs/PointCloud2: exactly one LiDAR, 2D or 3D; sensor_msgs/Range: exactly one rangefinder; frame_id is the sensor name).",
+  "description": "How measured values of named sensors are published. The sensors are defined separately (sensor-instances.schema.json). The Runtime checks at start-up that every name exists and that the sensor types fit the message type (sensor_msgs/JointState: joint sensors, one entry per sensor in the listed order; geometry_msgs/WrenchStamped: exactly one force-torque sensor; sensor_msgs/Imu: exactly one IMU; sensor_msgs/LaserScan: exactly one 2D LiDAR; sensor_msgs/PointCloud2: exactly one LiDAR, 2D or 3D; sensor_msgs/Range: exactly one rangefinder; sensor_msgs/MagneticField, FluidPressure, NavSatFix: exactly one magnetometer, barometer, GPS receiver; frame_id is the sensor name).",
   "type": "object",
   "additionalProperties": false,
   "required": ["$schema", "schema_version", "sensors", "pdu_config"],
@@ -21,7 +21,7 @@
       "required": ["pdu_name", "message_type", "update_rate_hz"],
       "properties": {
         "pdu_name": {"type": "string", "minLength": 1},
-        "message_type": {"enum": ["sensor_msgs/JointState", "geometry_msgs/WrenchStamped", "sensor_msgs/Imu", "sensor_msgs/LaserScan", "sensor_msgs/PointCloud2", "sensor_msgs/Range"]},
+        "message_type": {"enum": ["sensor_msgs/JointState", "geometry_msgs/WrenchStamped", "sensor_msgs/Imu", "sensor_msgs/LaserScan", "sensor_msgs/PointCloud2", "sensor_msgs/Range", "sensor_msgs/MagneticField", "sensor_msgs/FluidPressure", "sensor_msgs/NavSatFix"]},
         "update_rate_hz": {"type": "number", "exclusiveMinimum": 0}
       }
     }
