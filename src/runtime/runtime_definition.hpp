@@ -214,11 +214,12 @@ struct RuntimeSensorConfig {
     std::array<double, 3> orientation_deg {0.0, 0.0, 0.0};  ///< roll, pitch, yaw
 };
 
-/** A `sensor_joint_state` output (schemas/components/sensor-output.schema.json). */
+/** A sensor output (schemas/components/sensor-output.schema.json). */
 struct RuntimeSensorOutputConfig {
     std::string component_id;
     std::string pdu_robot;
     std::string pdu_name;
+    std::string message_type;        ///< sensor_msgs/JointState or geometry_msgs/WrenchStamped
     double update_rate_hz {0.0};
     std::vector<std::string> sensors;
 };

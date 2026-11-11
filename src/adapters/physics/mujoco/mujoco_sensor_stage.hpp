@@ -26,6 +26,12 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * forces computed for the state before the step, so the stage runs mj_forward
  * and mj_rnePostConstraint once after the step. These recompute derived
  * quantities only; they change neither the state nor the next step.
+ *
+ * Force-torque sensors: mounted on an MJCF body with a position and a
+ * roll/pitch/yaw orientation (degrees, R = Rz(yaw) Ry(pitch) Rx(roll)) in the
+ * body frame. The truth is the wrench the tool side (that body's subtree)
+ * exerts on the robot side, in the sensor axes, torque about the sensor
+ * origin, at the state after the step.
  */
 class MujocoSensorStage final : public runtime::ISensorStage {
 public:
@@ -48,6 +54,9 @@ public:
 
 private:
     struct Sensor;
+    void step_joint(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_force_torque(Sensor& sensor, std::uint64_t local_time_ns);
+
     const mjModel* model_;
     mjData* data_;
     // A joint torque needs forces at the state after the step (see step()).

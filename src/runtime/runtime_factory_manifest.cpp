@@ -301,7 +301,7 @@ static bool reject_sensor_components(
         const auto kind = component.value("kind", "");
         if (kind == "sensor"
             || (kind == "state_output"
-                && component.value("type", "") == "sensor_joint_state")) {
+                && component.value("type", "") == "sensor_output")) {
             return fail(error,
                 "component " + component.value("id", std::string("?"))
                 + " is a sensor, but this application is built without sensor support"

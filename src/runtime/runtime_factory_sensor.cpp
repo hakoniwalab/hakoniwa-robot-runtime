@@ -25,7 +25,7 @@ namespace {
 
 constexpr const char* kSensorKind = "sensor";
 constexpr const char* kSensorInstancesType = "sensor_instances";
-constexpr const char* kSensorOutputType = "sensor_joint_state";
+constexpr const char* kSensorOutputType = "sensor_output";
 
 bool is_sensor_component(const json& component)
 {
@@ -167,9 +167,9 @@ bool load_sensor(
     if (!known_types.contains(output.type)) {
         return fail(error, named + ": unknown sensor type \"" + output.type + "\"");
     }
-    if (output.type != "joint") {
+    if (output.type != "joint" && output.type != "force_torque") {
         return fail(error, named + ": sensor type \"" + output.type
-            + "\" is not supported by this Runtime yet (supported: joint)");
+            + "\" is not supported by this Runtime yet (supported: joint, force_torque)");
     }
     if (!sensor.contains("mount") || !load_mount(sensor, output, named, error)) {
         if (!sensor.contains("mount")) {
@@ -259,6 +259,24 @@ bool load_sensor_output(
         || root.at("sensors").empty()) {
         return fail(error, owner + ": sensors must be a non-empty array");
     }
+    if (!root.contains("pdu_config") || !root.at("pdu_config").is_object()) {
+        return fail(error, owner + " requires pdu_config");
+    }
+    std::string message_type;
+    if (!required_string(root.at("pdu_config"), "message_type", message_type,
+            error, owner + ".pdu_config")) {
+        return false;
+    }
+    const bool joint_state = message_type == "sensor_msgs/JointState";
+    const bool wrench = message_type == "geometry_msgs/WrenchStamped";
+    if (!joint_state && !wrench) {
+        return fail(error, owner
+            + ": message_type must be sensor_msgs/JointState or geometry_msgs/WrenchStamped");
+    }
+    output.message_type = message_type;
+    if (wrench && root.at("sensors").size() != 1) {
+        return fail(error, owner + ": a geometry_msgs/WrenchStamped output carries exactly one sensor");
+    }
     std::unordered_set<std::string> seen;
     for (const auto& item : root.at("sensors")) {
         if (!item.is_string() || item.get<std::string>().empty()) {
@@ -272,11 +290,12 @@ bool load_sensor_output(
         if (found == sensors.end()) {
             return fail(error, owner + ": no sensor named " + name);
         }
-        if (found->second->type != "joint") {
-            return fail(error, owner + ": sensor " + name
-                + " is not a joint sensor and cannot go into sensor_msgs/JointState");
+        const std::string expected_type = joint_state ? "joint" : "force_torque";
+        if (found->second->type != expected_type) {
+            return fail(error, owner + ": sensor " + name + " is a " + found->second->type
+                + " sensor and cannot go into " + message_type);
         }
-        if (!output.sensors.empty()
+        if (joint_state && !output.sensors.empty()
             && sensors.at(output.sensors.front())->measures_torque != found->second->measures_torque) {
             return fail(error, owner + ": sensors " + output.sensors.front() + " and " + name
                 + " differ in measuring the joint torque; one JointState carries effort for all"
@@ -284,18 +303,10 @@ bool load_sensor_output(
         }
         output.sensors.push_back(name);
     }
-    if (!root.contains("pdu_config") || !root.at("pdu_config").is_object()) {
-        return fail(error, owner + " requires pdu_config");
-    }
     const auto& pdu = root.at("pdu_config");
-    std::string message_type;
     if (!only_keys(pdu, {"pdu_name", "message_type", "update_rate_hz"}, owner + ".pdu_config", error)
-        || !required_string(pdu, "pdu_name", output.pdu_name, error, owner + ".pdu_config")
-        || !required_string(pdu, "message_type", message_type, error, owner + ".pdu_config")) {
+        || !required_string(pdu, "pdu_name", output.pdu_name, error, owner + ".pdu_config")) {
         return false;
-    }
-    if (message_type != "sensor_msgs/JointState") {
-        return fail(error, owner + ": message_type must be sensor_msgs/JointState");
     }
     if (!pdu.contains("update_rate_hz") || !pdu.at("update_rate_hz").is_number()
         || !std::isfinite(pdu.at("update_rate_hz").get<double>())
@@ -304,7 +315,7 @@ bool load_sensor_output(
     }
     output.update_rate_hz = pdu.at("update_rate_hz").get<double>();
     return verify_pdu_binding(
-        context, output.pdu_robot, output.pdu_name, "sensor_msgs/JointState", 1, error);
+        context, output.pdu_robot, output.pdu_name, message_type, 1, error);
 }
 
 } // namespace

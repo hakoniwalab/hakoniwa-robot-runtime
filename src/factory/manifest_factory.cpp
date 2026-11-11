@@ -35,6 +35,8 @@
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 #include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
+#include "runtime/publisher/sensor_wrench_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/wrench_stamped_pdu_writer.hpp"
 #include "runtime/sensor/sensor_registry.hpp"
 #endif
 
@@ -578,6 +580,18 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     runtime::sensor::sensor_implementation_registry());
                 std::vector<std::shared_ptr<runtime::IStatePublisher>> sensor_publishers;
                 for (const auto& output : definition.sensor_outputs) {
+                    if (output.message_type == "geometry_msgs/WrenchStamped") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorWrenchPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::WrenchStampedPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
                     sensor_publishers.push_back(
                         std::make_shared<runtime::SensorJointStatePublisher>(
                             output.component_id,

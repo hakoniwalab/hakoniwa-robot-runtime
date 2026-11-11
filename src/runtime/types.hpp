@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -150,10 +151,11 @@ struct BodyState {
 /**
  * Latest measured value of one sensor, held between its samples.
  * Joint sensors: position, velocity and, when configured, the joint torque.
+ * Force-torque sensors: the wrench.
  */
 struct SensorReading {
     std::string sensor_name;
-    std::string mount_name;          ///< MJCF joint the sensor measures
+    std::string mount_name;          ///< MJCF joint or body the sensor is mounted on
     bool has_sample {false};         ///< false until the first sample
     bool updated {false};            ///< a new sample was taken in this step
     std::uint64_t sample_time_usec {0};
@@ -161,6 +163,11 @@ struct SensorReading {
     double velocity {0.0};
     bool has_effort {false};         ///< the sensor measures the joint torque
     double effort {0.0};             ///< measured joint torque [N m]
+    /// Force-torque sensors: the measured wrench in the sensor axes, torque
+    /// about the sensor origin (what the tool side exerts on the robot side).
+    bool has_wrench {false};
+    std::array<double, 3> force {0.0, 0.0, 0.0};   ///< [N]
+    std::array<double, 3> torque {0.0, 0.0, 0.0};  ///< [N m]
 };
 #endif
 
