@@ -14,7 +14,8 @@ namespace hakoniwa::robot_runtime::runtime {
  * rate-limited on simulation time like JointStatePublisher.
  *
  * Each entry is named by the MJCF joint the sensor measures and carries the
- * sensor's latest position and velocity; effort is left empty. Nothing is
+ * sensor's latest position and velocity, and its joint torque as effort when
+ * the sensors measure it (all of them or none). Nothing is
  * sent until every listed sensor has taken its first sample.
  */
 class SensorJointStatePublisher final : public IStatePublisher {

@@ -79,6 +79,13 @@ ComponentStatus SensorJointStatePublisher::publish(
         output.names.push_back(found->second->mount_name);
         output.position.push_back(found->second->position);
         output.velocity.push_back(found->second->velocity);
+        if (found->second->has_effort) {
+            output.effort.push_back(found->second->effort);
+        }
+    }
+    if (!output.effort.empty() && output.effort.size() != output.names.size()) {
+        return {component_id_, ComponentState::Error,
+            "sensors of one JointState differ in measuring the joint torque"};
     }
     if (!writer_->send(output)) {
         return {component_id_, ComponentState::Degraded,

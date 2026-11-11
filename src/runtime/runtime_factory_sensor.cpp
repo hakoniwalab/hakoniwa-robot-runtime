@@ -194,6 +194,7 @@ bool load_sensor(
             + " is for sensor type \"" + definition.at("type").get<std::string>()
             + "\", not \"" + output.type + "\"");
     }
+    output.measures_torque = definition.is_object() && definition.contains("torque");
     if (!sensor::validate_sensor_definition(
             catalog, linked, output.implementation, definition,
             named + " (" + definition_path.string() + ")", error)) {
@@ -274,6 +275,12 @@ bool load_sensor_output(
         if (found->second->type != "joint") {
             return fail(error, owner + ": sensor " + name
                 + " is not a joint sensor and cannot go into sensor_msgs/JointState");
+        }
+        if (!output.sensors.empty()
+            && sensors.at(output.sensors.front())->measures_torque != found->second->measures_torque) {
+            return fail(error, owner + ": sensors " + output.sensors.front() + " and " + name
+                + " differ in measuring the joint torque; one JointState carries effort for all"
+                  " joints or for none");
         }
         output.sensors.push_back(name);
     }

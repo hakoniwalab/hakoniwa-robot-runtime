@@ -149,7 +149,7 @@ struct BodyState {
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 /**
  * Latest measured value of one sensor, held between its samples.
- * Phase 1 carries joint sensors only (position and velocity of one joint).
+ * Joint sensors: position, velocity and, when configured, the joint torque.
  */
 struct SensorReading {
     std::string sensor_name;
@@ -159,6 +159,8 @@ struct SensorReading {
     std::uint64_t sample_time_usec {0};
     double position {0.0};
     double velocity {0.0};
+    bool has_effort {false};         ///< the sensor measures the joint torque
+    double effort {0.0};             ///< measured joint torque [N m]
 };
 #endif
 

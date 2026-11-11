@@ -13,15 +13,19 @@ namespace sa = ::hakoniwa::sensor_adapter;
 struct MujocoSensorStage::Sensor {
     std::string name;
     std::string mjcf_joint;
+    int joint_id {-1};
+    int body_id {-1};
+    int root_id {-1};
     int qpos_address {-1};
     int dof_address {-1};
+    bool measures_torque {false};
     std::unique_ptr<sa::IJointSensorAdapter> adapter;
     runtime::SensorReading reading;
 };
 
 MujocoSensorStage::MujocoSensorStage(
     const mjModel* model,
-    const mjData* data,
+    mjData* data,
     const std::vector<runtime::RuntimeSensorConfig>& sensors,
     const std::uint64_t seed,
     const std::uint64_t physics_step_usec,
@@ -74,6 +78,11 @@ MujocoSensorStage::MujocoSensorStage(
         auto sensor = std::make_unique<Sensor>();
         sensor->name = config.name;
         sensor->mjcf_joint = config.mjcf_joint;
+        sensor->joint_id = joint_id;
+        sensor->body_id = model_->jnt_bodyid[joint_id];
+        sensor->root_id = model_->body_rootid[sensor->body_id];
+        sensor->measures_torque = config.measures_torque;
+        needs_dynamics_ = needs_dynamics_ || config.measures_torque;
         sensor->qpos_address = model_->jnt_qposadr[joint_id];
         sensor->dof_address = model_->jnt_dofadr[joint_id];
         sensor->adapter = std::move(adapter);
@@ -95,6 +104,13 @@ void MujocoSensorStage::step(runtime::RobotState& state)
     const std::uint64_t local_time_ns = steps_ * physics_step_usec_ * 1000;
     ++steps_;
 
+    if (needs_dynamics_) {
+        // Forces at the state after the step: mj_step computed them for the
+        // state before it. Both calls only recompute derived quantities.
+        mj_forward(model_, data_);
+        mj_rnePostConstraint(model_, data_);
+    }
+
     state.sensor_readings.clear();
     state.sensor_readings.reserve(sensors_.size());
     for (auto& sensor : sensors_) {
@@ -103,8 +119,20 @@ void MujocoSensorStage::step(runtime::RobotState& state)
         truth.position = data_->qpos[sensor->qpos_address];
         truth.velocity = data_->qvel[sensor->dof_address];
         truth.actuator_torque = data_->qfrc_actuator[sensor->dof_address];
-        truth.transmitted_torque = truth.actuator_torque;
-        truth.has_transmitted_torque = false;
+        if (sensor->measures_torque) {
+            // The torque the parent side exerts on the child side about the joint
+            // axis: the child body's cfrc_int (at the subtree COM of its root)
+            // moved to the joint anchor and projected on the joint axis.
+            mjtNum spatial[6];
+            mju_transformSpatial(spatial, data_->cfrc_int + 6 * sensor->body_id, 1,
+                data_->xanchor + 3 * sensor->joint_id,
+                data_->subtree_com + 3 * sensor->root_id, nullptr);
+            truth.transmitted_torque = mju_dot3(spatial, data_->xaxis + 3 * sensor->joint_id);
+            truth.has_transmitted_torque = true;
+        } else {
+            truth.transmitted_torque = truth.actuator_torque;
+            truth.has_transmitted_torque = false;
+        }
 
         sa::JointSensorSample sample;
         std::string error;
@@ -117,6 +145,8 @@ void MujocoSensorStage::step(runtime::RobotState& state)
             sensor->reading.sample_time_usec = first_step_time_usec_ + sample.sample_time_ns / 1000;
             sensor->reading.position = sample.position;
             sensor->reading.velocity = sample.velocity;
+            sensor->reading.has_effort = sample.has_effort;
+            sensor->reading.effort = sample.effort;
         }
         state.sensor_readings.push_back(sensor->reading);
     }
@@ -136,6 +166,8 @@ void MujocoSensorStage::reset()
         sensor->reading.sample_time_usec = 0;
         sensor->reading.position = 0.0;
         sensor->reading.velocity = 0.0;
+        sensor->reading.has_effort = false;
+        sensor->reading.effort = 0.0;
     }
 }
 
