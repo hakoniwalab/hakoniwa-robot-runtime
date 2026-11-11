@@ -35,12 +35,14 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 
 - LiDAR の走査の終わりの姿勢（`geometry_msgs/Pose`）は予定です。
 - 予定の型は、箱庭の外部センサプラグインが使っている型と同じにします。
-- 出力の設定（`schemas/components/sensor-output.schema.json`）で、`pdu_config.message_type` にこの表の型を書きます。センサの種別と型が合わない出力、3D の LiDAR を LaserScan に出す出力は、起動時に止まります。
+- 出力の設定（[`schemas/components/sensor-output.schema.json`](../schemas/components/sensor-output.schema.json)）で、`pdu_config.message_type` にこの表の型を書きます。センサの種別と型が合わない出力、3D の LiDAR を LaserScan に出す出力は、起動時に止まります。
+- 設定の書き方の全体（Asset Manifest、センサの設定、出力の設定、乱数の種）は [configuration.md 3.4](configuration.md#34-センサopt-in) にあります。スキーマは [sensor-instances.schema.json](../schemas/components/sensor-instances.schema.json) と [sensor-output.schema.json](../schemas/components/sensor-output.schema.json) です。
+- 定義ファイル（誤差モデル）の書き方は、hakoniwa-sensor-adapter の [センサの仕様](https://github.com/hakoniwalab/hakoniwa-sensor-adapter/blob/main/docs/spec/README.md) と [JSON Schema](https://github.com/hakoniwalab/hakoniwa-sensor-adapter/blob/main/schemas/sensor-definition.schema.json) が正です。
 - どのセンサ種別をどの実装（`hakoniwa`、`gazebo`、`airsim` など）が持つか、定義ファイルにどの項目を書けるかは、実装一覧 [`catalog/sensor-implementations.json`](../catalog/sensor-implementations.json) が正です。一覧に無い実装・種別・項目は、起動時に止まります。
 
 ### 2.1 取り付けの書き方
 
-取り付けはセンサの設定（`schemas/components/sensor-instances.schema.json`）の `mount` に書きます。センサの軸は前・左・上（FLU）です。
+取り付けはセンサの設定（[`schemas/components/sensor-instances.schema.json`](../schemas/components/sensor-instances.schema.json)）の `mount` に書きます。センサの軸は前・左・上（FLU）です。
 
 | 書き方 | 欄 | 使う種別 |
 |---|---|---|

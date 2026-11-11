@@ -112,6 +112,8 @@ Runtime が現在標準で解釈する主な component は次です。
 | `state_output` | `joint_state` | [3.3.1 joint_state](#331-joint_state) |
 | `state_output` | `multi_dof_joint_state` | [3.3.2 multi_dof_joint_state](#332-multi_dof_joint_state) |
 | `state_output` | `impulse_collision` | [3.3.3 impulse_collision](#333-impulse_collision) |
+| `sensor` | `sensor_instances` | [3.4 センサ](#34-センサopt-in) |
+| `state_output` | `sensor_output` | [3.4 センサ](#34-センサopt-in) |
 
 Robot Pack 固有の component type は上位側で追加できますが、Runtime core の標準 contract とは分けて管理します。
 
@@ -126,6 +128,11 @@ link dependencyやmanifest解釈を追加しません。
 `HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE=1` を定義し、対応するsource、
 controller、publisher、Endpoint adapterをリンクします。未定義または `0` の
 ビルドでは、これらのcomponentは解釈されません。
+
+`sensor_instances` と `sensor_output` もopt-in extension（センサ）です。利用する
+Applicationだけが `HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1` を定義し、センサの
+実装のライブラリをリンクします。未定義または `0` のビルドでこれらのcomponentを
+書くと、起動時に止まります。
 
 ## 3. Component Config — `components[].config` の内容
 
@@ -681,6 +688,65 @@ Schema:
 schemas/components/impulse-collision-output.schema.json
 ```
 
+### 3.4 センサ（opt-in）
+
+センサは3つの設定で決まります。
+
+| 設定 | 中身 | 仕様 |
+| --- | --- | --- |
+| センサの設定（`kind: sensor`、`type: sensor_instances`） | センサごとに、名前・種別・実装、MJCFへの取り付け（`mount`）、定義ファイルへの参照 | `schemas/components/sensor-instances.schema.json`、[sensor-pdu.md](sensor-pdu.md) |
+| 定義ファイル（センサごと） | 誤差モデル（範囲、雑音、分解能、走査など）。Runtimeは中身を解釈せず、選んだ実装のアダプタが読む | hakoniwa-sensor-adapter の [センサの仕様](https://github.com/hakoniwalab/hakoniwa-sensor-adapter/blob/main/docs/spec/README.md) と [JSON Schema](https://github.com/hakoniwalab/hakoniwa-sensor-adapter/blob/main/schemas/sensor-definition.schema.json) |
+| 出力の設定（`kind: state_output`、`type: sensor_output`） | どのセンサを、どのPDU（メッセージ型）で、どの周期で送るか | `schemas/components/sensor-output.schema.json`、[sensor-pdu.md](sensor-pdu.md) |
+
+Asset Manifestの例:
+
+```json
+{
+  "components": [
+    {"id": "arm_sensors", "kind": "sensor", "type": "sensor_instances",
+     "config": "config/sensors/sensors.json", "pdu_robot": "SO101"},
+    {"id": "encoders_output", "kind": "state_output", "type": "sensor_output",
+     "config": "config/sensors/encoders-output.json", "pdu_robot": "SO101"}
+  ]
+}
+```
+
+センサの設定の例（関節のエンコーダと、筐体に付けた2D LiDAR）:
+
+```json
+{
+  "$schema": "https://hakoniwa.dev/schemas/sensor-instances.schema.json",
+  "schema_version": 1,
+  "sensors": [
+    {"name": "shoulder_pan_encoder", "type": "joint", "implementation": "hakoniwa",
+     "mount": {"mjcf_joint": "shoulder_pan"}, "definition": "feetech_sts3215.json"},
+    {"name": "base_lidar", "type": "lidar", "implementation": "hakoniwa",
+     "mount": {"mjcf_body": "lidar_housing", "position_m": [0, 0, 0.005],
+               "orientation_deg": {"roll": 0, "pitch": 0, "yaw": 0}},
+     "definition": "lds_01.json"}
+  ]
+}
+```
+
+出力の設定の例:
+
+```json
+{
+  "$schema": "https://hakoniwa.dev/schemas/sensor-output.schema.json",
+  "schema_version": 1,
+  "sensors": ["shoulder_pan_encoder"],
+  "pdu_config": {"pdu_name": "joint_states_measured",
+                 "message_type": "sensor_msgs/JointState", "update_rate_hz": 50.0}
+}
+```
+
+起動時に、次を確かめます。合わないときは理由を示して止まります。
+
+- 実装が実装一覧（`catalog/sensor-implementations.json`）にあり、その種別を持ち、リンクされていること
+- 定義ファイルの項目が、その実装・種別で使えること
+- 取り付け先の関節・bodyがMJCFにあり、種別に合うこと
+- 出力のメッセージ型とセンサの種別が合い、その名前のPDUチャンネルが同じ型であること
+
 <a id="3-runtime-config"></a>
 
 ## 4. Runtime Config — `runtime_config` の内容
@@ -761,6 +827,18 @@ freejointを複数回指定できません。
 ```
 
 同じ人を複数回指定できません。ここにないPersonStep対象の初期yawは0です。
+
+### 4.4 `sensors`（opt-in）
+
+センサの乱数の種です。センサごとの乱数の列は、この種とロボット名・センサ名から作ります。同じ種なら、同じ入力に対して同じ測定値になります。
+
+```json
+{
+  "sensors": {"seed": 1}
+}
+```
+
+センサを使わないビルドでこの欄を書くと、起動時に止まります。
 
 Schema:
 
