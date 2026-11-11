@@ -4,13 +4,13 @@
 
 ロボット固有のモデルや Recipe を持つのではなく、外部入力を受け取り、制御候補を生成・選択し、物理 Plant へ適用し、更新後の状態を外部へ返す実行層を提供します。
 
-現在の Runtime core は、次の5つの責務で構成されています。
+現在の Runtime core は、次の5つの責務で構成されています。センサを使うビルド（opt-in）では、Plant と Publisher の間に SensorStage が入ります。
 
 ```text
-CommandSource -> Controller -> Arbiter -> Plant -> Publisher
+CommandSource -> Controller -> Arbiter -> Plant -> [SensorStage] -> Publisher
 ```
 
-`ActuatorRuntime` はこれらを 1 simulation step の順序で実行する orchestrator です。
+`ActuatorRuntime` はこれらを 1 simulation step の順序で実行する orchestrator です。SensorStage は、ステップの後の状態からセンサの真値を取り出し、選んだ実装の誤差モデルを通した測定値を RobotState に入れます。Publisher はそれを PDU で送ります（[docs/sensor-pdu.md](docs/sensor-pdu.md)）。
 
 ## 位置づけ
 
@@ -26,7 +26,7 @@ Robot Pack / Application
         |  ActuatorRuntime
         |       |
         |       v
-        |  Source -> Controller -> Arbiter -> Plant -> Publisher
+        |  Source -> Controller -> Arbiter -> Plant -> [SensorStage] -> Publisher
         |
         +--> Endpoint / Physics Adapters
         |
@@ -64,6 +64,7 @@ PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint
 - [docs/design.md](docs/design.md) — Runtime architecture / responsibility boundary
 - [docs/configuration.md](docs/configuration.md) — Asset Manifest、Runtime config、actuator / controller / state-output、PDU / Endpoint contract
 - [schemas/README.md](schemas/README.md) — Runtime-owned JSON Schemas
+- [docs/sensor-pdu.md](docs/sensor-pdu.md) — センサ（opt-in）：取り付けられるセンサ種別、MJCF への取り付け方、送信する PDU と欄の対応
 
 ## 設計上の重要点
 

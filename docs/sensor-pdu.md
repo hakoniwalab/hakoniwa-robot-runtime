@@ -1,6 +1,8 @@
-# センサと PDU の対応
+# センサの取り付けと PDU の対応
 
-Robot Runtime のセンサの測定値を、どの PDU（メッセージ型）で、どの欄に入れて送るかの仕様です。
+Robot Runtime にどのセンサを取り付けられるか、MJCF のどこにどう付けるか、測定値をどの PDU（メッセージ型）のどの欄に入れて送るかの仕様です。
+
+センサは opt-in です。センサを使うビルド（`HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1`）でだけ使え、センサの実装のライブラリを一緒にリンクします。センサを使わないビルドでセンサの設定を書くと、起動時に止まります。
 
 ## 1. 原則：ROS の決まりに従う
 
@@ -18,23 +20,37 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 
 ## 2. 対応表
 
-| センサ種別（`type`） | メッセージ型 | 1 つの出力に入るセンサ | 状態 |
-|---|---|---|---|
-| `joint` | `sensor_msgs/JointState` | 1 つ以上 | 実装済み |
-| `force_torque` | `geometry_msgs/WrenchStamped` | 1 つ | 実装済み |
-| `imu` | `sensor_msgs/Imu` | 1 つ | 実装済み |
-| `mag` | `sensor_msgs/MagneticField` | 1 つ | 予定 |
-| `baro` | `sensor_msgs/FluidPressure` | 1 つ | 予定 |
-| `gps` | `sensor_msgs/NavSatFix`（速度は `geometry_msgs/TwistStamped`） | 1 つ | 予定 |
-| `rangefinder` | `sensor_msgs/Range` | 1 つ | 実装済み |
-| `lidar`（2D） | `sensor_msgs/LaserScan` | 1 つ | 実装済み |
-| `lidar`（2D・3D） | `sensor_msgs/PointCloud2` | 1 つ | 実装済み |
-| `lidar`（走査の終わりの姿勢） | `geometry_msgs/Pose` | 1 つ | 予定 |
-| `depth_camera`・`rgb_camera` | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ | 予定 |
+| センサ種別（`type`） | Runtime | 取り付け（`mount`） | 真値（ステップの後の状態） | メッセージ型 | 1 つの出力に入るセンサ |
+|---|---|---|---|---|---|
+| `joint` | 使える | 関節 | 関節の角度・角速度（トルクを測る定義なら、関節を通る伝達トルク） | `sensor_msgs/JointState` | 1 つ以上 |
+| `force_torque` | 使える | body | 工具側がロボット側に及ぼす力とトルク | `geometry_msgs/WrenchStamped` | 1 つ |
+| `imu` | 使える | body | 角速度と比力（重力込みの加速度） | `sensor_msgs/Imu` | 1 つ |
+| `lidar`（2D） | 使える | 測距用の body | ワールドのレイの部品で走査した距離 | `sensor_msgs/LaserScan` または `sensor_msgs/PointCloud2` | 1 つ |
+| `lidar`（3D） | 使える | 測距用の body | 同上 | `sensor_msgs/PointCloud2` | 1 つ |
+| `rangefinder` | 使える | 測距用の body | 同上（1 本、または円錐） | `sensor_msgs/Range` | 1 つ |
+| `mag` | 予定 | body | — | `sensor_msgs/MagneticField` | 1 つ |
+| `baro` | 予定 | body | — | `sensor_msgs/FluidPressure` | 1 つ |
+| `gps` | 予定 | body | — | `sensor_msgs/NavSatFix`（速度は `geometry_msgs/TwistStamped`） | 1 つ |
+| `depth_camera`・`rgb_camera` | 予定 | 測距用の body | — | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ |
 
-予定の型は、箱庭の外部センサプラグインが使っている型と同じにします。
+- LiDAR の走査の終わりの姿勢（`geometry_msgs/Pose`）は予定です。
+- 予定の型は、箱庭の外部センサプラグインが使っている型と同じにします。
+- 出力の設定（`schemas/components/sensor-output.schema.json`）で、`pdu_config.message_type` にこの表の型を書きます。センサの種別と型が合わない出力、3D の LiDAR を LaserScan に出す出力は、起動時に止まります。
+- どのセンサ種別をどの実装（`hakoniwa`、`gazebo`、`airsim` など）が持つか、定義ファイルにどの項目を書けるかは、実装一覧 [`catalog/sensor-implementations.json`](../catalog/sensor-implementations.json) が正です。一覧に無い実装・種別・項目は、起動時に止まります。
 
-出力の設定（`schemas/components/sensor-output.schema.json`）で、`pdu_config.message_type` にこの表の型を書きます。センサの種別と型が合わない出力は、起動時に止まります。
+### 2.1 取り付けの書き方
+
+取り付けはセンサの設定（`schemas/components/sensor-instances.schema.json`）の `mount` に書きます。センサの軸は前・左・上（FLU）です。
+
+| 書き方 | 欄 | 使う種別 |
+|---|---|---|
+| 関節 | `mjcf_joint`：1 自由度の関節（hinge か slide） | `joint` |
+| body | `mjcf_body`、`position_m`（body の座標系での位置 [m]）、`orientation_deg`（`roll`・`pitch`・`yaw` [度]、R = Rz(yaw)·Ry(pitch)·Rx(roll)） | `force_torque`、`imu` など |
+| 測距用の body | body と同じ欄に加えて、`exclude_mjcf_body`（省略できる） | `lidar`、`rangefinder` |
+
+- 測距用の body には、ふつうセンサの筐体を付けます。筐体は MJCF の body（形状あり）として先にモデルに入れておきます。レイは、筐体とその下の body には当たりません。
+- ロボット自身は既定で見えます（実機と同じ）。`exclude_mjcf_body` に body を書くと、その body とその下にもレイが当たらなくなります（たとえば `base` でアーム全体を隠す）。
+- 力覚センサの `mjcf_body` は工具側の根の body です。その body より下が工具側、上がロボット側になります。
 
 ## 3. 欄ごとの決まり（実装済みの型）
 
