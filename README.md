@@ -63,6 +63,7 @@ PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint
 
 - [docs/design.md](docs/design.md) — Runtime architecture / responsibility boundary
 - [docs/configuration.md](docs/configuration.md) — Asset Manifest、Runtime config、actuator / controller / state-output、PDU / Endpoint contract
+- [docs/ros2-control.md](docs/ros2-control.md) — ros2_control / MoveIt 2 との接続（HakoniwaSystem、箱庭 ROS 2 Bridge、トピック）
 - [schemas/README.md](schemas/README.md) — Runtime-owned JSON Schemas
 
 ## 設計上の重要点
