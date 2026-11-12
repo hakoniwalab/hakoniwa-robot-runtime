@@ -9,7 +9,10 @@
 #endif
 #include "hakoniwa/pdu/endpoint.hpp"
 
+#include <mujoco/mujoco.h>
+
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -71,6 +74,10 @@ public:
             conductor_started = false;
         }
         driver.reset();
+        if (view != nullptr) {
+            mj_deleteData(view);
+            view = nullptr;
+        }
         resources = {};
         pacer.reset();
         paused.store(false);
@@ -152,6 +159,7 @@ public:
                     (void)resources.runtime->reset(current_time_usec);
                     pacer.reset();
                     std::cout << "[INFO] Robot simulation reset." << std::endl;
+                    refresh_view(true);
                 }
                 if (paused.load()) {
                     pacer.reset();
@@ -178,6 +186,7 @@ public:
                     }
                 }
 #endif
+                refresh_view(false);
             }
             pacer.pace(
                 static_cast<double>(simulation_time_usec) / 1'000'000.0);
@@ -197,6 +206,7 @@ public:
             (void)resources.runtime->reset();
             reset_requested.store(false);
             pacer.reset();
+            refresh_view(true);
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
             for (const auto& input : resources.async_rpc_inputs) {
                 input->lockstep_prepare();
@@ -233,6 +243,30 @@ public:
     std::atomic_bool paused {false};
     std::atomic_bool reset_requested {false};
     std::mutex model_mutex;
+    // The viewer's copy of the world. Lock order: model_mutex, then view_mutex.
+    // The viewer takes only view_mutex, so it never waits for a step (which may
+    // hold model_mutex while it waits for the main thread to render a camera).
+    std::mutex view_mutex;
+    mjData* view {nullptr};
+    std::chrono::steady_clock::time_point view_copied {};
+
+    // With model_mutex held: copy the world for the viewer, at most at the
+    // viewer's frame rate unless forced (after a reset).
+    void refresh_view(bool force)
+    {
+        if (view == nullptr) {
+            return;
+        }
+        constexpr auto kViewPeriod = std::chrono::milliseconds(16);
+        const auto now = std::chrono::steady_clock::now();
+        if (!force && now - view_copied < kViewPeriod) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(view_mutex);
+        mj_copyData(view, resources.plant->model(), resources.plant->data());
+        view_copied = now;
+    }
+
     int start_result {1};
     bool started {false};
     bool conductor_started {false};
@@ -403,6 +437,24 @@ mjData* HakoniwaRunner::data() noexcept
 std::mutex& HakoniwaRunner::model_mutex() noexcept
 {
     return impl_->model_mutex;
+}
+
+mjData* HakoniwaRunner::view_data() noexcept
+{
+    if (impl_->resources.plant == nullptr) {
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(impl_->model_mutex);
+    if (impl_->view == nullptr) {
+        impl_->view = mj_makeData(impl_->resources.plant->model());
+        impl_->refresh_view(true);
+    }
+    return impl_->view;
+}
+
+std::mutex& HakoniwaRunner::view_mutex() noexcept
+{
+    return impl_->view_mutex;
 }
 
 std::atomic_bool& HakoniwaRunner::running() noexcept

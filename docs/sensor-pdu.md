@@ -31,8 +31,8 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | `mag` | 使える | body | 世界の地磁気（設定の強さ・偏角・伏角）をセンサの軸に回したもの | `sensor_msgs/MagneticField` | 1 つ |
 | `baro` | 使える | body | センサの海抜高度と、海面の気圧・気温 | `sensor_msgs/FluidPressure` | 1 つ |
 | `gps` | 使える | body | アンテナの位置と速度（NWU と WGS-84） | `sensor_msgs/NavSatFix` | 1 つ |
-| `rgb_camera` | 予定 | 測距用の body | — | `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo` | 1 つ |
-| `depth_camera` | 使える（レイで測る方式） | 測距用の body | 画素ごとのレイの距離（ワールドのレイの部品） | `sensor_msgs/Image`（32FC1）と `sensor_msgs/CameraInfo` | 1 つ |
+| `rgb_camera` | 使える（画面のある環境） | body（組の基準） | 描画した色の画像（組の各カメラを同じ歩の状態で） | カメラごとに `sensor_msgs/CompressedImage`（JPEG）と `sensor_msgs/CameraInfo` | 1 つ（組のカメラは 1..N） |
+| `depth_camera` | 使える（レイで測る方式、描画方式は画面のある環境） | 測距用の body | 画素ごとのレイの距離（ワールドのレイの部品）、または描画した深度 | `sensor_msgs/Image`（32FC1）と `sensor_msgs/CameraInfo` | 1 つ |
 
 - LiDAR の走査の終わりの姿勢（`geometry_msgs/Pose`）と、GPS の速度（`geometry_msgs/TwistStamped`）は予定です。
 - 地磁気・気圧・GPS は、世界が地球のどこにあるか（Runtime の設定 `sensors.world`、[configuration.md 4.4](configuration.md#44-sensorsopt-in)）を使います。MuJoCo の世界の軸は x が北、y が西、z が上（NWU）です。設定が無いと起動時に止まります。
@@ -55,6 +55,8 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 - 測距用の body には、ふつうセンサの筐体を付けます。筐体は MJCF の body（形状あり）として先にモデルに入れておきます。レイは、筐体とその下の body には当たりません。
 - ロボット自身は既定で見えます（実機と同じ）。`exclude_mjcf_body` に body を書くと、その body とその下にもレイが当たらなくなります（たとえば `base` でアーム全体を隠す）。
 - レイを使うセンサ（LiDAR、測距、深度カメラ）をロボットの部品のメッシュの中に付けると、レイが自分の面を何枚もくぐって遅くなります。起動時に、レイが自分の面を平均 1 枚（筐体の壁）より多くくぐるときは `[WARN]` を出します（止めません）。筐体の body に付けてください。
+- 深度カメラの描画方式（定義の `method: render`）は、ロボット自身も `exclude_mjcf_body` も除外しません。視野にロボットの部品が入らない位置（カメラの筐体）に付けてください。自分を除外したいときはレイで測る方式を使います。
+- RGB カメラは body に付けます（レイを使わないので `exclude_mjcf_body` はありません）。取り付けは組の基準の姿勢で、組の中の各カメラの位置と向きは定義ファイルの `cameras` に書きます。
 - 力覚センサの `mjcf_body` は工具側の根の body です。その body より下が工具側、上がロボット側になります。
 
 ## 3. 欄ごとの決まり（実装済みの型）
@@ -172,3 +174,32 @@ PDU の型は ROS 2 のメッセージ型と同じです（PDU 登録集にあ�
 | Image `encoding`・`is_bigendian`・`step` | `32FC1`、0、幅 × 4 |
 | Image `data` | 深度 [m]、上の行から。定義の `depth_type` が `planar` なら光軸方向の距離、`perspective` ならレイ方向の距離。範囲の外は REP-117 に従い +inf か -inf |
 | CameraInfo `width`・`height`・`K`・`R`・`P`・`distortion_model`・`D` | 実装が返すカメラの形（光学の軸：x 右、y 下、z 前）。画素の中心は整数の座標 |
+
+描画方式のとき、半透明の物も不透明として描きます（レイと同じく当たります）。透明度 0 の物は描きません。
+
+### 3.11 `sensor_msgs/CompressedImage` と `sensor_msgs/CameraInfo`（`rgb_camera`）
+
+出力の設定は `pdu_name` の代わりに `cameras` を書きます。組のカメラごとに、CompressedImage の `pdu_name` と CameraInfo の `camera_info_pdu_name` を 1 組ずつ並べます。`camera` は定義ファイルの `cameras` の名前で、定義に `cameras` の無い 1 台のカメラでは書きません。
+
+```json
+"pdu_config": {
+  "message_type": "sensor_msgs/CompressedImage",
+  "update_rate_hz": 15,
+  "jpeg_quality": 95,
+  "cameras": [
+    {"camera": "left", "pdu_name": "camera_left", "camera_info_pdu_name": "camera_left_info"},
+    {"camera": "right", "pdu_name": "camera_right", "camera_info_pdu_name": "camera_right_info"}
+  ]
+}
+```
+
+| 欄 | 中身 |
+|---|---|
+| `header.stamp` | 測定時刻。組の全カメラと、それぞれの CameraInfo で同じ |
+| `header.frame_id` | センサ名と組のカメラ名を `_` でつないだもの（例：`scene_camera_left`）。1 台のカメラではセンサ名。CameraInfo も同じ |
+| CompressedImage `format`・`data` | `rgb8; jpeg compressed rgb8`、JPEG（画質は出力の設定の `jpeg_quality`、既定 95） |
+| CameraInfo `width`・`height`・`K`・`R`・`P`・`distortion_model`・`D` | 実装が返すカメラの形（光学の軸：x 右、y 下、z 前）。画素の中心は整数の座標 |
+
+- ステレオ：組の最初のカメラが左で、`P` の平行移動は 0 です。2 台目（右）の `P[3]` は `-fx·b`（`b` は左右の間隔 [m]）で、ROS のステレオの決まりと同じです。間隔は組の軸の y 方向だけにします。
+- 組のカメラは同じ歩の世界の状態を 1 回のまとめた描画で撮ります。左右の時刻はずれません。
+- 画面のある環境（macOS、デスクトップの Linux）が必要です。見えないウィンドウで描くので、画面の無い Linux や SSH だけでログインした Mac は対象外です。ビューアを開いていても開いていなくても同じように撮れます。

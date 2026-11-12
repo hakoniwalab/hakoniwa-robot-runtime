@@ -36,6 +36,14 @@ public:
     [[nodiscard]] virtual mjModel* model() noexcept = 0;
     [[nodiscard]] virtual mjData* data() noexcept = 0;
     [[nodiscard]] virtual std::mutex& model_mutex() noexcept = 0;
+    /**
+     * The viewer's copy of the world, refreshed at the end of a step (at most
+     * about 60 times a second) and after a reset. Read it with view_mutex()
+     * held, never model_mutex(): a step may hold model_mutex() while it waits
+     * for the main thread (camera rendering). Made on the first call.
+     */
+    [[nodiscard]] virtual mjData* view_data() noexcept = 0;
+    [[nodiscard]] virtual std::mutex& view_mutex() noexcept = 0;
     [[nodiscard]] virtual std::atomic_bool& running() noexcept = 0;
 };
 
