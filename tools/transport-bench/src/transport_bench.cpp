@@ -75,9 +75,18 @@ double cpu_seconds()
          usage.ru_stime.tv_sec + usage.ru_stime.tv_usec * 1e-6;
 }
 
-std::uint8_t pattern(std::uint64_t seq, std::size_t i)
+// The content of byte i of message seq is (seq * 31 + i) mod 256: a window of
+// one table, so filling and checking are a memcpy and a memcmp.
+const std::uint8_t * pattern(std::uint64_t seq, std::size_t size)
 {
-  return static_cast<std::uint8_t>((seq * 31u + i) & 0xffu);
+  static std::vector<std::uint8_t> table;
+  if (table.size() < size + 256) {
+    table.resize(size + 256);
+    for (std::size_t i = 0; i < table.size(); ++i) {
+      table[i] = static_cast<std::uint8_t>(i & 0xffu);
+    }
+  }
+  return table.data() + ((seq * 31u) & 0xffu);
 }
 
 // The payload: a one-row cloud of size bytes (x, y, z float32 per point is
@@ -103,9 +112,7 @@ void fill(sensor_msgs::msg::PointCloud2 & msg, std::uint64_t seq, std::size_t si
   msg.width = static_cast<std::uint32_t>(size / 12);
   msg.row_step = static_cast<std::uint32_t>(size);
   msg.data.resize(size);
-  for (std::size_t i = kHead; i < size; ++i) {
-    msg.data[i] = pattern(seq, i);
-  }
+  std::memcpy(msg.data.data() + kHead, pattern(seq, size) + kHead, size - kHead);
   std::memcpy(msg.data.data(), &seq, 8);
 }
 
@@ -137,9 +144,7 @@ struct Record
     std::memcpy(&seq, msg.data.data(), 8);
     std::memcpy(&t_send, msg.data.data() + 8, 8);
     bool ok = msg.fields.size() == 3 && msg.width == size / 12;
-    for (std::size_t i = kHead; ok && i < size; ++i) {
-      ok = msg.data[i] == pattern(seq, i);
-    }
+    ok = ok && std::memcmp(msg.data.data() + kHead, pattern(seq, size) + kHead, size - kHead) == 0;
     if (!ok) {
       ++corrupt;
       return;
