@@ -76,6 +76,13 @@ struct RuntimeParseContext {
     RuntimeDefinition& definition,
     std::string* error);
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+/** Controller plugin components (runtime_factory_plugin.cpp). */
+[[nodiscard]] bool load_plugin_controller_definitions(
+    RuntimeParseContext& context,
+    RuntimeDefinition& definition,
+    std::string* error);
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 [[nodiscard]] bool load_mirror_definitions(
     RuntimeParseContext& context,

@@ -5,6 +5,10 @@
 #include "runtime/controller/joint_trajectory_controller.hpp"
 #include "runtime/controller/manual_controller.hpp"
 #include "runtime/controller/scalar_pdu_command_controller.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+#include "plugin/plugin_library.hpp"
+#include "runtime/controller/plugin_controller.hpp"
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 #include "runtime/controller/geom_friction_controller.hpp"
 #include "runtime/controller/mirror_body_controller.hpp"
@@ -103,6 +107,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         definition.actuators.size()
         + definition.manual_controllers.size()
         + definition.trajectory_controllers.size()
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+        + definition.plugin_controllers.size()
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
         + definition.ackermann_controllers.size()
 #endif
@@ -184,8 +191,15 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         actuator_by_id.emplace(actuator.component_id, &actuator);
     }
 
+    bool has_plugin_controllers = false;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    has_plugin_controllers = !definition.plugin_controllers.empty();
+#endif
+    // The Hold Controller keeps position actuators still whenever no higher
+    // control produces commands (also while a plugin reports an error).
     if (!definition.manual_controllers.empty()
-        || !definition.trajectory_controllers.empty()) {
+        || !definition.trajectory_controllers.empty()
+        || has_plugin_controllers) {
         std::vector<HoldActuatorBinding> hold_actuators;
         for (const auto& actuator : definition.actuators) {
             if (actuator.command_type == ActuatorCommandType::Position) {
@@ -298,6 +312,32 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
             std::move(bindings)));
         priorities.push_back({trajectory_config.component_id, 10, {}});
     }
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    // Controller plugins have no CommandSource: the plugin receives its own
+    // input. They compete in arbitration with their configured priority.
+    for (const auto& plugin_config : definition.plugin_controllers) {
+        for (const auto& actuator_id : plugin_config.actuator_ids) {
+            if (!actuator_by_id.contains(actuator_id)) {
+                throw std::invalid_argument(
+                    "plugin controller references unknown actuator: " + actuator_id);
+            }
+        }
+        PluginControllerOptions options;
+        options.controller_id = plugin_config.component_id;
+        options.library = plugin::PluginLibrary::open(
+            plugin_config.plugin_path, HAKO_PLUGIN_KIND_CONTROLLER);
+        options.plugin_config_path = plugin_config.plugin_config_path;
+        options.actuator_ids = plugin_config.actuator_ids;
+        options.physics_step_ns = plant->delta_time_usec() * 1000;
+        options.joint_state_source = plugin_config.joint_state_source == "observed"
+            ? PluginJointStateSource::Observed
+            : PluginJointStateSource::Truth;
+        controllers.push_back(
+            std::make_shared<PluginController>(std::move(options)));
+        priorities.push_back({plugin_config.component_id, plugin_config.priority, {}});
+    }
+#endif
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
     constexpr const char* ackermann_control_group = "ackermann-pdu-direct";

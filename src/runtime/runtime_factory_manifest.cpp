@@ -317,6 +317,25 @@ static bool reject_sensor_components(
 }
 #endif
 
+#if !(defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN)
+static bool reject_plugin_controller_components(
+    const RuntimeParseContext& context,
+    std::string* error)
+{
+    for (const auto& component : context.components) {
+        if (component.value("kind", "") == "controller"
+            && component.value("type", "") == "plugin") {
+            return fail(error,
+                "component " + component.value("id", std::string("?"))
+                + " is a controller plugin, but this application is built without"
+                  " controller plugin support"
+                  " (HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN)");
+        }
+    }
+    return true;
+}
+#endif
+
 static bool validate_component_headers(
     const std::vector<json>& components,
     std::string* error)
@@ -456,6 +475,12 @@ bool resolve_runtime_definition(
             context, definition, error_message)
         || !detail::load_manual_definitions(
             context, definition, error_message)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+        || !detail::load_plugin_controller_definitions(
+            context, definition, error_message)
+#else
+        || !detail::reject_plugin_controller_components(context, error_message)
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
         || !detail::load_ackermann_definitions(
             context, definition, error_message)
