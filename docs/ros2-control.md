@@ -364,3 +364,10 @@ macOS のホストで、SO-101 の Robot Runtime と並べて確かめました�
 - 別のアセットが共有メモリから読んだ関節の値と、軌道の 3 点との差は、最大 0.007 rad、0.004 rad、0.0005 rad でした。
 - 箱庭の時間は実時間の 1.00 倍で進みました（TCP Bridge なし）。
 - controller_manager の `Could not enable FIFO RT scheduling policy` は、コンテナに実時間の優先度の権限がないためです。シミュレーションの動きには関係しません。
+
+5 も Docker だけの構成で確かめました（手順は [ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md) の「Docker だけで動かす」）。
+
+- `HakoniwaAssetSystem` が出したセンサー：`/pdu/lidar_scan` 2.00 Hz（11,520 点、`overhead_lidar`）、`/pdu/wrist_wrench` 49.97 Hz（`wrist_ft`）、`/clock` 約 500 Hz。
+- MoveIt は `/pdu/lidar_scan` から障害物の地図を作り、掴む前の姿勢への計画と実行ができました。自己フィルタの `Missing transform for shape mesh`（メッシュの数 13 件）は、起動直後の 1 回だけです（joint_state_broadcaster が関節の状態を出す前の最初の点群）。
+- 点群から物を見つけ（中心 (0.28, 0.0, 0.015)）、掴んで (0.20, -0.20) に置き、もう一度見つけました（中心 (0.203, -0.194)）。13 段すべて OK、持ち上げたときの力の変化 0.295 N（物の重さ 0.294 N）。
+- 箱庭の時間は、センサーと MoveIt を含めて実時間の 1.000 倍で進みました（実時間合わせ 2 ms）。ホスト ＋ Docker（TCP Bridge）では約 0.78 倍でした。

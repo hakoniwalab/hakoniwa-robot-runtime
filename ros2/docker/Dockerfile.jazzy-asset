@@ -15,5 +15,9 @@ RUN apt-get update \
         ros-${ROS_DISTRO}-moveit ros-${ROS_DISTRO}-moveit-ros-perception \
     && rm -rf /var/lib/apt/lists/*
 
+# MuJoCo for the grasp pose tool (hakoniwa-robot-arm tools/recipe/so101_grasp_poses.py),
+# pinned to the version of the Hakoniwa MuJoCo models (as Dockerfile.jazzy).
+RUN python3 -m pip install --no-cache-dir --break-system-packages mujoco==3.16.0
+
 WORKDIR /workspace
 CMD ["bash"]
