@@ -82,6 +82,15 @@ struct RuntimeParseContext {
     RuntimeParseContext& context,
     RuntimeDefinition& definition,
     std::string* error);
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+/**
+ * Matches each plugin's "pdus" with the sensor outputs (after both are
+ * loaded) and fills pdu_types from their message types.
+ */
+[[nodiscard]] bool resolve_plugin_controller_pdus(
+    RuntimeDefinition& definition,
+    std::string* error);
+#endif
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 [[nodiscard]] bool load_mirror_definitions(

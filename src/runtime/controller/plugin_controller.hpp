@@ -2,6 +2,7 @@
 
 #include "plugin/plugin_library.hpp"
 #include "runtime/controller/controller.hpp"
+#include "runtime/controller/plugin_pdu_channel.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -32,6 +33,13 @@ struct PluginControllerOptions {
     std::vector<std::string> actuator_ids;
     std::uint64_t physics_step_ns {0};
     PluginJointStateSource joint_state_source {PluginJointStateSource::Truth};
+    /**
+     * PDUs passed to the plugin (create: names and types; update: the new
+     * samples). The index is HakoPduViewV1.channel.
+     */
+    std::vector<std::shared_ptr<const PluginPduChannel>> pdu_channels;
+    /** An Error status (create aside) ends the run (error_stops_run()). */
+    bool stop_on_error {true};
 };
 
 /**
@@ -46,7 +54,13 @@ struct PluginControllerOptions {
  *
  * A failing plugin call yields ComponentState::Error with the plugin's
  * message; the last commands are kept (the Arbiter ignores them while the
- * status is Error) and the next successful update clears the error.
+ * status is Error) and the next successful update clears the error. A failed
+ * reset stays an Error until the next successful reset. With stop_on_error
+ * (the default) the Runtime ends the run on the first Error instead.
+ *
+ * Sensor PDUs: each update passes the channels whose sample changed since
+ * the previous update (the latest sample of each, with its measurement
+ * time). A sample stored and replaced between two updates is not passed.
  *
  * The instance is created in the constructor and destroyed in the
  * destructor; the PluginLibrary stays loaded while this object exists.
@@ -69,14 +83,12 @@ public:
         const RuntimeStepContext& context) override;
     void reset(const RobotState& current_state) override;
 
-    /**
-     * Start and stop events of the plugin lifecycle.
-     * TODO: IController has no start/stop yet; the runner must call these
-     * (design 5.2 (4)). Until then on_start/on_stop are not called by the
-     * Runtime. Failures are returned as a status.
-     */
-    [[nodiscard]] ComponentStatus start();
-    [[nodiscard]] ComponentStatus stop();
+    /** The plugin's on_start / on_stop; a failure is an Error status. */
+    [[nodiscard]] ComponentStatus on_start() override;
+    [[nodiscard]] ComponentStatus on_stop() override;
+
+    /** The component's "stop_on_error" (default true). */
+    [[nodiscard]] bool error_stops_run() const noexcept override;
 
     /** Physics steps per plugin update (1 = every step). */
     [[nodiscard]] std::uint64_t steps_per_update() const noexcept;
@@ -92,6 +104,8 @@ private:
     [[nodiscard]] ControllerOutput fail(
         const RuntimeStepContext& context,
         const std::string& detail);
+    /** Collects the PDU samples stored since the previous plugin update. */
+    void collect_new_pdus();
     [[nodiscard]] ActuatorCommand stamped(
         const ActuatorCommand& command,
         const RuntimeStepContext& context) const;
@@ -105,6 +119,15 @@ private:
     std::uint64_t steps_per_update_ {1};
     PluginJointStateSource joint_state_source_ {PluginJointStateSource::Truth};
     bool just_reset_ {true};
+    bool stop_on_error_ {true};
+    /** A failed plugin reset stays an error until the next successful reset. */
+    std::string reset_error_;
+
+    // Sensor PDUs: the channels, the version of each passed last, and the
+    // views lent to the plugin on each update.
+    std::vector<std::shared_ptr<const PluginPduChannel>> pdu_channels_;
+    std::vector<std::uint64_t> pdu_seen_versions_;
+    std::vector<HakoPduViewV1> pdu_views_;
 
     // Buffers lent to the plugin on each update (one element per joint).
     std::vector<double> position_;

@@ -57,6 +57,67 @@ public:
         running.store(false);
     }
 
+    /** Logs the Controllers that reported Error at a start or stop event (not ending the run). */
+    static void log_event_statuses(
+        const char* event,
+        const std::vector<runtime::ComponentStatus>& statuses)
+    {
+        for (const auto& status : statuses) {
+            if (status.state != runtime::ComponentState::Error) {
+                continue;
+            }
+            std::cerr << "[WARN] controller " << status.component_id
+                      << " failed at " << event << ": " << status.detail
+                      << std::endl;
+        }
+    }
+
+    /**
+     * Start event of the Runtime (Controller on_start), once per run, from
+     * the simulation thread right before the first step.
+     */
+    [[nodiscard]] bool start_runtime() noexcept
+    {
+        try {
+            std::lock_guard<std::mutex> lock(model_mutex);
+            const auto statuses = resources.runtime->start();
+            runtime_started = true;
+            log_event_statuses("start", statuses);
+            return true;
+        } catch (const std::exception& error) {
+            // A failed start may have started some Controllers: stop them too.
+            runtime_started = true;
+            fail(error.what());
+            std::cerr << "[ERROR] Hakoniwa Runner start failed: "
+                      << error.what() << std::endl;
+            return false;
+        }
+    }
+
+    /**
+     * Stop event of the Runtime (Controller on_stop), from the simulation
+     * thread after the last step. A failure that ends the run is kept as the
+     * run's error unless an earlier error is already recorded.
+     */
+    void stop_runtime() noexcept
+    {
+        if (!runtime_started) {
+            return;
+        }
+        runtime_started = false;
+        try {
+            std::lock_guard<std::mutex> lock(model_mutex);
+            const auto statuses = resources.runtime->stop();
+            log_event_statuses("stop", statuses);
+        } catch (const std::exception& error) {
+            std::cerr << "[ERROR] Hakoniwa Runner stop failed: "
+                      << error.what() << std::endl;
+            if (last_error.empty()) {
+                last_error = error.what();
+            }
+        }
+    }
+
     void cleanup() noexcept
     {
         if (asset_thread.joinable()) {
@@ -79,6 +140,7 @@ public:
             view = nullptr;
         }
         resources = {};
+        runtime_started = false;
         pacer.reset();
         paused.store(false);
         reset_requested.store(false);
@@ -102,6 +164,9 @@ public:
         if (resources.endpoint == nullptr
             || resources.endpoint->post_start() != HAKO_PDU_ERR_OK) {
             fail("failed to complete endpoint post_start");
+            return -1;
+        }
+        if (!runtime_started && !start_runtime()) {
             return -1;
         }
         return 0;
@@ -269,6 +334,8 @@ public:
 
     int start_result {1};
     bool started {false};
+    /** Runtime start event delivered; touched only by the asset thread. */
+    bool runtime_started {false};
     bool conductor_started {false};
     bool endpoint_started {false};
     std::string last_error;
@@ -373,6 +440,8 @@ int HakoniwaRunner::start()
     try {
         impl_->asset_thread = std::thread([state = impl_.get()]() {
             state->start_result = state->driver->start();
+            // Stop event: the simulation loop has ended (stop, error or exit).
+            state->stop_runtime();
             state->request_stop();
         });
     } catch (const std::exception& error) {

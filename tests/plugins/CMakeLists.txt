@@ -47,7 +47,7 @@ target_include_directories(controller_plugin_header_c PRIVATE ${RUNTIME_INCLUDE}
 set_target_properties(controller_plugin_header_c PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 target_compile_options(controller_plugin_header_c PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-add_executable(hako-controller-plugin-test
+set(PLUGIN_TEST_SOURCES
     ${RUNTIME_ROOT}/tests/test_controller_plugin.cpp
     ${RUNTIME_SRC}/plugin/plugin_library.cpp
     ${RUNTIME_SRC}/runtime/controller/plugin_controller.cpp
@@ -69,22 +69,48 @@ add_executable(hako-controller-plugin-test
     ${RUNTIME_SRC}/runtime/arbiter/priority_command_arbiter.cpp
     ${RUNTIME_SRC}/runtime/publisher/joint_state_publisher.cpp
 )
-target_compile_features(hako-controller-plugin-test PRIVATE cxx_std_20)
-target_compile_options(hako-controller-plugin-test PRIVATE -Wall -Wextra)
-target_compile_definitions(hako-controller-plugin-test PRIVATE
-    HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN=1
-    HOLD_TARGET_PLUGIN_PATH="$<TARGET_FILE:hold_target>"
-    HOLD_TARGET_BAD_KIND_PATH="$<TARGET_FILE:hold_target_bad_kind>"
-    HOLD_TARGET_BAD_ABI_PATH="$<TARGET_FILE:hold_target_bad_abi>"
-    HOLD_TARGET_SMALL_TABLE_PATH="$<TARGET_FILE:hold_target_small_table>"
-    HOLD_TARGET_NO_ENTRY_PATH="$<TARGET_FILE:hold_target_no_entry>")
-target_include_directories(hako-controller-plugin-test PRIVATE
-    ${RUNTIME_INCLUDE}
-    ${RUNTIME_SRC})
-target_include_directories(hako-controller-plugin-test SYSTEM PRIVATE
-    ${NLOHMANN_JSON_INCLUDE_DIR})
-target_link_libraries(hako-controller-plugin-test PRIVATE ${CMAKE_DL_LIBS})
-add_dependencies(hako-controller-plugin-test
-    hold_target hold_target_bad_kind hold_target_bad_abi
-    hold_target_small_table hold_target_no_entry)
-add_test(NAME hako-controller-plugin-contract COMMAND hako-controller-plugin-test)
+
+function(add_plugin_test name)
+    add_executable(${name} ${PLUGIN_TEST_SOURCES} ${ARGN})
+    target_compile_features(${name} PRIVATE cxx_std_20)
+    target_compile_options(${name} PRIVATE -Wall -Wextra)
+    target_compile_definitions(${name} PRIVATE
+        HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN=1
+        HOLD_TARGET_PLUGIN_PATH="$<TARGET_FILE:hold_target>"
+        HOLD_TARGET_BAD_KIND_PATH="$<TARGET_FILE:hold_target_bad_kind>"
+        HOLD_TARGET_BAD_ABI_PATH="$<TARGET_FILE:hold_target_bad_abi>"
+        HOLD_TARGET_SMALL_TABLE_PATH="$<TARGET_FILE:hold_target_small_table>"
+        HOLD_TARGET_NO_ENTRY_PATH="$<TARGET_FILE:hold_target_no_entry>")
+    target_include_directories(${name} PRIVATE
+        ${RUNTIME_INCLUDE}
+        ${RUNTIME_SRC})
+    target_include_directories(${name} SYSTEM PRIVATE
+        ${NLOHMANN_JSON_INCLUDE_DIR})
+    target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(${name}
+        hold_target hold_target_bad_kind hold_target_bad_abi
+        hold_target_small_table hold_target_no_entry)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+# Without the sensor stage: a plugin cannot list sensor PDUs.
+add_plugin_test(hako-controller-plugin-test)
+
+# With the sensor stage (needs hakoniwa-sensor-adapter for the sensor
+# loader's headers): "pdus" are matched with the sensor outputs.
+set(SENSOR_ADAPTER_INCLUDE_DIR
+    "${RUNTIME_ROOT}/../hakoniwa-sensor-adapter/include"
+    CACHE PATH "hakoniwa-sensor-adapter include directory")
+if(EXISTS "${SENSOR_ADAPTER_INCLUDE_DIR}/hakoniwa/sensor_adapter/sensor_adapter_implementation.hpp")
+    add_plugin_test(hako-controller-plugin-sensor-test
+        ${RUNTIME_SRC}/runtime/runtime_factory_sensor.cpp
+        ${RUNTIME_SRC}/runtime/sensor/sensor_catalog.cpp
+        ${RUNTIME_SRC}/runtime/sensor/sensor_registry.cpp)
+    target_compile_definitions(hako-controller-plugin-sensor-test PRIVATE
+        HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1
+        HAKONIWA_ROBOT_RUNTIME_SENSOR_CATALOG_PATH="${RUNTIME_ROOT}/catalog/sensor-implementations.json")
+    target_include_directories(hako-controller-plugin-sensor-test PRIVATE
+        ${SENSOR_ADAPTER_INCLUDE_DIR})
+else()
+    message(WARNING "hakoniwa-sensor-adapter not found: the sensor variant of the test is skipped")
+endif()

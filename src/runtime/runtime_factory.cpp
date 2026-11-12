@@ -41,6 +41,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     , const ImpulseCollisionWriterFactory& impulse_writer_factory
     , const GeomFrictionReaderFactory& geom_friction_reader_factory
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    , const PluginPduChannels* plugin_pdu_channels
+#endif
     )
 {
     if (plant == nullptr) {
@@ -333,6 +336,19 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         options.joint_state_source = plugin_config.joint_state_source == "observed"
             ? PluginJointStateSource::Observed
             : PluginJointStateSource::Truth;
+        options.stop_on_error = plugin_config.stop_on_error;
+        for (const auto& pdu_name : plugin_config.pdu_names) {
+            auto channel = plugin_pdu_channels == nullptr
+                ? nullptr
+                : plugin_pdu_channels->find(pdu_name);
+            if (channel == nullptr) {
+                throw std::invalid_argument(
+                    "plugin controller " + plugin_config.component_id
+                    + " lists PDU " + pdu_name
+                    + ", but the application gives it no PDU channel");
+            }
+            options.pdu_channels.push_back(std::move(channel));
+        }
         controllers.push_back(
             std::make_shared<PluginController>(std::move(options)));
         priorities.push_back({plugin_config.component_id, plugin_config.priority, {}});

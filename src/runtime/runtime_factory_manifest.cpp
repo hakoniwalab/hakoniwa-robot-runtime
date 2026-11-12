@@ -490,6 +490,9 @@ bool resolve_runtime_definition(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
         || !detail::load_sensor_definitions(
             context, definition, error_message)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+        || !detail::resolve_plugin_controller_pdus(definition, error_message)
+#endif
 #else
         || !detail::reject_sensor_components(context, error_message)
 #endif

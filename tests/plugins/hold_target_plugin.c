@@ -7,6 +7,9 @@
  *   target 0.5 -0.25 ...       one position target per joint (default: none,
  *                              hold the position seen after create/reset)
  *   fail_on_update 3           make the 3rd update fail (tests)
+ *   fail_on_start 1            make on_start fail (tests)
+ *   fail_on_stop 1             make on_stop fail (tests)
+ *   fail_on_reset 1            make the 1st reset fail (tests)
  *
  * Behaviour:
  *   - tick.reset = 1: hold the current position (no jump after a reset).
@@ -29,6 +32,8 @@
 #include <string.h>
 
 #define HOLD_TARGET_MAX_JOINTS 64
+#define HOLD_TARGET_MAX_PDUS 4
+#define HOLD_TARGET_NAME_SIZE 64
 
 typedef struct HoldTargetStats {
     uint64_t update_count;
@@ -37,6 +42,19 @@ typedef struct HoldTargetStats {
     uint64_t last_sim_time_ns;
     uint8_t last_selected;
     uint8_t last_reset;
+    /* Lifecycle events. */
+    uint64_t start_count;
+    uint64_t stop_count;
+    /* Sensor PDUs: create's channel list, the last update's views. */
+    uint32_t pdu_channel_count;
+    char pdu_names[HOLD_TARGET_MAX_PDUS][HOLD_TARGET_NAME_SIZE];
+    char pdu_types[HOLD_TARGET_MAX_PDUS][HOLD_TARGET_NAME_SIZE];
+    uint32_t last_pdu_count;
+    uint32_t last_pdu_channel[HOLD_TARGET_MAX_PDUS];
+    uint32_t last_pdu_size[HOLD_TARGET_MAX_PDUS];
+    uint8_t last_pdu_first_byte[HOLD_TARGET_MAX_PDUS];
+    uint64_t last_pdu_sample_time_ns[HOLD_TARGET_MAX_PDUS];
+    uint64_t total_pdu_count;
 } HoldTargetStats;
 
 typedef struct HoldTarget {
@@ -48,6 +66,9 @@ typedef struct HoldTarget {
     int holding;
     uint8_t was_selected;
     uint64_t fail_on_update;
+    int fail_on_start;
+    int fail_on_stop;
+    uint64_t fail_on_reset;
     HakoPluginLogFunctionV1 log;
     void* log_user;
 } HoldTarget;
@@ -86,6 +107,15 @@ static int read_config(HoldTarget* self, const char* path, char* error, size_t e
         } else if (strcmp(key, "fail_on_update") == 0) {
             char* value = strtok(NULL, " \t\r\n");
             self->fail_on_update = value != NULL ? strtoull(value, NULL, 10) : 0;
+        } else if (strcmp(key, "fail_on_start") == 0) {
+            char* value = strtok(NULL, " \t\r\n");
+            self->fail_on_start = value != NULL ? atoi(value) : 0;
+        } else if (strcmp(key, "fail_on_reset") == 0) {
+            char* value = strtok(NULL, " \t\r\n");
+            self->fail_on_reset = value != NULL ? strtoull(value, NULL, 10) : 0;
+        } else if (strcmp(key, "fail_on_stop") == 0) {
+            char* value = strtok(NULL, " \t\r\n");
+            self->fail_on_stop = value != NULL ? atoi(value) : 0;
         } else if (strcmp(key, "target") == 0) {
             uint32_t count = 0;
             char* value = strtok(NULL, " \t\r\n");
@@ -130,7 +160,20 @@ static void* hold_target_create(const HakoControllerCreateV1* args, char* error,
         free(self);
         return NULL;
     }
+    if (args->pdu_channel_count > HOLD_TARGET_MAX_PDUS) {
+        free(self);
+        write_error(error, error_size, "hold_target: too many PDU channels");
+        return NULL;
+    }
     memset(&g_stats, 0, sizeof(g_stats));
+    g_stats.pdu_channel_count = args->pdu_channel_count;
+    {
+        uint32_t index;
+        for (index = 0; index < args->pdu_channel_count; ++index) {
+            snprintf(g_stats.pdu_names[index], HOLD_TARGET_NAME_SIZE, "%s", args->pdu_names[index]);
+            snprintf(g_stats.pdu_types[index], HOLD_TARGET_NAME_SIZE, "%s", args->pdu_types[index]);
+        }
+    }
     if (self->log != NULL) {
         self->log(self->log_user, HAKO_PLUGIN_LOG_INFO, "hold_target created");
     }
@@ -145,17 +188,23 @@ static uint64_t hold_target_update_period_ns(void* plugin)
 
 static int32_t hold_target_on_start(void* plugin, char* error, size_t error_size)
 {
-    (void)plugin;
-    (void)error;
-    (void)error_size;
+    const HoldTarget* self = (const HoldTarget*)plugin;
+    g_stats.start_count++;
+    if (self->fail_on_start) {
+        write_error(error, error_size, "hold_target: injected start failure");
+        return -1;
+    }
     return 0;
 }
 
 static int32_t hold_target_on_stop(void* plugin, char* error, size_t error_size)
 {
-    (void)plugin;
-    (void)error;
-    (void)error_size;
+    const HoldTarget* self = (const HoldTarget*)plugin;
+    g_stats.stop_count++;
+    if (self->fail_on_stop) {
+        write_error(error, error_size, "hold_target: injected stop failure");
+        return -1;
+    }
     return 0;
 }
 
@@ -176,9 +225,16 @@ static int32_t hold_target_update(void* plugin, const HakoTickV1* tick, const Ha
     uint32_t index;
     const double* source;
 
-    (void)pdu_count;
-    (void)pdus;
     g_stats.update_count++;
+    g_stats.last_pdu_count = pdu_count;
+    g_stats.total_pdu_count += pdu_count;
+    for (index = 0; index < pdu_count && index < HOLD_TARGET_MAX_PDUS; ++index) {
+        g_stats.last_pdu_channel[index] = pdus[index].channel;
+        g_stats.last_pdu_size[index] = pdus[index].size;
+        g_stats.last_pdu_first_byte[index] =
+            pdus[index].size > 0 ? ((const uint8_t*)pdus[index].data)[0] : 0;
+        g_stats.last_pdu_sample_time_ns[index] = pdus[index].sample_time_ns;
+    }
     g_stats.last_step_index = tick->step_index;
     g_stats.last_sim_time_ns = tick->sim_time_ns;
     g_stats.last_selected = tick->selected;
@@ -219,11 +275,13 @@ static int32_t hold_target_update(void* plugin, const HakoTickV1* tick, const Ha
 static int32_t hold_target_reset(void* plugin, char* error, size_t error_size)
 {
     HoldTarget* self = (HoldTarget*)plugin;
-    (void)error;
-    (void)error_size;
     self->holding = 0;
     self->was_selected = 0;
     g_stats.reset_count++;
+    if (self->fail_on_reset != 0 && g_stats.reset_count == self->fail_on_reset) {
+        write_error(error, error_size, "hold_target: injected reset failure");
+        return -1;
+    }
     return 0;
 }
 

@@ -46,6 +46,8 @@ PluginController::PluginController(PluginControllerOptions options)
     , actuator_ids_(std::move(options.actuator_ids))
     , physics_step_ns_(options.physics_step_ns)
     , joint_state_source_(options.joint_state_source)
+    , stop_on_error_(options.stop_on_error)
+    , pdu_channels_(std::move(options.pdu_channels))
 {
     if (controller_id_.empty()) {
         throw std::invalid_argument("plugin Controller requires an ID");
@@ -78,6 +80,18 @@ PluginController::PluginController(PluginControllerOptions options)
             + controller_id_);
     }
 
+    std::unordered_set<std::string> unique_pdus;
+    for (const auto& channel : pdu_channels_) {
+        if (channel == nullptr) {
+            throw std::invalid_argument(
+                "plugin Controller PDU channel must not be null: " + controller_id_);
+        }
+        if (!unique_pdus.insert(channel->pdu_name()).second) {
+            throw std::invalid_argument(
+                "plugin Controller PDUs must be unique: " + channel->pdu_name());
+        }
+    }
+
     table_ = &library_->controller_table();
 
     const std::size_t joint_count = actuator_ids_.size();
@@ -95,17 +109,26 @@ PluginController::PluginController(PluginControllerOptions options)
     }
     const std::string config_path = options.plugin_config_path;
 
+    std::vector<const char*> pdu_names;
+    std::vector<const char*> pdu_types;
+    pdu_names.reserve(pdu_channels_.size());
+    pdu_types.reserve(pdu_channels_.size());
+    for (const auto& channel : pdu_channels_) {
+        pdu_names.push_back(channel->pdu_name().c_str());
+        pdu_types.push_back(channel->pdu_type().c_str());
+    }
+    pdu_seen_versions_.assign(pdu_channels_.size(), 0);
+    pdu_views_.reserve(pdu_channels_.size());
+
     HakoControllerCreateV1 args {};
     args.struct_size = sizeof(args);
     args.config_path = config_path.c_str();
     args.joint_count = static_cast<std::uint32_t>(joint_count);
     args.joint_names = joint_names.data();
     args.physics_step_ns = physics_step_ns_;
-    // TODO: sensor PDUs (design 5.1). The channel list comes from the
-    // component config once the sensor PDU plumbing exists.
-    args.pdu_channel_count = 0;
-    args.pdu_names = nullptr;
-    args.pdu_types = nullptr;
+    args.pdu_channel_count = static_cast<std::uint32_t>(pdu_channels_.size());
+    args.pdu_names = pdu_names.empty() ? nullptr : pdu_names.data();
+    args.pdu_types = pdu_types.empty() ? nullptr : pdu_types.data();
     args.log = &PluginController::log_to_runtime;
     args.log_user = this;
 
@@ -139,7 +162,8 @@ PluginController::PluginController(PluginControllerOptions options)
     std::cerr << "[INFO] plugin Controller " << controller_id_
               << " loaded " << library_->plugin_id()
               << " from " << library_->path()
-              << " (update every " << steps_per_update_ << " physics steps)"
+              << " (update every " << steps_per_update_ << " physics steps, "
+              << pdu_channels_.size() << " sensor PDUs)"
               << std::endl;
 }
 
@@ -185,6 +209,9 @@ ControllerOutput PluginController::update(
             + " ns differs from the step given to the plugin "
             + std::to_string(physics_step_ns_) + " ns");
     }
+    if (!reset_error_.empty()) {
+        return fail(context, reset_error_);
+    }
     if (context.step_index % steps_per_update_ != 0) {
         return repeat_last_output(context);
     }
@@ -222,10 +249,9 @@ ControllerOutput PluginController::update(
         command_value_.data(),
     };
 
-    // TODO: pass the sensor PDUs that changed since the last update
-    // (design 5.1); the sensor PDU plumbing is a later step.
-    const std::uint32_t pdu_count = 0;
-    const HakoPduViewV1* pdus = nullptr;
+    collect_new_pdus();
+    const auto pdu_count = static_cast<std::uint32_t>(pdu_views_.size());
+    const HakoPduViewV1* pdus = pdu_views_.empty() ? nullptr : pdu_views_.data();
 
     char error[error_buffer_size] = {};
     const std::int32_t result = table_->update(
@@ -273,14 +299,19 @@ void PluginController::reset(const RobotState& current_state)
     (void)current_state;
     last_commands_.clear();
     just_reset_ = true;
+    reset_error_.clear();
+    // Samples from before the reset are not passed; the writers clear
+    // their channels when the publishers are reset.
+    for (std::size_t index = 0; index < pdu_channels_.size(); ++index) {
+        pdu_seen_versions_[index] = pdu_channels_[index]->version();
+    }
 
     char error[error_buffer_size] = {};
     if (table_->reset(instance_, error, sizeof(error)) != 0) {
-        const std::string detail =
-            "plugin reset failed: " + error_text(error, sizeof(error));
+        reset_error_ = "plugin reset failed: " + error_text(error, sizeof(error));
         std::cerr << "[ERROR] plugin Controller " << controller_id_
-                  << ": " << detail << std::endl;
-        last_status_ = {controller_id_, ComponentState::Error, detail};
+                  << ": " << reset_error_ << std::endl;
+        last_status_ = {controller_id_, ComponentState::Error, reset_error_};
         return;
     }
     last_status_ = {
@@ -290,7 +321,7 @@ void PluginController::reset(const RobotState& current_state)
     };
 }
 
-ComponentStatus PluginController::start()
+ComponentStatus PluginController::on_start()
 {
     char error[error_buffer_size] = {};
     if (table_->on_start(instance_, error, sizeof(error)) != 0) {
@@ -303,7 +334,7 @@ ComponentStatus PluginController::start()
     return {controller_id_, ComponentState::Ready, {}};
 }
 
-ComponentStatus PluginController::stop()
+ComponentStatus PluginController::on_stop()
 {
     char error[error_buffer_size] = {};
     if (table_->on_stop(instance_, error, sizeof(error)) != 0) {
@@ -314,6 +345,32 @@ ComponentStatus PluginController::stop()
         };
     }
     return {controller_id_, ComponentState::Stopped, {}};
+}
+
+bool PluginController::error_stops_run() const noexcept
+{
+    return stop_on_error_;
+}
+
+void PluginController::collect_new_pdus()
+{
+    pdu_views_.clear();
+    for (std::size_t index = 0; index < pdu_channels_.size(); ++index) {
+        const auto& channel = *pdu_channels_[index];
+        if (channel.version() == pdu_seen_versions_[index]) {
+            continue;
+        }
+        pdu_seen_versions_[index] = channel.version();
+        if (!channel.has_sample()) {
+            continue;
+        }
+        HakoPduViewV1 view {};
+        view.channel = static_cast<std::uint32_t>(index);
+        view.size = static_cast<std::uint32_t>(channel.data().size());
+        view.data = channel.data().data();
+        view.sample_time_ns = channel.sample_time_usec() * nanoseconds_per_microsecond;
+        pdu_views_.push_back(view);
+    }
 }
 
 void PluginController::log_to_runtime(

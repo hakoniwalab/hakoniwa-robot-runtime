@@ -14,6 +14,10 @@
 #include "runtime/source/mirror_body_state_source.hpp"
 #endif
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+#include "runtime/controller/plugin_pdu_channel.hpp"
+#endif
+
 #include <functional>
 #include <memory>
 
@@ -67,6 +71,20 @@ using GeomFrictionReaderFactory = std::function<
     , const ImpulseCollisionWriterFactory& impulse_writer_factory = {}
     , const GeomFrictionReaderFactory& geom_friction_reader_factory = {}
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    /// The sensor PDU channels the plugins read (make_plugin_pdu_channels());
+    /// required when a plugin lists "pdus", the PDU writers store into them.
+    , const PluginPduChannels* plugin_pdu_channels = nullptr
+#endif
     );
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+/**
+ * One channel per PDU listed in the plugins' "pdus" (types resolved). The
+ * composition root passes it to build_runtime() and gives each channel to the
+ * writer of its PDU as the IEncodedPduSink.
+ */
+[[nodiscard]] PluginPduChannels make_plugin_pdu_channels(const RuntimeDefinition& definition);
+#endif
 
 } // namespace hakoniwa::robot_runtime::runtime

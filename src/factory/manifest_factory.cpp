@@ -279,6 +279,11 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         : initial->yaw_rad);
             }
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+            // Sensor PDUs of the controller plugins: the plugins read the
+            // bytes the sensor writers encode for the endpoint.
+            const auto plugin_pdu_channels = runtime::make_plugin_pdu_channels(definition);
+#endif
             auto runtime_instance = runtime::build_runtime(
                 definition,
                 plant,
@@ -355,7 +360,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         output.pdu_robot,
                         output.pdu_name);
                 }
-#elif defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+#elif (defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) \
+    || (defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN)
                 , {}, {}
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
@@ -392,6 +398,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     }
                     return reader;
                 }
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+                , &plugin_pdu_channels
 #endif
                 );
 
@@ -606,6 +615,11 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     [plant_ptr = plant.get()]() { return plant_ptr->create_image_renderer(); });
                 std::vector<std::shared_ptr<runtime::IStatePublisher>> sensor_publishers;
                 for (const auto& output : definition.sensor_outputs) {
+                    // The controller plugin channel of this PDU, or null.
+                    std::shared_ptr<runtime::IEncodedPduSink> plugin_sink;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+                    plugin_sink = plugin_pdu_channels.find(output.pdu_name);
+#endif
                     if (output.message_type == "sensor_msgs/Imu") {
                         sensor_publishers.push_back(
                             std::make_shared<runtime::SensorImuPublisher>(
@@ -627,7 +641,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                                 std::make_shared<adapters::hakoniwa::PointCloud2PduWriter>(
                                     *endpoint,
                                     output.pdu_robot,
-                                    output.pdu_name)));
+                                    output.pdu_name,
+                                    plugin_sink)));
                         continue;
                     }
                     if (output.message_type == "sensor_msgs/MagneticField") {
@@ -725,7 +740,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                                 std::make_shared<adapters::hakoniwa::WrenchStampedPduWriter>(
                                     *endpoint,
                                     output.pdu_robot,
-                                    output.pdu_name)));
+                                    output.pdu_name,
+                                    plugin_sink)));
                         continue;
                     }
                     sensor_publishers.push_back(

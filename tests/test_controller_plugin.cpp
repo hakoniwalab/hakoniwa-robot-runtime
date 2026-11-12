@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -36,6 +37,8 @@ constexpr std::uint64_t step_ns = step_usec * 1'000;
 constexpr double epsilon = 1.0e-12;
 
 // Same layout as HoldTargetStats in hold_target_plugin.c.
+constexpr std::size_t max_pdus = 4;
+constexpr std::size_t name_size = 64;
 struct HoldTargetStats {
     std::uint64_t update_count;
     std::uint64_t reset_count;
@@ -43,6 +46,17 @@ struct HoldTargetStats {
     std::uint64_t last_sim_time_ns;
     std::uint8_t last_selected;
     std::uint8_t last_reset;
+    std::uint64_t start_count;
+    std::uint64_t stop_count;
+    std::uint32_t pdu_channel_count;
+    char pdu_names[max_pdus][name_size];
+    char pdu_types[max_pdus][name_size];
+    std::uint32_t last_pdu_count;
+    std::uint32_t last_pdu_channel[max_pdus];
+    std::uint32_t last_pdu_size[max_pdus];
+    std::uint8_t last_pdu_first_byte[max_pdus];
+    std::uint64_t last_pdu_sample_time_ns[max_pdus];
+    std::uint64_t total_pdu_count;
 };
 
 using StatsFunction = void (*)(HoldTargetStats*);
@@ -115,7 +129,10 @@ RuntimeStepContext make_context(std::uint64_t step_index, bool plugin_selected)
     return context;
 }
 
-std::shared_ptr<PluginController> make_controller(const std::string& config_text)
+std::shared_ptr<PluginController> make_controller(
+    const std::string& config_text,
+    std::vector<std::shared_ptr<const PluginPduChannel>> pdu_channels = {},
+    bool stop_on_error = true)
 {
     PluginControllerOptions options;
     options.controller_id = "plugin_ctrl";
@@ -124,7 +141,18 @@ std::shared_ptr<PluginController> make_controller(const std::string& config_text
     options.plugin_config_path = write_file("hold_target.cfg", config_text);
     options.actuator_ids = {"joint_a", "joint_b"};
     options.physics_step_ns = step_ns;
+    options.pdu_channels = std::move(pdu_channels);
+    options.stop_on_error = stop_on_error;
     return std::make_shared<PluginController>(std::move(options));
+}
+
+/** Stores a fake encoded sample whose first byte identifies it. */
+void store_sample(PluginPduChannel& channel, std::uint8_t marker, std::size_t size,
+    std::uint64_t time_usec)
+{
+    std::vector<std::byte> data(size, std::byte {0});
+    data[0] = static_cast<std::byte>(marker);
+    channel.store(data, time_usec);
 }
 
 void test_library_validation()
@@ -454,6 +482,325 @@ void test_build_runtime()
     assert(plugin_stats().reset_count == 1);
 }
 
+RuntimeDefinition plugin_definition(const std::string& config_text)
+{
+    RuntimeDefinition definition;
+    definition.actuators = {position_actuator("joint_a"), position_actuator("joint_b")};
+    RuntimePluginControllerConfig config;
+    config.component_id = "plugin_ctrl";
+    config.plugin_path = HOLD_TARGET_PLUGIN_PATH;
+    config.plugin_config_path = write_file("events.cfg", config_text);
+    config.actuator_ids = {"joint_a", "joint_b"};
+    definition.plugin_controllers.push_back(config);
+    return definition;
+}
+
+std::unique_ptr<ActuatorRuntime> make_runtime(
+    const RuntimeDefinition& definition,
+    std::shared_ptr<RecordingPlant> plant,
+    const PluginPduChannels* channels = nullptr)
+{
+    return build_runtime(
+        definition,
+        std::move(plant),
+        [](const RuntimeActuatorConfig&) {
+            return std::make_shared<EmptyScalarReader>();
+        },
+        {}, {}, {}, {}, {},
+        channels);
+}
+
+const ComponentStatus& status_of(const std::vector<ComponentStatus>& statuses,
+    const std::string& id)
+{
+    for (const auto& status : statuses) {
+        if (status.component_id == id) {
+            return status;
+        }
+    }
+    assert(false && "status not found");
+    return statuses.front();
+}
+
+bool throws_with(const std::function<void()>& action, const std::string& text)
+{
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        std::cout << "  stopped: " << error.what() << std::endl;
+        return std::string(error.what()).find(text) != std::string::npos;
+    }
+    return false;
+}
+
+void test_start_stop_events()
+{
+    std::cout << "start / stop events" << std::endl;
+    auto plant = std::make_shared<RecordingPlant>();
+    auto runtime = make_runtime(plugin_definition("target 0.5 -0.25\n"), plant);
+    assert(plugin_stats().start_count == 0);
+
+    // start(): every controller's on_start once; the built-in ones report Ready.
+    auto statuses = runtime->start();
+    assert(plugin_stats().start_count == 1);
+    assert(plugin_stats().stop_count == 0);
+    // The plugin, the Hold Controller and one scalar Controller per actuator.
+    assert(statuses.size() == 4);
+    assert(status_of(statuses, "plugin_ctrl").state == ComponentState::Ready);
+    for (const auto& status : statuses) {
+        assert(status.state == ComponentState::Ready);
+    }
+    for (int step = 0; step < 3; ++step) {
+        (void)runtime->step();
+    }
+    // reset() is not a start or a stop event.
+    (void)runtime->reset(0);
+    assert(plugin_stats().start_count == 1);
+    assert(plugin_stats().stop_count == 0);
+
+    statuses = runtime->stop();
+    assert(plugin_stats().start_count == 1);
+    assert(plugin_stats().stop_count == 1);
+    assert(status_of(statuses, "plugin_ctrl").state == ComponentState::Stopped);
+    assert(status_of(statuses, "runtime-hold").state == ComponentState::Ready);
+
+    // A failing on_start ends the run (stop_on_error defaults to true) ...
+    auto failing = make_runtime(plugin_definition("fail_on_start 1\n"), plant);
+    assert(throws_with([&] { (void)failing->start(); }, "injected start failure"));
+    // ... and a failing on_stop too, after every controller was stopped.
+    failing = make_runtime(plugin_definition("fail_on_stop 1\n"), plant);
+    (void)failing->start();
+    assert(throws_with([&] { (void)failing->stop(); }, "injected stop failure"));
+    assert(plugin_stats().stop_count == 1);
+
+    // With stop_on_error false the failure is only a status.
+    auto definition = plugin_definition("fail_on_start 1\n");
+    definition.plugin_controllers.front().stop_on_error = false;
+    auto tolerant = make_runtime(definition, plant);
+    statuses = tolerant->start();
+    assert(status_of(statuses, "plugin_ctrl").state == ComponentState::Error);
+    assert(status_of(statuses, "plugin_ctrl").detail.find("injected start failure")
+        != std::string::npos);
+}
+
+void test_stop_on_error()
+{
+    std::cout << "stop_on_error" << std::endl;
+    // Default: the plugin's failing 2nd update ends the run before physics.
+    auto plant = std::make_shared<RecordingPlant>();
+    auto runtime = make_runtime(plugin_definition("target 0.5 -0.25\nfail_on_update 2\n"), plant);
+    (void)runtime->step();
+    const auto time_before = plant->read_state().sample_time_usec;
+    assert(throws_with([&] { (void)runtime->step(); }, "plugin_ctrl failed at update"));
+    assert(plant->read_state().sample_time_usec == time_before);
+
+    // stop_on_error false: the step goes on, the Hold Controller takes over.
+    auto definition = plugin_definition("target 0.5 -0.25\nfail_on_update 2\n");
+    definition.plugin_controllers.front().stop_on_error = false;
+    runtime = make_runtime(definition, plant);
+    (void)runtime->step();
+    const auto report = runtime->step();
+    assert(status_of(report.controller_statuses, "plugin_ctrl").state == ComponentState::Error);
+    assert(report.arbitration.selected_control_id == "runtime-hold");
+
+    // A failed reset stays an error, also on a period step (the plugin is
+    // not called), until the next successful reset.
+    auto controller = make_controller("period_ns 10000000\nfail_on_reset 1\n");
+    assert(controller->error_stops_run());
+    assert(!make_controller("", {}, false)->error_stops_run());
+    controller = make_controller("period_ns 10000000\nfail_on_reset 1\n");
+    (void)controller->update(nullptr, make_state(0, 1.0, 2.0), make_context(0, false));
+    controller->reset(make_state(0, 1.0, 2.0));
+    auto output = controller->update(nullptr, make_state(step_usec, 1.0, 2.0),
+        make_context(1, false));
+    assert(output.status.state == ComponentState::Error);
+    output = controller->update(nullptr, make_state(5 * step_usec, 1.0, 2.0),
+        make_context(5, false));
+    assert(output.status.state == ComponentState::Error);
+    assert(output.status.detail.find("injected reset failure") != std::string::npos);
+    assert(plugin_stats().update_count == 1);
+    controller->reset(make_state(0, 1.0, 2.0));
+    output = controller->update(nullptr, make_state(0, 1.0, 2.0), make_context(0, false));
+    assert(output.status.state == ComponentState::Ready);
+    assert(plugin_stats().update_count == 2);
+    // In a Runtime the failed reset ends the run at the next step.
+    runtime = make_runtime(plugin_definition("fail_on_reset 1\n"), plant);
+    (void)runtime->step();
+    (void)runtime->reset(0);
+    assert(throws_with([&] { (void)runtime->step(); }, "injected reset failure"));
+}
+
+void test_pdus()
+{
+    std::cout << "sensor PDUs" << std::endl;
+    PluginPduChannels channels;
+    auto cloud = channels.add("lidar_scan", "sensor_msgs/PointCloud2");
+    auto wrench = channels.add("wrist_wrench", "geometry_msgs/WrenchStamped");
+    assert(channels.add("lidar_scan", "sensor_msgs/PointCloud2") == cloud);
+    assert(channels.find("missing") == nullptr);
+
+    // create gets the names and types, in the listed order.
+    auto controller = make_controller("period_ns 10000000\n", {cloud, wrench});
+    auto stats = plugin_stats();
+    assert(stats.pdu_channel_count == 2);
+    assert(std::string(stats.pdu_names[0]) == "lidar_scan");
+    assert(std::string(stats.pdu_types[0]) == "sensor_msgs/PointCloud2");
+    assert(std::string(stats.pdu_names[1]) == "wrist_wrench");
+    assert(std::string(stats.pdu_types[1]) == "geometry_msgs/WrenchStamped");
+
+    // No sample yet: nothing is passed.
+    (void)controller->update(nullptr, make_state(0, 1.0, 2.0), make_context(0, false));
+    assert(plugin_stats().last_pdu_count == 0);
+
+    // A wrench sample between two updates is passed once, with its time.
+    store_sample(*wrench, 0x11, 48, 2 * step_usec);
+    for (std::uint64_t step = 1; step < 5; ++step) {
+        (void)controller->update(nullptr, make_state(step * step_usec, 1.0, 2.0),
+            make_context(step, false));
+    }
+    assert(plugin_stats().update_count == 1);  // steps in between do not consume it
+    (void)controller->update(nullptr, make_state(5 * step_usec, 1.0, 2.0), make_context(5, false));
+    stats = plugin_stats();
+    assert(stats.last_pdu_count == 1);
+    assert(stats.last_pdu_channel[0] == 1);
+    assert(stats.last_pdu_size[0] == 48);
+    assert(stats.last_pdu_first_byte[0] == 0x11);
+    assert(stats.last_pdu_sample_time_ns[0] == 2 * step_ns);
+
+    // Unchanged: not passed again.
+    (void)controller->update(nullptr, make_state(10 * step_usec, 1.0, 2.0), make_context(10, false));
+    assert(plugin_stats().last_pdu_count == 0);
+
+    // Two wrench samples and one cloud between updates: the latest of each.
+    store_sample(*wrench, 0x12, 48, 11 * step_usec);
+    store_sample(*cloud, 0x21, 1000, 12 * step_usec);
+    store_sample(*wrench, 0x13, 48, 13 * step_usec);
+    (void)controller->update(nullptr, make_state(15 * step_usec, 1.0, 2.0), make_context(15, false));
+    stats = plugin_stats();
+    assert(stats.last_pdu_count == 2);
+    assert(stats.last_pdu_channel[0] == 0);
+    assert(stats.last_pdu_first_byte[0] == 0x21);
+    assert(stats.last_pdu_size[0] == 1000);
+    assert(stats.last_pdu_channel[1] == 1);
+    assert(stats.last_pdu_first_byte[1] == 0x13);
+    assert(stats.last_pdu_sample_time_ns[1] == 13 * step_ns);
+    assert(stats.total_pdu_count == 3);
+
+    // Reset: a sample from before the reset is not passed; the writer's
+    // reset clears the channel, a new sample is passed again.
+    store_sample(*cloud, 0x22, 1000, 16 * step_usec);
+    controller->reset(make_state(0, 1.0, 2.0));
+    cloud->clear();
+    (void)controller->update(nullptr, make_state(0, 1.0, 2.0), make_context(0, false));
+    assert(plugin_stats().last_pdu_count == 0);
+    store_sample(*cloud, 0x23, 1000, step_usec);
+    (void)controller->update(nullptr, make_state(5 * step_usec, 1.0, 2.0), make_context(5, false));
+    stats = plugin_stats();
+    assert(stats.last_pdu_count == 1);
+    assert(stats.last_pdu_first_byte[0] == 0x23);
+
+    // build_runtime: listed PDUs need channels from the application.
+    auto definition = plugin_definition("");
+    definition.plugin_controllers.front().pdu_names = {"lidar_scan"};
+    definition.plugin_controllers.front().pdu_types = {"sensor_msgs/PointCloud2"};
+    bool refused = false;
+    try {
+        (void)make_runtime(definition, std::make_shared<RecordingPlant>());
+    } catch (const std::invalid_argument& error) {
+        refused = std::string(error.what()).find("no PDU channel") != std::string::npos;
+    }
+    assert(refused);
+    const auto made = make_plugin_pdu_channels(definition);
+    assert(made.find("lidar_scan") != nullptr);
+    assert(made.find("lidar_scan")->pdu_type() == "sensor_msgs/PointCloud2");
+    auto runtime = make_runtime(definition, std::make_shared<RecordingPlant>(), &made);
+    store_sample(*made.find("lidar_scan"), 0x31, 64, 0);
+    (void)runtime->step();
+    assert(plugin_stats().last_pdu_count == 1);
+    assert(plugin_stats().last_pdu_first_byte[0] == 0x31);
+}
+
+void test_manifest_plugin_keys()
+{
+    std::cout << "manifest stop_on_error / pdus" << std::endl;
+    const auto dir = temp_dir() / "manifest_keys";
+    std::filesystem::create_directories(dir / "config");
+    std::filesystem::copy_file(
+        HOLD_TARGET_PLUGIN_PATH, dir / "config" / "libhold_target.so",
+        std::filesystem::copy_options::overwrite_existing);
+
+    auto load = [&](const std::string& config_text, RuntimeDefinition& definition,
+                    std::string& error) {
+        write_file("manifest_keys/config/plugin.json", config_text);
+        detail::RuntimeParseContext context;
+        context.base_path = dir;
+        context.components.push_back({
+            {"id", "plugin_ctrl"},
+            {"kind", "controller"},
+            {"type", "plugin"},
+            {"config", "config/plugin.json"},
+        });
+        definition = {};
+        definition.actuators = {position_actuator("joint_a"), position_actuator("joint_b")};
+        return detail::load_plugin_controller_definitions(context, definition, &error);
+    };
+
+    RuntimeDefinition definition;
+    std::string error;
+    assert(load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"]})",
+        definition, error));
+    assert(definition.plugin_controllers.front().stop_on_error);
+    assert(definition.plugin_controllers.front().pdu_names.empty());
+    assert(load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"],
+                    "stop_on_error": false, "pdus": []})", definition, error));
+    assert(!definition.plugin_controllers.front().stop_on_error);
+    assert(!load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"],
+                     "stop_on_error": "no"})", definition, error));
+    assert(!load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"],
+                     "pdus": "lidar_scan"})", definition, error));
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    assert(load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"],
+                    "pdus": ["lidar_scan", "wrist_wrench"]})", definition, error));
+    assert((definition.plugin_controllers.front().pdu_names
+        == std::vector<std::string> {"lidar_scan", "wrist_wrench"}));
+    assert(!load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"],
+                     "pdus": ["lidar_scan", "lidar_scan"]})", definition, error));
+
+    // Types come from the sensor outputs that write the PDUs.
+    auto output = [](const std::string& pdu_name, const std::string& type) {
+        RuntimeSensorOutputConfig config;
+        config.component_id = pdu_name + "_output";
+        config.pdu_robot = "so101";
+        config.pdu_name = pdu_name;
+        config.message_type = type;
+        return config;
+    };
+    assert(load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"],
+                    "pdus": ["lidar_scan", "wrist_wrench"]})", definition, error));
+    definition.sensor_outputs = {
+        output("wrist_wrench", "geometry_msgs/WrenchStamped"),
+        output("lidar_scan", "sensor_msgs/PointCloud2"),
+        output("imu", "sensor_msgs/Imu"),
+    };
+    assert(detail::resolve_plugin_controller_pdus(definition, &error));
+    assert((definition.plugin_controllers.front().pdu_types
+        == std::vector<std::string> {"sensor_msgs/PointCloud2", "geometry_msgs/WrenchStamped"}));
+
+    definition.plugin_controllers.front().pdu_names = {"camera"};
+    assert(!detail::resolve_plugin_controller_pdus(definition, &error));
+    assert(error.find("no sensor output writes PDU camera") != std::string::npos);
+    definition.plugin_controllers.front().pdu_names = {"imu"};
+    assert(!detail::resolve_plugin_controller_pdus(definition, &error));
+    assert(error.find("sensor_msgs/Imu") != std::string::npos);
+#else
+    // Without the sensor build a plugin cannot list sensor PDUs.
+    assert(!load(R"({"plugin": {"path": "libhold_target.so"}, "joints": ["joint_a"],
+                     "pdus": ["lidar_scan"]})", definition, error));
+    assert(error.find("without sensor support") != std::string::npos);
+#endif
+}
+
 } // namespace
 
 int main()
@@ -464,6 +811,10 @@ int main()
     test_errors();
     test_manifest_loader();
     test_build_runtime();
+    test_start_stop_events();
+    test_stop_on_error();
+    test_pdus();
+    test_manifest_plugin_keys();
     std::cout << "test_controller_plugin: all checks passed" << std::endl;
     return 0;
 }

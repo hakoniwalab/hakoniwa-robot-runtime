@@ -2,7 +2,7 @@
  * Robot Runtime controller plugin interface (C).
  *
  * A controller plugin takes over the control flow of a set of joints: it
- * receives the joint states (and, later, new sensor PDUs) and returns joint
+ * receives the joint states (and the new sensor PDUs) and returns joint
  * commands. Robot Runtime calls it as one controller of its existing step,
  * next to the built-in controllers; its commands compete in the priority
  * arbitration like theirs.
