@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- SO-101 with ros2_control inside the Robot Runtime (the controller plugin,
+     docs/design-controller-plugin.md): the hardware interface is
+     HakoniwaPluginSystem, which exchanges joint values with the Robot Runtime
+     through the plugin in simulation time (no PDU, no Hakoniwa asset). The arm's
+     own URDF is included unchanged (argument so101_urdf). The joint names must be
+     the Robot Runtime's actuator IDs of the plugin component. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="so101">
+  <xacro:arg name="so101_urdf" default=""/>
+  <xacro:include filename="$(arg so101_urdf)"/>
+
+  <xacro:macro name="plugin_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="so101_plugin" type="system">
+    <hardware>
+      <plugin>hakoniwa_ros2_control/HakoniwaPluginSystem</plugin>
+    </hardware>
+    <xacro:plugin_joint name="shoulder_pan"/>
+    <xacro:plugin_joint name="shoulder_lift"/>
+    <xacro:plugin_joint name="elbow_flex"/>
+    <xacro:plugin_joint name="wrist_flex"/>
+    <xacro:plugin_joint name="wrist_roll"/>
+    <xacro:plugin_joint name="gripper"/>
+  </ros2_control>
+</robot>
