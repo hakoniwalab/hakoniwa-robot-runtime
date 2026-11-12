@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "description": "Sensor implementations and the keys of the common sensor definition file each one supports. A key path covers its subtree; the top-level \"type\" and \"$schema\" are always allowed. A definition that uses a key not listed here for the chosen implementation is rejected at start-up.",
+  "implementations": {
+    "hakoniwa": {
+      "sensors": {
+        "force_torque": {
+          "keys": [
+            "update_rate", "range", "overload", "delay", "lowpass_cutoff_hz",
+            "nonlinearity", "scale_error", "crosstalk", "bias", "drift_per_hour",
+            "noise", "resolution", "tare_window"
+          ]
+        },
+        "joint": {
+          "keys": ["update_rate", "delay", "encoder", "velocity", "torque"]
+        },
+        "imu": {
+          "keys": ["components.sensors.imu", "components.sensors.gyro", "components.sensors.acc"]
+        },
+        "lidar": {
+          "keys": ["update_rate", "scan_mode", "scan", "range", "no_return", "accuracy"]
+        },
+        "rangefinder": {
+          "keys": ["update_rate", "radiation_type", "cone", "range", "no_return", "accuracy"]
+        },
+        "mag": {
+          "keys": ["components.sensors.mag", "components.sensors.imu.mount"]
+        },
+        "baro": {
+          "keys": ["components.sensors.baro"]
+        },
+        "gps": {
+          "keys": ["components.sensors.gps"]
+        },
+        "depth_camera": {
+          "keys": ["update_rate", "method", "image", "horizontal_fov", "depth_type", "clip", "range", "no_return", "accuracy"]
+        },
+        "rgb_camera": {
+          "keys": ["update_rate", "image", "horizontal_fov", "clip", "noise", "cameras", "output"]
+        }
+      }
+    },
+    "gazebo": {
+      "sensors": {
+        "joint": {
+          "keys": ["update_rate"]
+        },
+        "force_torque": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.force_torque"]
+        },
+        "imu": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.imu"]
+        },
+        "mag": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.magnetometer"]
+        },
+        "baro": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.air_pressure"]
+        },
+        "gps": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.navsat"]
+        }
+      }
+    },
+    "airsim": {
+      "sensors": {
+        "imu": {
+          "keys": ["id", "update-rate-hz", "min-sample-time", "accelerometer", "gyroscope"]
+        },
+        "mag": {
+          "keys": ["id", "update-rate-hz", "scale-factor", "noise-sigma", "noise-bias"]
+        },
+        "baro": {
+          "keys": [
+            "id", "qnh", "pressure_factor_sigma", "pressure-factor-tau",
+            "uncorrelated_noise_sigma", "update-frequency", "update-latency", "startup-delay"
+          ]
+        },
+        "gps": {
+          "keys": [
+            "id", "update-rate-hz", "eph-time-constant", "epv-time-constant", "eph-initial",
+            "epv-initial", "eph-final", "epv-final", "eph-min-3d", "eph-min-2d"
+          ]
+        }
+      }
+    }
+  }
+}

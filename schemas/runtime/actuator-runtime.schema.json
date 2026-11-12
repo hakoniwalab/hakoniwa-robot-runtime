@@ -7,6 +7,58 @@
   "required": ["actuators"],
   "properties": {
     "$schema": { "type": "string" },
+    "sensors": {
+      "description": "Sensors (opt-in build only): the random seed, and where the simulated world is on the earth. The MuJoCo world axes are NWU (x north, y west, z up) from origin.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {
+          "description": "Random seed of every sensor; each sensor's stream is derived from it with the robot and sensor names.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "world": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "origin": {
+              "description": "WGS-84 position of the world origin. Required by GPS receivers and barometers.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["latitude_deg", "longitude_deg", "altitude_m"],
+              "properties": {
+                "latitude_deg": { "type": "number", "minimum": -90, "maximum": 90 },
+                "longitude_deg": { "type": "number", "minimum": -180, "maximum": 180 },
+                "altitude_m": {
+                  "description": "Height of the origin above sea level [m]; without a geoid model it is also used as the height above the ellipsoid.",
+                  "type": "number"
+                }
+              }
+            },
+            "magnetic_field": {
+              "description": "Earth magnetic field at the world. Required by magnetometers.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["intensity_nT", "declination_deg", "inclination_deg"],
+              "properties": {
+                "intensity_nT": { "type": "number", "exclusiveMinimum": 0 },
+                "declination_deg": { "description": "Positive east of true north.", "type": "number" },
+                "inclination_deg": { "description": "Positive downward.", "type": "number" }
+              }
+            },
+            "atmosphere": {
+              "description": "Weather at sea level for barometers; the standard atmosphere when omitted.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "sea_level_pressure_pa": { "type": "number", "exclusiveMinimum": 0, "default": 101325 },
+                "sea_level_temperature_c": { "type": "number", "default": 15 }
+              }
+            }
+          }
+        }
+      }
+    },
     "initial_body_poses": {
       "type": "array",
       "items": {

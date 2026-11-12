@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <memory>
 #include <vector>
 
 namespace hakoniwa::robot_runtime::runtime {
@@ -146,12 +148,151 @@ struct BodyState {
 };
 
 /** Physical-state snapshot observed at the Plant's `sample_time_usec`. */
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+/**
+ * Latest measured value of one sensor, held between its samples.
+ * Joint sensors: position, velocity and, when configured, the joint torque.
+ * Force-torque sensors: the wrench. IMUs: angular velocity and specific force.
+ */
+/** One returned LiDAR point, sensor axes at the time it was measured. */
+struct LidarPointReading {
+    float x {0.0F};
+    float y {0.0F};
+    float z {0.0F};
+    float intensity {0.0F};
+    std::uint16_t ring {0};          ///< vertical row, 0 = lowest
+    float time_offset {0.0F};        ///< since the start of the scan [s]
+};
+
+/**
+ * One complete LiDAR scan (2D or 3D), shaped like sensor_msgs/LaserScan plus
+ * PointCloud2. Grids are row-major, one row per vertical sample (lowest
+ * first); a 2D LiDAR has vertical_count 1.
+ */
+struct LidarScanReading {
+    double angle_min {0.0};          ///< [rad], 0 = forward, positive to the left
+    double angle_max {0.0};
+    double angle_increment {0.0};
+    double vertical_angle_min {0.0}; ///< [rad] from the sensor xy plane, positive up
+    double vertical_angle_max {0.0};
+    double vertical_angle_increment {0.0};
+    std::uint32_t horizontal_count {0};
+    std::uint32_t vertical_count {0};
+    double time_increment {0.0};     ///< between two rays [s]
+    double scan_time {0.0};          ///< between two scans [s]
+    double range_min {0.0};          ///< [m]
+    double range_max {0.0};
+    std::vector<float> ranges;       ///< [m], REP 117 (+inf/-inf outside the range)
+    std::vector<float> intensities;
+    std::vector<LidarPointReading> points;  ///< returned points (finite ranges)
+};
+
+/** One measured range, shaped like sensor_msgs/Range. */
+struct RangeReading {
+    std::uint8_t radiation_type {2};  ///< 0 ultrasound, 1 infrared, 2 laser
+    double field_of_view {0.0};       ///< full cone angle [rad]
+    double min_range {0.0};           ///< [m]
+    double max_range {0.0};
+    double range {0.0};               ///< [m], REP 117 outside the range
+    double variance {0.0};            ///< [m^2], 0 when unknown
+};
+
+/** Camera model, shaped like sensor_msgs/CameraInfo (optical frame). */
+struct CameraInfoReading {
+    std::uint32_t width {0};
+    std::uint32_t height {0};
+    std::string distortion_model;    ///< empty without distortion
+    std::vector<double> d;
+    std::array<double, 9> k {};
+    std::array<double, 9> r {};
+    std::array<double, 12> p {};
+};
+
+/** One depth image, shaped like sensor_msgs/Image (32FC1, metres). */
+struct DepthImageReading {
+    std::uint32_t width {0};
+    std::uint32_t height {0};
+    bool planar {true};              ///< distance from the camera plane, else along the ray
+    std::vector<float> depths;       ///< width * height, rows from the top; REP 117 outside the range
+    CameraInfoReading info;
+};
+
+/** One camera's colour image of an RGB rig, shaped like sensor_msgs/Image (rgb8). */
+struct RgbCameraImageReading {
+    std::string camera_name;         ///< "" for a single camera
+    std::uint32_t width {0};
+    std::uint32_t height {0};
+    std::vector<std::uint8_t> rgb;   ///< rgb8, rows from the top
+    CameraInfoReading info;
+};
+
+/** The images of one RGB camera rig (1..N cameras) for one step. */
+struct RgbImagesReading {
+    std::vector<RgbCameraImageReading> cameras;
+};
+
+/** One GPS fix, shaped like sensor_msgs/NavSatFix (WGS-84). */
+struct GpsFixReading {
+    double latitude_deg {0.0};
+    double longitude_deg {0.0};
+    double altitude_m {0.0};
+    std::array<double, 3> velocity_nwu {0.0, 0.0, 0.0};  ///< [m/s]
+    double horizontal_accuracy_m {0.0};  ///< 0 when the receiver does not report it
+    double vertical_accuracy_m {0.0};
+    std::uint32_t fix_type {0};          ///< 0 no fix, 2 2D, 3 3D
+};
+
+struct SensorReading {
+    std::string sensor_name;
+    std::string mount_name;          ///< MJCF joint or body the sensor is mounted on
+    bool has_sample {false};         ///< false until the first sample
+    bool updated {false};            ///< a new sample was taken in this step
+    std::uint64_t sample_time_usec {0};
+    double position {0.0};
+    double velocity {0.0};
+    bool has_effort {false};         ///< the sensor measures the joint torque
+    double effort {0.0};             ///< measured joint torque [N m]
+    /// Force-torque sensors: the measured wrench in the sensor axes, torque
+    /// about the sensor origin (what the tool side exerts on the robot side).
+    bool has_wrench {false};
+    std::array<double, 3> force {0.0, 0.0, 0.0};   ///< [N]
+    std::array<double, 3> torque {0.0, 0.0, 0.0};  ///< [N m]
+    /// IMUs: the latest gyroscope and accelerometer values, sensor axes.
+    bool has_imu {false};
+    std::array<double, 3> angular_velocity {0.0, 0.0, 0.0};     ///< [rad/s]
+    std::array<double, 3> linear_acceleration {0.0, 0.0, 0.0};  ///< specific force [m/s^2]
+    /// LiDARs: the latest complete scan, shared and never changed (a new
+    /// scan replaces it), so copying a reading every step stays cheap.
+    std::shared_ptr<const LidarScanReading> scan;
+    /// Rangefinders: the latest measured range.
+    bool has_range {false};
+    RangeReading range;
+    /// Magnetometers: the latest measured field [nT], sensor axes.
+    bool has_magnetic_field {false};
+    std::array<double, 3> magnetic_field_nT {0.0, 0.0, 0.0};
+    /// Barometers: the latest measured static pressure [Pa].
+    bool has_pressure {false};
+    double pressure_pa {0.0};
+    /// RGB camera rigs: the latest images of all cameras, shared and never changed.
+    std::shared_ptr<const RgbImagesReading> rgb_images;
+    /// Depth cameras: the latest image, shared and never changed.
+    std::shared_ptr<const DepthImageReading> depth_image;
+    /// GPS receivers: the latest fix.
+    bool has_fix {false};
+    GpsFixReading fix;
+};
+#endif
+
 struct RobotState {
     std::vector<ActuatorState> actuators;
     std::uint64_t sample_time_usec {0};
     std::vector<BodyState> bodies;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<MirrorContactState> mirror_contacts;
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    /** Filled by the sensor stage after the physics step. */
+    std::vector<SensorReading> sensor_readings;
 #endif
 };
 

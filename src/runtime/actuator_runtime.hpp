@@ -4,6 +4,9 @@
 #include "runtime/controller/controller.hpp"
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/publisher/state_publisher.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+#include "runtime/sensor/sensor_stage.hpp"
+#endif
 #include "runtime/source/command_source.hpp"
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 #include "runtime/controller/directive_controller.hpp"
@@ -64,6 +67,17 @@ public:
      * Resets component/physical state and sets the Plant's actual simulation time.
      * Hakoniwa Core reset uses zero; local Viewer reset can preserve Asset time.
      */
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    /**
+     * Attaches the sensor stage and the publishers of its outputs. The stage
+     * runs after every Plant step; the publishers run with the other outputs.
+     * Call once, before the first step.
+     */
+    void attach_sensors(
+        std::shared_ptr<ISensorStage> stage,
+        std::vector<std::shared_ptr<IStatePublisher>> publishers);
+#endif
+
     [[nodiscard]] RobotState reset(std::uint64_t simulation_time_usec = 0);
 
 private:
@@ -109,6 +123,9 @@ private:
     std::vector<std::shared_ptr<IStatePublisher>> publishers_;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<std::shared_ptr<IDirectiveController>> directive_controllers_;
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    std::shared_ptr<ISensorStage> sensor_stage_;
 #endif
     std::optional<std::string> previous_selected_control_id_;
     std::vector<ActuatorCommand> previous_selected_commands_;

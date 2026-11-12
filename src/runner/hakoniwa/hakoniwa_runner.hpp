@@ -72,6 +72,8 @@ public:
     [[nodiscard]] mjModel* model() noexcept override;
     [[nodiscard]] mjData* data() noexcept override;
     [[nodiscard]] std::mutex& model_mutex() noexcept override;
+    [[nodiscard]] mjData* view_data() noexcept override;
+    [[nodiscard]] std::mutex& view_mutex() noexcept override;
     [[nodiscard]] std::atomic_bool& running() noexcept override;
 
 private:

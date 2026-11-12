@@ -69,6 +69,13 @@ struct RuntimeParseContext {
     RuntimeParseContext& context,
     RuntimeDefinition& definition,
     std::string* error);
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+/** Sensor components and outputs (runtime_factory_sensor.cpp). */
+[[nodiscard]] bool load_sensor_definitions(
+    RuntimeParseContext& context,
+    RuntimeDefinition& definition,
+    std::string* error);
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 [[nodiscard]] bool load_mirror_definitions(
     RuntimeParseContext& context,

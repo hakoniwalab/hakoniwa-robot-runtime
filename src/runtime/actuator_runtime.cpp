@@ -291,12 +291,19 @@ RuntimeStepReport ActuatorRuntime::step(const bool publish)
 
     // 6. Apply Plant Directives (opt-in), guard and apply the selected
     // commands, then advance MuJoCo one step.
-    const auto next_state = step_plant(
+    auto next_state = step_plant(
         report.arbitration.selected_commands
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         , report.plant_directives
 #endif
         );
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    // 6b. Measure: the sensor stage reads the truth of this physics step.
+    if (sensor_stage_ != nullptr) {
+        sensor_stage_->step(next_state);
+    }
+#endif
 
     // 7. Carry selection feedback forward. The next time comes from Plant state.
     report.next_step = complete_step(next_state, report.arbitration);
@@ -308,6 +315,32 @@ RuntimeStepReport ActuatorRuntime::step(const bool publish)
 
     return report;
 }
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+void ActuatorRuntime::attach_sensors(
+    std::shared_ptr<ISensorStage> stage,
+    std::vector<std::shared_ptr<IStatePublisher>> publishers)
+{
+    if (sensor_stage_ != nullptr) {
+        throw std::logic_error("sensors are already attached");
+    }
+    require_non_null(stage, "sensor stage");
+    std::unordered_set<std::string_view> ids;
+    for (const auto& publisher : publishers_) {
+        ids.emplace(publisher->id());
+    }
+    for (const auto& publisher : publishers) {
+        require_non_null(publisher, "sensor publisher");
+        if (publisher->id().empty() || !ids.emplace(publisher->id()).second) {
+            throw std::invalid_argument("publisher IDs must be non-empty and unique");
+        }
+    }
+    sensor_stage_ = std::move(stage);
+    for (auto& publisher : publishers) {
+        publishers_.push_back(std::move(publisher));
+    }
+}
+#endif
 
 RobotState ActuatorRuntime::reset(const std::uint64_t simulation_time_usec)
 {
@@ -328,6 +361,11 @@ RobotState ActuatorRuntime::reset(const std::uint64_t simulation_time_usec)
     for (const auto& publisher : publishers_) {
         publisher->reset();
     }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    if (sensor_stage_ != nullptr) {
+        sensor_stage_->reset();
+    }
+#endif
     return state;
 }
 

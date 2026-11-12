@@ -6,7 +6,16 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #endif
 
+#include <array>
 #include <memory>
+#include <string>
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+namespace hakoniwa::sensor_adapter {
+class IRayCaster;
+class IImageRenderer;
+}
+#endif
 
 struct mjData_;
 struct mjModel_;
@@ -40,6 +49,22 @@ public:
     /** Non-owning handles for presentation adapters such as the Viewer. */
     [[nodiscard]] mjModel* model() noexcept;
     [[nodiscard]] mjData* data() noexcept;
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    /**
+     * Creates a ray caster from the world for range sensors, mounted on
+     * mount_body (pose in the body frame, quaternion w, x, y, z). Rays never
+     * hit the subtree of exclude_root_body (empty: the mount body).
+     * Throws std::invalid_argument for an unknown body.
+     */
+    [[nodiscard]] std::shared_ptr<::hakoniwa::sensor_adapter::IRayCaster> create_ray_caster(
+        const std::string& mount_body,
+        const std::array<double, 3>& position_m,
+        const std::array<double, 4>& orientation_wxyz,
+        const std::string& exclude_root_body);
+    /** The world's image renderer for camera sensors (see IWorld::createImageRenderer). */
+    [[nodiscard]] std::shared_ptr<::hakoniwa::sensor_adapter::IImageRenderer> create_image_renderer();
+#endif
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
     /** Binds one `<person>/...` hakoniwa_person model to PersonStep. */
