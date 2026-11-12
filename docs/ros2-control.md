@@ -142,6 +142,11 @@ usleep ：箱庭の時間を 1 刻み進める（世界の時刻に追いつく�
 - URDF の `<ros2_control>` に、関節名、指令の種類（最初は位置）、トピック名を書きます。
 - controller_manager の周期は、Robot Runtime が指令を受け取る周期（アクチュエータの設定の `update_rate_hz`）以下にします。指令の期限（`command_timeout_sec`）が、その周期と通信の遅れより長いことも確かめます。
 
+実装は [`ros2/hakoniwa_ros2_control`](../ros2/hakoniwa_ros2_control/README.md) にあります。
+
+- 有効にするときは、関節の状態を待ちません。有効にする処理は controller_manager の受信の処理の中で呼ばれるので、その間は自分の購読が回らないからです。状態と指令は値なし（NaN）で始め、値なしの指令は出しません。
+- ROS 2 のドメインは、箱庭 ROS 2 Bridge の環境（`activate.bash`、`ROS_DOMAIN_ID=73`）にそろえます。
+
 ## 7. ROS 2 のイメージ
 
 ホスト ＋ Docker の構成の ROS 2 の側は、[`ros2/docker/Dockerfile.jazzy`](../ros2/docker/Dockerfile.jazzy) のイメージで動かします。
@@ -157,6 +162,6 @@ usleep ：箱庭の時間を 1 刻み進める（世界の時刻に追いつく�
 1. 箱庭アセットから指令の PDU を書き、関節が動くこと（macOS のホスト、共有メモリ）。済み（4 章）。
 2. Docker の中で箱庭 ROS 2 Bridge をビルドし、ホストの TCP Bridge につないで、`/pdu/joint_states` が届くこと。済み。
 3. Docker から `/actuator/<joint>/command` に出した指令で、関節が動くこと。済み（4.1）。
-4. `HakoniwaSystem` と joint_trajectory_controller で、軌道を送るとアームが位置制御で動くこと。
+4. `HakoniwaSystem` と joint_trajectory_controller で、軌道を送るとアームが位置制御で動くこと。済み（手順は [ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md)）。
 5. MoveIt 2 から動かすこと。
 6. Ubuntu（同じマシン、Bridge が共有メモリ）で同じことを確かめること。

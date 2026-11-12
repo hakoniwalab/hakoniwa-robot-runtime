@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!-- SO-101 with ros2_control on the Hakoniwa robot. The arm's own URDF is
+     included unchanged (argument so101_urdf); this file only adds the
+     <ros2_control> description with HakoniwaSystem as the hardware. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="so101">
+  <xacro:arg name="so101_urdf" default=""/>
+  <xacro:include filename="$(arg so101_urdf)"/>
+
+  <xacro:macro name="hakoniwa_joint" params="name">
+    <joint name="${name}">
+      <param name="command_topic">/actuator/${name}/command</param>
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="so101_hakoniwa" type="system">
+    <hardware>
+      <plugin>hakoniwa_ros2_control/HakoniwaSystem</plugin>
+      <param name="state_topic">/pdu/joint_states</param>
+    </hardware>
+    <xacro:hakoniwa_joint name="shoulder_pan"/>
+    <xacro:hakoniwa_joint name="shoulder_lift"/>
+    <xacro:hakoniwa_joint name="elbow_flex"/>
+    <xacro:hakoniwa_joint name="wrist_flex"/>
+    <xacro:hakoniwa_joint name="wrist_roll"/>
+    <xacro:hakoniwa_joint name="gripper"/>
+  </ros2_control>
+</robot>
