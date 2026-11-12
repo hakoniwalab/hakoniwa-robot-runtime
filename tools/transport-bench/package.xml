@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>hakoniwa_transport_bench</name>
+  <version>0.1.0</version>
+  <description>One test driver, two transports: ROS 2 messages and Hakoniwa PDU in shared memory</description>
+  <maintainer email="dev@hakoniwa-lab.net">Hakoniwa Lab</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
