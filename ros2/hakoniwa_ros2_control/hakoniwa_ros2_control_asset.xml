@@ -1,0 +1,7 @@
+<library path="hakoniwa_ros2_control_asset">
+  <class name="hakoniwa_ros2_control/HakoniwaAssetSystem"
+         type="hakoniwa_ros2_control::HakoniwaAssetSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>Hakoniwa robot with ros2_control itself as a Hakoniwa asset: reads the joint states PDU and writes one std_msgs/Float64 command PDU per joint in shared memory (ROS 2 and Hakoniwa on the same Linux).</description>
+  </class>
+</library>

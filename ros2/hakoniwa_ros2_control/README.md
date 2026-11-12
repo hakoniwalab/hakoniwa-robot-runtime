@@ -5,7 +5,8 @@ ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です
 - `HakoniwaSystem` は ROS 2 のトピックだけを読み書きします。箱庭の PDU との変換は、箱庭 ROS 2 Bridge（hakoniwa_pdu_ros）が行います。
   - `read()`：`/pdu/joint_states` の最新の値を、関節ごとの State Interface（position、velocity）に入れます。
   - `write()`：関節ごとの Command Interface の値を、`/actuator/<joint>/command`（`std_msgs/Float64`）に出します。
-- 関節の状態が届く前は、状態も指令も値なし（NaN）です。値なしの指令は出さないので、起動の直後にロボットが勝手に動くことはありません。
+- 有効にするときに最初の関節の状態を待ち、その位置を指令の初めの値にします。起動の直後にロボットが勝手に動くことはありません。
+- ROS 2 と箱庭が同じ Linux で動くとき（Docker だけ、Ubuntu）は、別のプラグイン `HakoniwaAssetSystem` も使えます。ros2_control 自身が箱庭アセットになり、関節の PDU を共有メモリで読み書きし、センサー（`/pdu/<PDU 名>`）と `/clock` も出します。箱庭 ROS 2 Bridge は使いません（[Docker だけで動かす](#docker-だけで動かすhakoniwaassetsystem)）。
 
 | ファイル | 中身 |
 |---|---|
@@ -15,6 +16,10 @@ ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です
 | `config/so101/moveit/` | MoveIt の設定：SRDF（`arm`・`gripper` のグループ）、逆運動学（KDL）、関節の速度・加速度の上限、実行先のコントローラ |
 | `launch/so101.launch.py` | robot_state_publisher、controller_manager、3 つのコントローラの起動。`moveit:=true` で move_group も起動する |
 | `scripts/move_to_joints.py` | MoveIt（move_group）に関節の目標を渡し、計画と実行を頼む |
+| `asset_link/` | `HakoniwaAssetSystem`（`-DHAKONIWA_ROS2_CONTROL_WITH_ASSET=ON` のときだけ作る）と、その箱庭側の部品 `HakoniwaAssetLink`（ROS 2 に依存しない）、単体で確かめる試験プログラム `hakoniwa_asset_link_probe` |
+| `config/so101/so101_asset.urdf.xacro`、`launch/so101_asset.launch.py` | `HakoniwaAssetSystem` を使う SO-101 の URDF と launch |
+| `config/so101/sensor_publish.json` | `HakoniwaAssetSystem` が出すセンサーと周期（PDU 名 → Hz） |
+| `config/so101/hakoniwa-launcher-docker-asset.json` | Docker だけの構成の箱庭ランチャ（Robot Runtime と ros2_control） |
 
 ## SO-101 を動かす（macOS のホスト ＋ Docker の ROS 2）
 
@@ -292,6 +297,117 @@ ros2 run hakoniwa_ros2_control pick_and_place.py --config /workspace/work-host/s
 
 1〜13 の全段が `OK` で終われば OK です。最後の行で、LiDAR の点が置いた場所に増えます。手順 1〜4 をくり返すと、物を見つけては運ぶことができます。
 
+## Docker だけで動かす（HakoniwaAssetSystem）
+
+Robot Runtime、箱庭、ROS 2 を 1 つの Docker コンテナ（Linux）で動かします。ros2_control の `HakoniwaAssetSystem` が箱庭アセットとして共有メモリを直接読み書きするので、箱庭 ROS 2 Bridge と TCP は使いません。
+
+```text
+Docker : Robot Runtime（SO-101、センサー付き）
+         ros2_control（HakoniwaAssetSystem：関節の PDU、センサー /pdu/lidar_scan・/pdu/wrist_wrench、/clock）＋ MoveIt 2
+```
+
+前提：
+
+- `hakoniwa-business-pack`、`hakoniwa-robot-arm`、`hakoniwa-robot-runtime`、`hakoniwa-mujoco-robots`、`hakoniwa-core-pro` が同じディレクトリに並んでいること。`hakoniwa-core-pro` は main であること（`HakoniwaAssetSystem` は `hako_asset_simulation_state()` を使います）。
+- センサーの実装ライブラリ（hakoniwa 実装。箱庭ラボから提供されます。[問い合わせ](https://hakoniwa-lab.net/contact/)）の `libhakoniwa_mujoco_sensors_adapters.a`（Linux、コンテナと同じ CPU アーキテクチャ）を、並べたディレクトリの `work-docker-jazzy/sensor-impl/` に置いてあること。
+- Docker Desktop が動いていること。
+
+### 1. ホスト：イメージを作り、コンテナに入る
+
+通常のホストの端末で、`hakoniwa-robot-arm` のリポジトリのルートから実行します。1 行目が Robot Arm の開発用イメージ、2 行目がそれに ros2_control と MoveIt 2 を足したイメージです。
+
+```bash
+bash docker/create-docker-image.bash jazzy
+docker build -t hakoniwa-ros2-control-asset:jazzy -f ../hakoniwa-robot-runtime/ros2/docker/Dockerfile.jazzy-asset ../hakoniwa-robot-runtime/ros2/docker
+IMAGE_NAME=hakoniwa-ros2-control-asset CONTAINER_NAME=hakoniwa-ros2-control-asset-jazzy HAKONIWA_DOCKER_GUI=off bash docker/run.bash jazzy
+```
+
+コンテナの端末（以下「端末 A」）が開けば OK です。この端末を閉じるとコンテナは消えます。
+
+### 2. 端末 A：Foundation と SO-101 の Robot Runtime（センサー付き）を作る
+
+```bash
+cd /workspace/hakoniwa-business-pack
+python3.12 tools/workspace.py run -- python tools/recipe.py configure --recipe ../hakoniwa-robot-arm/recipes/so101/so101-joint-trajectory-control.yaml
+python3.12 tools/workspace.py run -- python tools/recipe.py configure --recipe ../hakoniwa-robot-arm/recipes/so101/so101-model-forge.yaml
+export HAKO_ROBOT_ARM_SENSOR_LIBRARIES=/workspace/work-docker-jazzy/sensor-impl/libhakoniwa_mujoco_sensors_adapters.a
+python3.12 tools/workspace.py run -- bash -c "cd /workspace/hakoniwa-robot-arm && python tools/recipe/so101.py forge && python tools/recipe/so101.py configure --environment --sensors --realtime-sync-cycle-msec 2 && python tools/recipe/so101.py build --sensors && python tools/recipe/so101.py doctor"
+```
+
+doctor の全項目が `[OK]` なら OK です。
+
+- `--headless` は付けません。センサー付きの Robot Runtime はカメラの描画部品（GLFW）を含むため、画面ありの設定で作ります。画面は、ランチャの設定（`--no-viewer`）で出しません。
+- `hakoniwa-core-pro` を main に更新したあとで、以前に作った Foundation が残っているときは、作り直します：`python3.12 tools/workspace.py run -- python tools/foundation.py build --recipe ../hakoniwa-robot-arm/recipes/so101/so101-joint-trajectory-control.yaml --force hakoniwa-core-pro`
+
+### 3. 端末 A：hakoniwa_ros2_control を HakoniwaAssetSystem 付きで作る
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon --log-base /workspace/ros2-work-jazzy-asset/log build \
+  --base-paths /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control \
+  --build-base /workspace/ros2-work-jazzy-asset/build \
+  --install-base /workspace/ros2-work-jazzy-asset/install \
+  --packages-select hakoniwa_ros2_control \
+  --cmake-args -DHAKONIWA_ROS2_CONTROL_WITH_ASSET=ON \
+  -DCMAKE_PREFIX_PATH=/workspace/work-docker-jazzy/foundation/install -DCMAKE_BUILD_TYPE=Release
+ls /workspace/ros2-work-jazzy-asset/install/hakoniwa_ros2_control/lib/libhakoniwa_ros2_control_asset.so
+```
+
+colcon の summary に `1 package finished` が出て、`libhakoniwa_ros2_control_asset.so` が表示されれば OK です。
+
+### 4. 端末 A：箱庭のランチャで起動する
+
+Robot Runtime と ros2_control（MoveIt、センサー付き）を、箱庭のシミュレーションを始める前に起動します。`HakoniwaAssetSystem` は、シミュレーションが止まっている間しか箱庭アセットとして登録できないためです。
+
+```bash
+mkdir -p /workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control/logs
+/workspace/work-docker-jazzy/foundation/install/python/bin/python -m hakoniwa_pdu.apps.launcher.hako_launcher /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/so101/hakoniwa-launcher-docker-asset.json
+```
+
+終了せずに動き続ければ OK です。ros2_control と MoveIt のログは `/workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control/logs/ros2-control.out` に出ます。この端末は開いたままにします。
+
+### 5. 端末 B：起動を確かめる
+
+通常のホストの端末で、`hakoniwa-robot-arm` のリポジトリのルートから、コンテナに 2 つ目の端末（端末 B）を開きます。
+
+```bash
+CONTAINER_NAME=hakoniwa-ros2-control-asset-jazzy bash docker/attach.bash jazzy
+```
+
+端末 B で実行します。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /workspace/ros2-work-jazzy-asset/install/setup.bash
+ros2 control list_controllers
+ros2 topic hz /pdu/lidar_scan
+```
+
+3 つのコントローラが `active` で、`/pdu/lidar_scan` が `average rate: 2.0` 前後なら OK です（Ctrl+C で止めます）。
+
+### 6. 端末 B：点群から物を見つけて、掴んで置く
+
+```bash
+ros2 run hakoniwa_ros2_control add_grasp_object.py --id table --position 0 0 -0.03 --size 2.4 2.4 0.06
+ros2 service call /clear_octomap std_srvs/srv/Empty "{}"
+ros2 run hakoniwa_ros2_control move_to_joints.py --group arm --joints shoulder_pan=-1.5 shoulder_lift=0 elbow_flex=0 wrist_flex=0 wrist_roll=0
+ros2 run hakoniwa_ros2_control detect_objects.py
+```
+
+`added table: OK`、`MoveIt error code 1 (SUCCESS)` に続いて、`1 objects` と `object_0: ... centre [0.28, 0.0, 0.015]` 程度が出れば OK です。`centre` の x と y を次の `--pick` に入れます（次は (0.28, 0.0) の例）。
+
+```bash
+cd /workspace/hakoniwa-robot-arm
+python3 tools/recipe/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --model /workspace/work-docker-jazzy/model-forge/so101/install/so101.environment.xml --output /workspace/work-docker-jazzy/so101_pick_and_place.yaml
+ros2 run hakoniwa_ros2_control pick_and_place.py --config /workspace/work-docker-jazzy/so101_pick_and_place.yaml
+```
+
+4 つの姿勢の `error` が数 mm 以内で、1〜13 の全段が `OK` で終われば OK です。もう一度、腕をよけて `detect_objects.py` を実行すると、物が (0.20, -0.20) 付近に見つかります。
+
+### 7. 終了する
+
+端末 A のランチャを Ctrl+C で止めます。端末 A で `exit` するとコンテナが消えます。作ったもの（`work-docker-jazzy`、`ros2-work-jazzy-asset`）は、並べたディレクトリに残ります。
+
 ## 確認した環境
 
 macOS（Apple Silicon）、Docker Desktop、ROS 2 Jazzy（arm64）、SO-101。
@@ -304,3 +420,12 @@ macOS（Apple Silicon）、Docker Desktop、ROS 2 Jazzy（arm64）、SO-101。
 | 点群から見つけて掴んで置く（物を (0.20, -0.20) に置いたあと） | 見つけた中心 (0.203, -0.193)、17 点。そこから掴んで (0.28, 0) に戻し、13 段すべて OK。持ち上げたときの力の変化 0.295 N |
 | 掴んで置く（センサー付き、作業台を初めに戻して 1 回で） | 13 段すべて OK、約 62 秒。持ち上げたときの力の変化 0.294 N（物の重さ 0.294 N）、離したあと 0.018 N。LiDAR の点は掴む場所 3 → 0、置く場所 0 → 1 |
 | TCP Bridge で捨てられた指令 | 0 回 |
+
+Docker だけの構成（`HakoniwaAssetSystem`、macOS の Docker Desktop、Linux arm64）：
+
+| 確認 | 結果 |
+|---|---|
+| 軌道（arm_controller、9 秒で 3 点） | `SUCCEEDED`。別のアセットが共有メモリから読んだ関節と、3 点との差は最大 0.007 rad |
+| センサーと `/clock` | `/pdu/lidar_scan` 2.00 Hz（11,520 点）、`/pdu/wrist_wrench` 49.97 Hz、`/clock` 約 500 Hz |
+| 点群から見つけて掴んで置く | 見つけた中心 (0.28, 0.0, 0.015)。13 段すべて OK。持ち上げたときの力の変化 0.295 N（物の重さ 0.294 N）、離したあと 0.019 N。もう一度見つけた中心 (0.203, -0.194)、17 点 |
+| 箱庭の時間の進み | 78.4 秒で 78.4 秒（実時間合わせ 2 ms のもとで実時間の 1.000 倍）。CPU は Robot Runtime 107 %、ros2_control 12 %、move_group 35 % |

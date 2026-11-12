@@ -5,7 +5,9 @@ ROS 2 の ros2_control の標準のコントローラ（joint_trajectory_control
 ## 1. 方針
 
 - ROS 2 の側に、ros2_control のハードウェア（`hardware_interface::SystemInterface`）として `HakoniwaSystem` を置きます。
-- `HakoniwaSystem` は箱庭の PDU を直接触りません。ROS 2 のトピックを読み書きするだけです。PDU との間は箱庭 ROS 2 Bridge（hakoniwa_pdu_ros）がつなぎます。
+- `HakoniwaSystem` の箱庭との通り道は 2 つあります。
+  - ROS 2 のトピック：ROS 2 のトピックを読み書きするだけで、PDU との間は箱庭 ROS 2 Bridge（hakoniwa_pdu_ros）がつなぎます。ホスト ＋ Docker の構成で使います。
+  - 箱庭アセット：`HakoniwaSystem` 自身が箱庭アセットになり、関節の PDU を共有メモリで直接読み書きします。ROS 2 と箱庭が同じ Linux で動く構成（Ubuntu、Docker だけ）で使います。内部設計は 10 章です。
 - Robot Runtime は変えません。今ある関節ごとの指令の受け口と、関節の状態の出力をそのまま使います。
 - ros2_control の controller_manager は ROS の時計で回り、箱庭の時間とはゆるくつながります。箱庭の時間と強くそろえることは、この設計の範囲外です。
 
@@ -144,7 +146,7 @@ usleep ：箱庭の時間を 1 刻み進める（世界の時刻に追いつく�
 
 実装は [`ros2/hakoniwa_ros2_control`](../ros2/hakoniwa_ros2_control/README.md) にあります。
 
-- 有効にするときは、関節の状態を待ちません。有効にする処理は controller_manager の受信の処理の中で呼ばれるので、その間は自分の購読が回らないからです。状態と指令は値なし（NaN）で始め、値なしの指令は出しません。
+- 有効にするときは、最初の関節の状態を待ち、その値を状態と指令の初めの値にします。有効にする処理は controller_manager の受信の処理の中で呼ばれ、その間は自分の購読が回らないので、待つのは別の一時的なノードです。値なし（NaN）で始めると、TF に NaN が入りました。
 - ROS 2 のドメインは、箱庭 ROS 2 Bridge の環境（`activate.bash`、`ROS_DOMAIN_ID=73`）にそろえます。
 
 ## 7. ROS 2 のイメージ
@@ -214,3 +216,158 @@ MoveIt は、`/pdu/lidar_scan` から障害物の地図（octomap、2 cm のま�
 - 向きは、物の一部の面しか見えないとずれます。今は位置だけを使います。
 - 見つけた位置から、`so101_grasp_poses.py`（コンテナでも動く。MuJoCo 3.16.0）で掴む・置く姿勢を求め、`pick_and_place.py` で掴んで置きます。物を (0.20, -0.20) に置いたあとで見つけると中心 (0.203, -0.193)、17 点で、そこから掴んで元の場所に戻せました。
 
+
+## 10. HakoniwaSystem を箱庭アセットにする（内部設計）
+
+ROS 2 と箱庭が同じ Linux で動く構成（Ubuntu、Docker だけ）では、`HakoniwaSystem` 自身を箱庭アセットにして、関節の PDU を共有メモリで直接読み書きします。
+
+### 10.1 受け持ちの分け方
+
+`HakoniwaAssetSystem` が、ROS 2 と箱庭の間をすべて受け持ちます。ROS 2 Bridge と TCP の経路は使いません。
+
+| 中身 | 通り道 |
+|---|---|
+| 関節の状態（`joint_states`）と、関節ごとの指令（`actuator/<joint>/command`） | 共有メモリ ⇔ ros2_control の State／Command Interface |
+| センサー（`lidar_scan`、`wrist_wrench` など） | 共有メモリ → ROS 2 のトピック（`/pdu/<PDU 名>`） |
+| 箱庭の時刻 | → `/clock` |
+
+- 点群や画像は、ros2_control の State Interface（1 つが double 1 個）では運べないので、ROS 2 のトピックとして出します。トピック名はホスト ＋ Docker の構成（Bridge の `/pdu` の決まり）と同じなので、MoveIt の障害物地図や `detect_objects.py` はそのまま使えます。
+- 力覚も同じくトピックで出し、測った箱庭の時刻（PDU の時刻）を保ちます。
+- `/joint_states` は、これまでどおり joint_state_broadcaster が出します。
+- ROS 2 Bridge（`hakoniwa_pdu_ros`）は箱庭アセットにならず、共有メモリに入れません。Bridge を使うと C++ の TCP ブリッジ（箱庭アセット）を経由することになり、確かめたときは点群を運ぶたびに箱庭全体が止まりました（実時間の約 0.09 倍）。
+
+### 10.2 2 つのスレッド
+
+`HakoniwaSystem` の中を、箱庭の時刻で動くところと、実時間で動くところに分けます。
+
+```text
+ROS 2 の側（実時間、controller_manager の周期）       箱庭アセットのスレッド（箱庭の時刻、dT ごと）
+  read():  最新の状態を写す   ◀──┐                ┌── joint_states の PDU を読む（受信イベントなし）
+  write(): 最新の指令を置く   ──┐│  mutex で守った  │┌─ 指令が新しければ関節ごとの PDU に書く
+                                ││  最新値 1 つずつ ││   断られたら持ったまま、次の刻みで書き直す
+                                │└── 状態 ◀────────┘│
+                                └──▶ 指令 ──────────┘   hako_asset_usleep_no_wait で 1 刻み進める
+```
+
+- ROS 2 の側（`read()`／`write()`）は箱庭を待ちません。箱庭の時刻を待つのはアセットのスレッドだけなので、controller_manager の周期が乱れません。
+- 2 つのスレッドの間は、状態 1 つと指令 1 つの最新値だけです。ロックは値を写す間だけ持ちます。
+- アセットの刻み（dT）は Robot Runtime と同じ 2 ms にします（4.1 章）。controller_manager の周期（10 ms）より短いので、指令を取りこぼしません。
+- アセットのスレッドは、1 刻み進める前に 2 つ待ちます。どちらも眠って待ちます。箱庭コアの時刻を進める処理（`hako_asset_usleep_no_wait`）は、進めてよくなるまで休まず回るためです。
+  - 実時間合わせ：壁時計が自分の時刻（`hako_asset_current_time`）に追いつくまで（Robot Runtime の実時間合わせと同じ）。
+  - 世界の時刻：世界の時刻（`hako_asset_simulation_time`）が「自分の時刻 ＋ dT」に届くまで（0.2 ms おきに見る）。箱庭が実時間より遅いときは、こちらで待ちます。
+- 最初の 1 刻みだけは世界の時刻を待ちません。始めは、全アセットが PDU を書き終えたと知らせるまで世界の時刻が 0 のままで、その知らせは `hako_asset_usleep_no_wait` の中で出るためです。
+
+macOS のホストで、SO-101 の Robot Runtime と並べて確かめました（試験プログラム `hakoniwa_asset_link_probe`、dT 2 ms）。
+
+| 待ち方 | 箱庭の進み | アセットのスレッドの CPU |
+|---|---|---|
+| 待たない | 実時間の 1.00 倍（Robot Runtime だけ） | 約 100 %（1 コア） |
+| 実時間合わせだけ | 実時間の 0.79 倍（TCP Bridge あり） | 約 100 %（世界の時刻を待つ間、休まず回る） |
+| 実時間合わせ ＋ 世界の時刻 | 実時間の 0.84 倍（TCP Bridge あり） | 2.3 % |
+
+- 箱庭の時刻は、箱庭コアが持つ各アセットの時刻（`hako-cmd pmeta`）と突き合わせました。
+- シミュレーションを止めると、アセットの時刻は止まり、CPU は下がります。箱庭コアはリセットまでアセットを待たせます。
+
+関節の状態の読み取りは、同じ PDU を TCP Bridge から ROS 2（`/pdu/joint_states`）でも受けて比べました。ROS 2 から `shoulder_pan` を ±0.5 rad、5 秒周期で振りながら、約 25 秒です。
+
+| 項目 | 結果 |
+|---|---|
+| ROS 2 で受けた状態のうち、アセットのスレッドも読んだもの | 802 件中 802 件 |
+| 同じ時刻の関節の値の差 | 0（全関節） |
+| アセットのスレッドが読んだ状態の間隔 | すべて 20 ms（Robot Runtime の出力の周期）、取りこぼし 0 |
+| 読んだときの状態の古さ（自分の時刻 − 状態の時刻） | −2〜8 ms |
+
+関節の指令は、試験プログラムが controller_manager の代わりに `shoulder_pan` へ ±0.5 rad、5 秒周期の正弦波を 100 Hz で置いて確かめました（約 21 秒、2 回）。関節の動きは、TCP Bridge から ROS 2（`/pdu/joint_states`）で別に受けて比べました。
+
+| 項目 | 1 回目 | 2 回目 |
+|---|---|---|
+| 置いた指令 | 2501 | 2501 |
+| 書き終えた指令 | 2496 | 2500（残る 1 件は止める直前に置いたもの） |
+| 断られて次の刻みで書き直した書き込み | 7（すべて書けた） | 0 |
+| 関節と指令の差（指令を 8〜10 ms 遅らせて比べる） | 最大 0.007 rad | 最大 0.005 rad、平均 0.001 rad |
+
+- 1 回目の差の 5 件は、アセットのスレッドが受け取る前に次の指令で置き換わったものと見ています（この回はまだ数えていなかった）。最新の値だけを渡すので、アセットのスレッドが 10 ms 以上遅れると、間の指令は飛びます。
+- 4 章の別のアセットから書いた確認（最大 0.040 rad）より、差が小さくなりました。
+
+### 10.3 最新値の中身
+
+| 最新値 | 中身 | 書く | 読む |
+|---|---|---|---|
+| 状態 | 関節ごとの位置・速度・トルク、PDU の箱庭の時刻、受け取った壁時計の時刻 | アセットのスレッド（毎刻み） | `read()` |
+| 指令 | 全関節の指令値（1 つの塊）、通し番号 | `write()` | アセットのスレッド |
+
+- **指令は全関節を 1 つの塊にします。** アセットのスレッドは、同じ刻みの中で全関節の PDU を書きます。関節ごとの別トピックより揃いますが、書いている途中で Robot Runtime が 1 歩進むことはありえます。完全に揃えるには、指令を 1 つの PDU にまとめる必要があります。
+- **指令は通し番号が変わったときだけ書きます。** 同じ値を毎刻み書き直すと、controller_manager が止まっても指令が出続け、Robot Runtime の指令の期限（`command_timeout_sec`）が働かないためです。
+- **書き込みを断られたら（受信イベントの印が立っている間）、指令を持ったまま次の刻みで書き直します**（4 章の決まり）。断られた回数は数えて、ログに出します。
+- **状態は受信イベントなしで読みます。** `joint_states` を書くのは Robot Runtime（2 ms ごと）です。受信イベントを付けると、こちらが読むまで Robot Runtime の次の書き込みが断られます。
+
+### 10.4 古さの判定
+
+- `read()` は、状態の最新値が決めた時間（`state_timeout_sec`、壁時計）より古ければ `ERROR` を返します。箱庭や Robot Runtime が止まったときに、controller_manager がコントローラを止められるようにするためです。
+- 箱庭が止まったりリセットされたりすると、アセットのスレッドは抜けます。そのあとの `read()` は `ERROR` を返します。
+
+### 10.5 始めと終わり
+
+| ros2_control の段階 | すること |
+|---|---|
+| `on_init` | URDF の設定（アセット名、PDU の設定のパス、ロボット名、dT、`state_timeout_sec`、`first_state_timeout_sec`）を読む |
+| `on_configure` | PDU の Endpoint を開き（`Endpoint::open`）、箱庭アセットとして登録する（`hako_asset_register`）。登録はプロセスに 1 回だけ |
+| `on_activate` | アセットのスレッドを動かし、最初の状態が届くまで待つ（上限 `first_state_timeout_sec`）。届いた位置を状態と指令の初めの値にする |
+| `on_deactivate` | その場の位置を指令として 1 回置く。アセットのスレッドは止めない（止めると、そのアセットを待ってシミュレーション全体が止まるため） |
+| `on_cleanup`／`on_shutdown` | アセットのスレッドを止め、Endpoint を止めて閉じる |
+
+- 箱庭コアは、シミュレーションが止まっている間（`HakoSim_Stopped`）しかアセットの登録を受け付けません（`alloc_asset`）。そのため、ros2_control_node は箱庭のシミュレーションを始める（START）前に立ち上げます。箱庭のランチャでは、ROS 2 の起動を `activation_timing: before_start` のアセットとして並べます。
+- Endpoint の `post_start` は、Robot Runtime と同じく、START のあとアセットのスレッドの始め（`on_initialize`）で呼びます。
+- 最初の状態は START のあとに届きます。`on_activate` の待ちの上限は、ランチャの START までの時間より長くします。
+
+### 10.6 センサーと時刻（/clock）
+
+センサーの PDU と箱庭の時刻は、出すためのスレッドが ROS 2 に出します。スレッドは 3 つになります（箱庭の時刻で動くアセットのスレッド、ros2_control、出すためのスレッド）。
+
+- アセットのスレッドは、毎刻み、設定したセンサーの PDU を読みます。時刻が変わっていたら、最新値として置きます（関節の状態と同じく受信イベントなし）。
+- 出すためのスレッドは、最新値を ROS 2 のメッセージに直して出します。点群（327 KB）を直す間にアセットのスレッドが止まると、箱庭全体がそのアセットを待つためです。ros2_control の `read()` で出さないのは、controller_manager の周期を乱さないためです。
+- `/clock` は、アセットのスレッドの箱庭の時刻から出します。ROS 2 の全ノードを `use_sim_time` で動かし、センサーの時刻（箱庭の時刻）とそろえます（9.2 章）。`hakoniwa_clock.py`（関節の状態の時刻から作る）は使いません。
+
+どのセンサーをどの周期で出すかは、外部ファイルに書きます。ほかは今ある定義から決めます。
+
+| 項目 | 決め方 |
+|---|---|
+| 出す PDU と送信周期 | 外部ファイル（JSON）。PDU 名と周期 [Hz] だけを書く。例 `{"lidar_scan": 2.0, "wrist_wrench": 50.0}` |
+| 型 | PDU 定義（pdutypes）の型。まず `sensor_msgs/PointCloud2` と `geometry_msgs/WrenchStamped` |
+| トピック名 | `/pdu/<PDU 名>`（Bridge と同じ） |
+| ファイルの場所 | URDF のハードウェア設定 `sensor_publish_config` |
+
+- 送信周期は、その周期より新しい値が来ていれば出します。同じ時刻の値は二度出しません。
+
+### 10.7 ビルドと選び方
+
+- 箱庭アセット版は、ROS 2 のトピックの `HakoniwaSystem` とは別のプラグイン `HakoniwaAssetSystem`（ライブラリ `hakoniwa_ros2_control_asset`、`hakoniwa_ros2_control_asset.xml`）です。`HakoniwaSystem` は変えません。
+- `HakoniwaAssetSystem` は箱庭のライブラリ（コアと PDU Endpoint）に依存します。CMake の切り替え（`-DHAKONIWA_ROS2_CONTROL_WITH_ASSET=ON`、箱庭のインストール先を `CMAKE_PREFIX_PATH`）のときだけ作ります。切り替えなしでは、これまでどおり ROS 2 だけに依存します。
+- どちらを使うかは、URDF の `<ros2_control>` の `<plugin>` で選びます。SO-101 は `so101_asset.urdf.xacro` と `so101_asset.launch.py`（`so101.urdf.xacro`、`so101.launch.py` はそのまま）。
+- 箱庭の側は ROS 2 に依存しない部品（`asset_link/`、`HakoniwaAssetLink`）に分け、試験プログラム（`hakoniwa_asset_link_probe`）で単体で確かめます。
+- Docker だけの構成のイメージは `ros2/docker/Dockerfile.jazzy-asset` です。hakoniwa-robot-arm の開発用イメージ（Foundation と Robot Runtime を作れるもの）に、ros2_control、ros2_controllers、MoveIt 2 を足します。
+
+### 10.8 確かめる順番
+
+1. アセットとして登録し、START のあと箱庭の時刻が進む。
+2. `joint_states` を読み、`read()` に関節の値が出る。
+3. 1 関節の指令で関節が動く。断られた回数と失われた指令を数える（4 章と同じ数え方）。
+4. joint_trajectory_controller で軌道どおりに動く。
+5. センサーと `/clock` を `HakoniwaAssetSystem` から出し、MoveIt と合わせて、点群から見つけて掴んで置く（9 章）。
+
+- 指令の受け取りの周期（アクチュエータの設定の `update_rate_hz`、SO-101 は 50 Hz）と controller_manager の周期（100 Hz）の関係は、3 で確かめます。
+
+4 は Docker だけの構成（macOS の Docker、Linux arm64）で確かめました。箱庭のランチャで、Robot Runtime、状態を記録するだけの別のアセット（試験プログラム）、ros2_control（`so101_asset.launch.py`）を START の前に起動し、arm_controller に 9 秒で 3 点を通る軌道を送りました。
+
+- `HakoniwaAssetSystem` は START の前に登録でき、START のあと最初の関節の状態（箱庭の時刻 0.002 秒）を受けて、3 つのコントローラが動きました。
+- 軌道の結果は `error_code: 0`（SUCCEEDED）でした。
+- 別のアセットが共有メモリから読んだ関節の値と、軌道の 3 点との差は、最大 0.007 rad、0.004 rad、0.0005 rad でした。
+- 箱庭の時間は実時間の 1.00 倍で進みました（TCP Bridge なし）。
+- controller_manager の `Could not enable FIFO RT scheduling policy` は、コンテナに実時間の優先度の権限がないためです。シミュレーションの動きには関係しません。
+
+5 も Docker だけの構成で確かめました（手順は [ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md) の「Docker だけで動かす」）。
+
+- `HakoniwaAssetSystem` が出したセンサー：`/pdu/lidar_scan` 2.00 Hz（11,520 点、`overhead_lidar`）、`/pdu/wrist_wrench` 49.97 Hz（`wrist_ft`）、`/clock` 約 500 Hz。
+- MoveIt は `/pdu/lidar_scan` から障害物の地図を作り、掴む前の姿勢への計画と実行ができました。自己フィルタの `Missing transform for shape mesh`（メッシュの数 13 件）は、起動直後の 1 回だけです（joint_state_broadcaster が関節の状態を出す前の最初の点群）。
+- 点群から物を見つけ（中心 (0.28, 0.0, 0.015)）、掴んで (0.20, -0.20) に置き、もう一度見つけました（中心 (0.203, -0.194)）。13 段すべて OK、持ち上げたときの力の変化 0.295 N（物の重さ 0.294 N）。
+- 箱庭の時間は、センサーと MoveIt を含めて実時間の 1.000 倍で進みました（実時間合わせ 2 ms）。ホスト ＋ Docker（TCP Bridge）では約 0.78 倍でした。
