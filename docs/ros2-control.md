@@ -223,14 +223,18 @@ ROS 2 と箱庭が同じ Linux で動く構成（Ubuntu、Docker だけ）では
 
 ### 10.1 受け持ちの分け方
 
-| 受け持つもの | 中身 | 通り道 |
-|---|---|---|
-| `HakoniwaSystem`（箱庭アセット） | 関節の状態（`joint_states`）と、関節ごとの指令（`actuator/<joint>/command`） | 共有メモリ ⇔ ros2_control の State／Command Interface |
-| 箱庭 ROS 2 Bridge（別のアセット、別の ROS ノード） | センサー（`lidar_scan`、`wrist_wrench` など） | 共有メモリ → ROS 2 のトピック（`/pdu/...`） |
+`HakoniwaAssetSystem` が、ROS 2 と箱庭の間をすべて受け持ちます。ROS 2 Bridge と TCP の経路は使いません。
 
-- 点群や画像は、ros2_control の State Interface（1 つが double 1 個）では運べません。センサーは ROS 2 のトピックとして Bridge が出します。トピック名はホスト ＋ Docker の構成と同じなので、MoveIt の障害物地図や `detect_objects.py` はそのまま使えます。
-- 力覚は ros2_control（`force_torque_sensor_broadcaster`）でも出せますが、controller_manager の周期と時刻になります。測った箱庭の時刻を保つため、Bridge で出します。
-- `/joint_states` は、これまでどおり joint_state_broadcaster が出します。Bridge は `joint_states` と関節の指令を運びません（同じ PDU を 2 つのアセットが書かないように）。
+| 中身 | 通り道 |
+|---|---|
+| 関節の状態（`joint_states`）と、関節ごとの指令（`actuator/<joint>/command`） | 共有メモリ ⇔ ros2_control の State／Command Interface |
+| センサー（`lidar_scan`、`wrist_wrench` など） | 共有メモリ → ROS 2 のトピック（`/pdu/<PDU 名>`） |
+| 箱庭の時刻 | → `/clock` |
+
+- 点群や画像は、ros2_control の State Interface（1 つが double 1 個）では運べないので、ROS 2 のトピックとして出します。トピック名はホスト ＋ Docker の構成（Bridge の `/pdu` の決まり）と同じなので、MoveIt の障害物地図や `detect_objects.py` はそのまま使えます。
+- 力覚も同じくトピックで出し、測った箱庭の時刻（PDU の時刻）を保ちます。
+- `/joint_states` は、これまでどおり joint_state_broadcaster が出します。
+- ROS 2 Bridge（`hakoniwa_pdu_ros`）は箱庭アセットにならず、共有メモリに入れません。Bridge を使うと C++ の TCP ブリッジ（箱庭アセット）を経由することになり、確かめたときは点群を運ぶたびに箱庭全体が止まりました（実時間の約 0.09 倍）。
 
 ### 10.2 2 つのスレッド
 
@@ -316,9 +320,24 @@ macOS のホストで、SO-101 の Robot Runtime と並べて確かめました�
 - Endpoint の `post_start` は、Robot Runtime と同じく、START のあとアセットのスレッドの始め（`on_initialize`）で呼びます。
 - 最初の状態は START のあとに届きます。`on_activate` の待ちの上限は、ランチャの START までの時間より長くします。
 
-### 10.6 時刻（/clock）
+### 10.6 センサーと時刻（/clock）
 
-アセットのスレッドは箱庭の時刻を知っているので、`/clock` を `HakoniwaSystem` から出せます。このとき `hakoniwa_clock.py`（関節の状態の時刻から作る）は使いません。どちらで出すかは launch の引数で選びます。
+センサーの PDU と箱庭の時刻は、出すためのスレッドが ROS 2 に出します。スレッドは 3 つになります（箱庭の時刻で動くアセットのスレッド、ros2_control、出すためのスレッド）。
+
+- アセットのスレッドは、毎刻み、設定したセンサーの PDU を読みます。時刻が変わっていたら、最新値として置きます（関節の状態と同じく受信イベントなし）。
+- 出すためのスレッドは、最新値を ROS 2 のメッセージに直して出します。点群（327 KB）を直す間にアセットのスレッドが止まると、箱庭全体がそのアセットを待つためです。ros2_control の `read()` で出さないのは、controller_manager の周期を乱さないためです。
+- `/clock` は、アセットのスレッドの箱庭の時刻から出します。ROS 2 の全ノードを `use_sim_time` で動かし、センサーの時刻（箱庭の時刻）とそろえます（9.2 章）。`hakoniwa_clock.py`（関節の状態の時刻から作る）は使いません。
+
+どのセンサーをどの周期で出すかは、外部ファイルに書きます。ほかは今ある定義から決めます。
+
+| 項目 | 決め方 |
+|---|---|
+| 出す PDU と送信周期 | 外部ファイル（JSON）。PDU 名と周期 [Hz] だけを書く。例 `{"lidar_scan": 2.0, "wrist_wrench": 50.0}` |
+| 型 | PDU 定義（pdutypes）の型。まず `sensor_msgs/PointCloud2` と `geometry_msgs/WrenchStamped` |
+| トピック名 | `/pdu/<PDU 名>`（Bridge と同じ） |
+| ファイルの場所 | URDF のハードウェア設定 `sensor_publish_config` |
+
+- 送信周期は、その周期より新しい値が来ていれば出します。同じ時刻の値は二度出しません。
 
 ### 10.7 ビルドと選び方
 
@@ -334,7 +353,7 @@ macOS のホストで、SO-101 の Robot Runtime と並べて確かめました�
 2. `joint_states` を読み、`read()` に関節の値が出る。
 3. 1 関節の指令で関節が動く。断られた回数と失われた指令を数える（4 章と同じ数え方）。
 4. joint_trajectory_controller で軌道どおりに動く。
-5. MoveIt と、Bridge のセンサーを合わせて、掴んで置く（9 章）。
+5. センサーと `/clock` を `HakoniwaAssetSystem` から出し、MoveIt と合わせて、点群から見つけて掴んで置く（9 章）。
 
 - 指令の受け取りの周期（アクチュエータの設定の `update_rate_hz`、SO-101 は 50 Hz）と controller_manager の周期（100 Hz）の関係は、3 で確かめます。
 

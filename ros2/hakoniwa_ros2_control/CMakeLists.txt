@@ -42,13 +42,22 @@ install(PROGRAMS scripts/move_to_joints.py scripts/hakoniwa_clock.py scripts/add
 option(HAKONIWA_ROS2_CONTROL_WITH_ASSET "Build the HakoniwaAssetSystem plugin" OFF)
 if(HAKONIWA_ROS2_CONTROL_WITH_ASSET)
   add_subdirectory(asset_link)
-  add_library(hakoniwa_ros2_control_asset SHARED asset_link/src/hakoniwa_asset_system.cpp)
+  find_package(geometry_msgs REQUIRED)
+  find_package(rosgraph_msgs REQUIRED)
+  find_package(hakoniwa_pdu_endpoint REQUIRED)  # also nlohmann_json::nlohmann_json (bundled)
+  add_library(hakoniwa_ros2_control_asset SHARED
+    asset_link/src/hakoniwa_asset_system.cpp
+    asset_link/src/hakoniwa_sensor_publisher.cpp)
   set_target_properties(hakoniwa_ros2_control_asset PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
   target_link_libraries(hakoniwa_ros2_control_asset PUBLIC
     hardware_interface::hardware_interface
     pluginlib::pluginlib
     rclcpp::rclcpp
     rclcpp_lifecycle::rclcpp_lifecycle
+    ${sensor_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${rosgraph_msgs_TARGETS}
+    nlohmann_json::nlohmann_json
     hakoniwa_asset_link)
   pluginlib_export_plugin_description_file(hardware_interface hakoniwa_ros2_control_asset.xml)
   install(TARGETS hakoniwa_ros2_control_asset

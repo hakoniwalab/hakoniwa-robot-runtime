@@ -10,12 +10,14 @@
 //   latest_state():   the joint states the asset thread read last (any thread)
 //   put_command():    the latest command for all command joints (any thread); the
 //                     asset thread writes it once, retrying the joints refused
+//   take_sensor():    the latest raw PDU of a sensor, read at its rate (any thread)
 //   stop():           asks the asset thread to stop and joins it
 //
 // The design is in docs/ros2-control.md, chapter 10.
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -27,6 +29,21 @@
 
 namespace hakoniwa_ros2_control
 {
+
+// One sensor PDU to read, at a rate in the asset's (Hakoniwa) time.
+struct SensorPdu
+{
+  std::string name;   // the PDU name, e.g. "lidar_scan"
+  double rate_hz{0};  // how often to read it
+};
+
+// One sensor PDU as the asset thread read it: the raw PDU (decoded by the reader).
+struct SensorSample
+{
+  std::vector<std::byte> data;
+  std::uint64_t asset_time_usec{0};  // this asset's time when it read the PDU
+  std::uint64_t sequence{0};         // counts reads; 0: none yet
+};
 
 // One joint states PDU as the asset thread read it.
 struct JointStateSample
@@ -53,6 +70,8 @@ public:
     std::string joint_states_pdu{"joint_states"};
     // The joints commanded, each through its PDU "actuator/<joint>/command" (std_msgs/Float64).
     std::vector<std::string> command_joints;
+    // Sensor PDUs to read (raw), each at its own rate.
+    std::vector<SensorPdu> sensors;
     std::uint64_t delta_usec{2000};    // the asset's step; the Robot Runtime's dT
     // Before each step, sleep until the wall clock has caught up with the
     // asset's time (as the Robot Runtime's real-time sync does). Without it the
@@ -86,6 +105,13 @@ public:
   };
   CommandCounts command_counts() const;
 
+  // The PDU type of sensor i (Config::sensors order), from the PDU definition;
+  // known after register_asset(), e.g. "sensor_msgs/PointCloud2".
+  std::string sensor_type(std::size_t i) const;
+  // Moves the latest read of sensor i into out when it is newer than the last
+  // one taken; false otherwise.
+  bool take_sensor(std::size_t i, SensorSample & out);
+
   // The asset's own Hakoniwa time after its last step [usec], and the number of steps.
   std::uint64_t asset_time_usec() const { return asset_time_usec_.load(); }
   // The world time seen after the last step [usec].
@@ -110,6 +136,7 @@ private:
   int run_steps();
   void read_joint_states();
   void write_command();
+  void read_sensors();
 
   Config config_;
   std::unique_ptr<Pdu> pdu_;
@@ -137,6 +164,16 @@ private:
   std::vector<double> writing_;
   std::vector<bool> pending_;
   std::uint64_t writing_sequence_{0};
+
+  // Sensors: types and sizes (set at registration), read times (asset thread),
+  // the latest reads (guarded by sensor_mutex_).
+  std::vector<std::string> sensor_types_;
+  std::vector<std::size_t> sensor_sizes_;
+  std::vector<std::uint64_t> sensor_next_usec_;
+  std::vector<std::uint64_t> sensor_taken_;
+  std::mutex sensor_mutex_;
+  std::vector<SensorSample> sensor_latest_;
+  std::vector<std::byte> sensor_buffer_;
 
   // The core's callbacks carry no user pointer: one asset per process.
   static std::atomic<HakoniwaAssetLink *> instance_;

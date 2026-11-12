@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <iostream>
+#include <span>
 #include <utility>
 
 // The generated C++ converter calls the string-array helpers by their *_cpp_*
@@ -103,6 +104,23 @@ bool HakoniwaAssetLink::register_asset()
     std::cerr << "[HakoniwaAssetLink] cannot start the PDU Endpoint" << std::endl;
     return give_up();
   }
+  // Sensor PDU types and sizes from the PDU definition.
+  sensor_types_.clear();
+  sensor_sizes_.clear();
+  for (const auto & sensor : config_.sensors) {
+    hakoniwa::pdu::PduDef def;
+    const auto definition = pdu_->endpoint.get_pdu_definition();
+    if (!definition || !definition->resolve(config_.robot_name, sensor.name, def) || sensor.rate_hz <= 0.0) {
+      std::cerr << "[HakoniwaAssetLink] unknown sensor PDU " << config_.robot_name << "/" << sensor.name
+                << " (or rate <= 0)" << std::endl;
+      return give_up();
+    }
+    sensor_types_.push_back(def.type);
+    sensor_sizes_.push_back(def.pdu_size);
+  }
+  sensor_next_usec_.assign(config_.sensors.size(), 0);
+  sensor_taken_.assign(config_.sensors.size(), 0);
+  sensor_latest_.assign(config_.sensors.size(), SensorSample{});
   pdu_->started = true;
   registered_ = true;
   return true;
@@ -233,6 +251,7 @@ int HakoniwaAssetLink::run_steps()
     ++steps_;
     read_joint_states();
     write_command();
+    read_sensors();
   }
   return 0;
 }
@@ -259,6 +278,50 @@ void HakoniwaAssetLink::read_joint_states()
   state_.asset_time_usec = asset_time_usec_.load();
   state_.received = std::chrono::steady_clock::now();
   ++state_.sequence;
+}
+
+std::string HakoniwaAssetLink::sensor_type(std::size_t i) const
+{
+  return i < sensor_types_.size() ? sensor_types_[i] : std::string();
+}
+
+bool HakoniwaAssetLink::take_sensor(std::size_t i, SensorSample & out)
+{
+  std::lock_guard<std::mutex> lock(sensor_mutex_);
+  if (i >= sensor_latest_.size() || sensor_latest_[i].sequence == sensor_taken_[i]) {
+    return false;
+  }
+  sensor_taken_[i] = sensor_latest_[i].sequence;
+  out.data.swap(sensor_latest_[i].data);
+  out.asset_time_usec = sensor_latest_[i].asset_time_usec;
+  out.sequence = sensor_latest_[i].sequence;
+  return true;
+}
+
+void HakoniwaAssetLink::read_sensors()
+{
+  // Each sensor at its rate in this asset's time: a raw copy only, so that the
+  // asset thread spends little time here (the reader decodes it).
+  const std::uint64_t now = asset_time_usec_.load();
+  for (std::size_t i = 0; i < config_.sensors.size(); ++i) {
+    if (now < sensor_next_usec_[i]) {
+      continue;
+    }
+    const auto period = static_cast<std::uint64_t>(1e6 / config_.sensors[i].rate_hz);
+    sensor_next_usec_[i] = now + period;
+    sensor_buffer_.resize(sensor_sizes_[i]);
+    std::size_t received = 0;
+    if (pdu_->endpoint.recv(hakoniwa::pdu::PduKey{config_.robot_name, config_.sensors[i].name},
+                            std::span<std::byte>(sensor_buffer_.data(), sensor_buffer_.size()),
+                            received) != HAKO_PDU_ERR_OK || received == 0) {
+      continue;
+    }
+    sensor_buffer_.resize(received);
+    std::lock_guard<std::mutex> lock(sensor_mutex_);
+    sensor_latest_[i].data.swap(sensor_buffer_);
+    sensor_latest_[i].asset_time_usec = now;
+    ++sensor_latest_[i].sequence;
+  }
 }
 
 void HakoniwaAssetLink::write_command()

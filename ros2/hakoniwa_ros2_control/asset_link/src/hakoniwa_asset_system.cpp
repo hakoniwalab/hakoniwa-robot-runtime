@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "hakoniwa_ros2_control/hakoniwa_asset_link.hpp"
+#include "hakoniwa_ros2_control/hakoniwa_sensor_publisher.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 
 namespace hakoniwa_ros2_control
@@ -22,7 +23,11 @@ std::string parameter(const hardware_interface::HardwareInfo & info, const std::
 
 HakoniwaAssetSystem::HakoniwaAssetSystem() = default;
 
-HakoniwaAssetSystem::~HakoniwaAssetSystem() = default;  // stops the asset thread, closes the Endpoint
+HakoniwaAssetSystem::~HakoniwaAssetSystem()
+{
+  publisher_.reset();  // before the link it reads
+  link_.reset();       // stops the asset thread, closes the Endpoint
+}
 
 HakoniwaAssetSystem::CallbackReturn HakoniwaAssetSystem::on_init(
   const hardware_interface::HardwareComponentInterfaceParams & params)
@@ -77,6 +82,15 @@ HakoniwaAssetSystem::CallbackReturn HakoniwaAssetSystem::on_configure(const rclc
   for (const auto & joint : joints_) {
     config.command_joints.push_back(joint.name);
   }
+  const auto sensor_config = parameter(info, "sensor_publish_config", "");
+  if (!sensor_config.empty()) {
+    try {
+      config.sensors = load_sensor_publish_config(sensor_config);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "%s", e.what());
+      return CallbackReturn::ERROR;
+    }
+  }
   if (config.pdu_definition_path.empty() || config.endpoint_config_path.empty() || config.robot_name.empty()) {
     RCLCPP_ERROR(get_logger(), "needs the hardware parameters pdu_definition_path, endpoint_config_path, robot_name");
     return CallbackReturn::ERROR;
@@ -89,9 +103,20 @@ HakoniwaAssetSystem::CallbackReturn HakoniwaAssetSystem::on_configure(const rclc
     link_.reset();
     return CallbackReturn::ERROR;
   }
-  RCLCPP_INFO(get_logger(), "Hakoniwa asset %s registered (robot %s, %zu joints, dT %llu usec)",
-              config.asset_name.c_str(), config.robot_name.c_str(), joints_.size(),
+  RCLCPP_INFO(get_logger(), "Hakoniwa asset %s registered (robot %s, %zu joints, %zu sensors, dT %llu usec)",
+              config.asset_name.c_str(), config.robot_name.c_str(), joints_.size(), config.sensors.size(),
               static_cast<unsigned long long>(config.delta_usec));
+  std::vector<std::string> sensor_names;
+  for (const auto & sensor : config.sensors) {
+    sensor_names.push_back(sensor.name);
+  }
+  const bool publish_clock = parameter(info, "publish_clock", "true") == "true";
+  try {
+    publisher_ = std::make_unique<HakoniwaSensorPublisher>(get_node(), *link_, sensor_names, publish_clock);
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(get_logger(), "%s", e.what());
+    return CallbackReturn::ERROR;
+  }
   return CallbackReturn::SUCCESS;
 }
 
@@ -102,6 +127,9 @@ HakoniwaAssetSystem::CallbackReturn HakoniwaAssetSystem::on_activate(const rclcp
   }
   if (!started_) {
     started_ = link_->start();
+    if (publisher_) {
+      publisher_->start();
+    }
   }
   // Start from where the robot is: wait for the first joint states. They come
   // once the simulation has started.
@@ -136,7 +164,8 @@ HakoniwaAssetSystem::CallbackReturn HakoniwaAssetSystem::on_deactivate(const rcl
 
 HakoniwaAssetSystem::CallbackReturn HakoniwaAssetSystem::on_cleanup(const rclcpp_lifecycle::State &)
 {
-  link_.reset();  // stops the asset thread and closes the PDU Endpoint
+  publisher_.reset();  // before the link it reads
+  link_.reset();       // stops the asset thread and closes the PDU Endpoint
   started_ = false;
   return CallbackReturn::SUCCESS;
 }

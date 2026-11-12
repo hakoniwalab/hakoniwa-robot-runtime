@@ -10,6 +10,10 @@
   <xacro:arg name="robot_name" default="SO101"/>
   <xacro:arg name="asset_name" default="HakoniwaSystem"/>
   <xacro:arg name="delta_usec" default="2000"/>
+  <!-- Sensors published as /pdu/<PDU name> at the rates of this JSON file (PDU
+       name -> Hz), e.g. config/so101/sensor_publish.json; empty: none. -->
+  <xacro:arg name="sensor_publish_config" default=""/>
+  <xacro:arg name="publish_clock" default="true"/>
   <xacro:include filename="$(arg so101_urdf)"/>
 
   <xacro:macro name="hakoniwa_joint" params="name">
@@ -19,6 +23,24 @@
       <state_interface name="velocity"/>
     </joint>
   </xacro:macro>
+
+  <!-- Sensor frames (TF), as in so101.urdf.xacro: named after the sensors
+       (their frame_id) and placed where the Robot Runtime mounts them. -->
+  <xacro:arg name="sensors" default="false"/>
+  <xacro:if value="$(arg sensors)">
+    <link name="overhead_lidar"/>
+    <joint name="overhead_lidar_mount" type="fixed">
+      <parent link="base_link"/>
+      <child link="overhead_lidar"/>
+      <origin xyz="0.28 0.25 0.475" rpy="0 0 0"/>
+    </joint>
+    <link name="wrist_ft"/>
+    <joint name="wrist_ft_mount" type="fixed">
+      <parent link="gripper_link"/>
+      <child link="wrist_ft"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
 
   <ros2_control name="so101_hakoniwa_asset" type="system">
     <hardware>
@@ -30,6 +52,8 @@
       <param name="delta_usec">$(arg delta_usec)</param>
       <param name="state_timeout_sec">0.5</param>
       <param name="first_state_timeout_sec">60</param>
+      <param name="sensor_publish_config">$(arg sensor_publish_config)</param>
+      <param name="publish_clock">$(arg publish_clock)</param>
     </hardware>
     <xacro:hakoniwa_joint name="shoulder_pan"/>
     <xacro:hakoniwa_joint name="shoulder_lift"/>

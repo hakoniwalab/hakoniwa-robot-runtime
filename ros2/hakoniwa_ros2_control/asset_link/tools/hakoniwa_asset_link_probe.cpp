@@ -11,6 +11,8 @@
 //                           [--seconds 0] [--state-log states.csv]
 //                           [--command-joint shoulder_pan --command-hz 100 --amplitude 0.5 --period 5
 //                            --command-log commands.csv]
+// With --sensor NAME:RATE (repeatable), the probe takes each sensor's raw PDU
+// and prints, at the end, how many it took and their sizes.
 // With --command-joint, the probe plays controller_manager: it puts
 // amplitude * sin(2 pi t / period) for that joint at command-hz (wall clock),
 // logs each command (asset_s, value) and prints the command counts at the end.
@@ -58,6 +60,9 @@ int main(int argc, char ** argv)
       config.endpoint_config_path = value;
     } else if (key == "--robot") {
       config.robot_name = value;
+    } else if (key == "--sensor") {
+      const auto colon = value.find(':');
+      config.sensors.push_back({value.substr(0, colon), std::atof(value.substr(colon + 1).c_str())});
     } else if (key == "--command-joint") {
       config.command_joints.push_back(value);
     } else if (key == "--command-hz") {
@@ -107,6 +112,11 @@ int main(int argc, char ** argv)
   }
   hakoniwa_ros2_control::JointStateSample sample;
   std::uint64_t logged = 0;
+  std::vector<std::uint64_t> sensor_taken(config.sensors.size(), 0);
+  std::vector<std::size_t> sensor_bytes(config.sensors.size(), 0);
+  std::vector<double> sensor_first(config.sensors.size(), -1.0);
+  std::vector<double> sensor_last(config.sensors.size(), 0.0);
+  hakoniwa_ros2_control::SensorSample sensor_sample;
   std::ofstream commands;
   if (!command_log.empty()) {
     commands.open(command_log);
@@ -136,6 +146,16 @@ int main(int argc, char ** argv)
         commands << value << "\n";
       }
       next_command += command_period;
+    }
+    for (std::size_t i = 0; i < config.sensors.size(); ++i) {
+      if (link.take_sensor(i, sensor_sample)) {
+        ++sensor_taken[i];
+        sensor_bytes[i] = sensor_sample.data.size();
+        if (sensor_first[i] < 0.0) {
+          sensor_first[i] = sensor_sample.asset_time_usec * 1e-6;
+        }
+        sensor_last[i] = sensor_sample.asset_time_usec * 1e-6;
+      }
     }
     if (link.latest_state(sample) && sample.sequence != logged) {
       if (log.is_open()) {
@@ -180,6 +200,12 @@ int main(int argc, char ** argv)
     }
   }
   link.stop();
+  for (std::size_t i = 0; i < config.sensors.size(); ++i) {
+    const double span = sensor_last[i] - sensor_first[i];
+    std::printf("sensor %s (%s): taken %llu, %zu bytes, %.2f Hz in asset time\n", config.sensors[i].name.c_str(),
+                link.sensor_type(i).c_str(), static_cast<unsigned long long>(sensor_taken[i]), sensor_bytes[i],
+                (sensor_taken[i] > 1 && span > 0.0) ? (sensor_taken[i] - 1) / span : 0.0);
+  }
   const auto counts = link.command_counts();
   std::printf("commands: put %llu, written %llu, replaced %llu; joint PDU writes %llu, refused %llu\n",
               static_cast<unsigned long long>(counts.put), static_cast<unsigned long long>(counts.written),
