@@ -1,0 +1,16 @@
+# MoveIt's obstacle map (octomap) from the overhead 3D LiDAR. Points inside the
+# robot's own shapes (padded) are filtered out by the updater.
+sensors:
+  - overhead_lidar
+overhead_lidar:
+  sensor_plugin: occupancy_map_monitor/PointCloudOctomapUpdater
+  point_cloud_topic: /pdu/lidar_scan
+  max_range: 2.0
+  point_subsample: 1
+  padding_offset: 0.02
+  padding_scale: 1.0
+  max_update_rate: 2.0
+  filtered_cloud_topic: /overhead_lidar/filtered_cloud
+octomap_frame: base_link
+octomap_resolution: 0.02
+max_range: 2.0

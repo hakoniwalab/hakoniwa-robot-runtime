@@ -63,6 +63,7 @@ PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint
 
 - [docs/design.md](docs/design.md) — Runtime architecture / responsibility boundary
 - [docs/configuration.md](docs/configuration.md) — Asset Manifest、Runtime config、actuator / controller / state-output、PDU / Endpoint contract
+- [docs/ros2-control.md](docs/ros2-control.md) — ros2_control / MoveIt 2 との接続（HakoniwaSystem、箱庭 ROS 2 Bridge、トピック）
 - [schemas/README.md](schemas/README.md) — Runtime-owned JSON Schemas
 - [docs/sensor-pdu.md](docs/sensor-pdu.md) — センサ（opt-in）：取り付けられるセンサ種別、MJCF への取り付け方、送信する PDU と欄の対応
 - [docs/sensor-prerequisites.md](docs/sensor-prerequisites.md) — センサ統合の全体像、フェーズ、各フェーズの実証結果

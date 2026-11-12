@@ -1,0 +1,10 @@
+# Limits MoveIt uses to time its trajectories (positions come from the URDF).
+default_velocity_scaling_factor: 0.5
+default_acceleration_scaling_factor: 0.5
+joint_limits:
+  shoulder_pan:  {has_velocity_limits: true, max_velocity: 2.0, has_acceleration_limits: true, max_acceleration: 4.0}
+  shoulder_lift: {has_velocity_limits: true, max_velocity: 2.0, has_acceleration_limits: true, max_acceleration: 4.0}
+  elbow_flex:    {has_velocity_limits: true, max_velocity: 2.0, has_acceleration_limits: true, max_acceleration: 4.0}
+  wrist_flex:    {has_velocity_limits: true, max_velocity: 2.0, has_acceleration_limits: true, max_acceleration: 4.0}
+  wrist_roll:    {has_velocity_limits: true, max_velocity: 2.0, has_acceleration_limits: true, max_acceleration: 4.0}
+  gripper:       {has_velocity_limits: true, max_velocity: 2.0, has_acceleration_limits: true, max_acceleration: 4.0}

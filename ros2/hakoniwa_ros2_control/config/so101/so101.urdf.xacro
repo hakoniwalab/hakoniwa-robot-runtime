@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!-- SO-101 with ros2_control on the Hakoniwa robot. The arm's own URDF is
+     included unchanged (argument so101_urdf); this file only adds the
+     <ros2_control> description with HakoniwaSystem as the hardware. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="so101">
+  <xacro:arg name="so101_urdf" default=""/>
+  <xacro:include filename="$(arg so101_urdf)"/>
+
+  <xacro:macro name="hakoniwa_joint" params="name">
+    <joint name="${name}">
+      <param name="command_topic">/actuator/${name}/command</param>
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Sensor frames (TF). Each link is named after the sensor (its frame_id)
+       and placed where the Robot Runtime mounts it (sensor axes x forward, y
+       left, z up). Same values as the arm Recipe's sensor configuration:
+       overhead_lidar: housing at (0.28, 0.25, 0.5) in the world (the robot base
+       is at the world origin), sensor 0.025 m below it; wrist_ft: at the
+       MuJoCo body "gripper", which is the URDF link gripper_link. -->
+  <xacro:arg name="sensors" default="false"/>
+  <xacro:if value="$(arg sensors)">
+    <link name="overhead_lidar"/>
+    <joint name="overhead_lidar_mount" type="fixed">
+      <parent link="base_link"/>
+      <child link="overhead_lidar"/>
+      <origin xyz="0.28 0.25 0.475" rpy="0 0 0"/>
+    </joint>
+    <link name="wrist_ft"/>
+    <joint name="wrist_ft_mount" type="fixed">
+      <parent link="gripper_link"/>
+      <child link="wrist_ft"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
+
+  <ros2_control name="so101_hakoniwa" type="system">
+    <hardware>
+      <plugin>hakoniwa_ros2_control/HakoniwaSystem</plugin>
+      <param name="state_topic">/pdu/joint_states</param>
+    </hardware>
+    <xacro:hakoniwa_joint name="shoulder_pan"/>
+    <xacro:hakoniwa_joint name="shoulder_lift"/>
+    <xacro:hakoniwa_joint name="elbow_flex"/>
+    <xacro:hakoniwa_joint name="wrist_flex"/>
+    <xacro:hakoniwa_joint name="wrist_roll"/>
+    <xacro:hakoniwa_joint name="gripper"/>
+  </ros2_control>
+</robot>

@@ -1,0 +1,7 @@
+<library path="hakoniwa_ros2_control">
+  <class name="hakoniwa_ros2_control/HakoniwaSystem"
+         type="hakoniwa_ros2_control::HakoniwaSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>Hakoniwa robot through the Hakoniwa ROS 2 Bridge: reads the joint states topic, writes one std_msgs/Float64 command topic per joint.</description>
+  </class>
+</library>
