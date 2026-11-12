@@ -1,9 +1,16 @@
 #include "hakoniwa_ros2_control/hakoniwa_system.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <utility>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include "rclcpp/wait_for_message.hpp"
+
+namespace
+{
+constexpr auto kFirstStateTimeout = std::chrono::seconds(10);
+}  // namespace
 
 namespace hakoniwa_ros2_control
 {
@@ -67,23 +74,25 @@ HakoniwaSystem::CallbackReturn HakoniwaSystem::on_configure(const rclcpp_lifecyc
 
 HakoniwaSystem::CallbackReturn HakoniwaSystem::on_activate(const rclcpp_lifecycle::State &)
 {
-  // No waiting here: activation runs inside the controller manager's callback,
-  // so the subscription is not served meanwhile. States and commands start
-  // without a value (NaN); write() sends no command without a value, so nothing
-  // moves the robot before the first joint states have arrived and a controller
-  // has set a command from them.
-  const double none = std::numeric_limits<double>::quiet_NaN();
+  // Start from where the robot is: wait for the first joint states and hold
+  // them, so that the state interfaces never carry a made-up value and no
+  // command moves the robot before a controller does. The wait uses a node of
+  // its own: this component's subscription is not served during activation.
+  auto waiter = std::make_shared<rclcpp::Node>(
+    "hakoniwa_system_first_state", rclcpp::NodeOptions().start_parameter_services(false));
+  sensor_msgs::msg::JointState first;
+  if (!rclcpp::wait_for_message(first, waiter, state_topic_, kFirstStateTimeout, rclcpp::SensorDataQoS())) {
+    RCLCPP_ERROR(get_logger(),
+                 "no %s within %lld s: is the Hakoniwa ROS 2 Bridge running, in the same ROS_DOMAIN_ID?",
+                 state_topic_.c_str(), static_cast<long long>(kFirstStateTimeout.count()));
+    return CallbackReturn::ERROR;
+  }
+  if (!apply_joint_states(first)) {
+    RCLCPP_ERROR(get_logger(), "%s does not carry every configured joint", state_topic_.c_str());
+    return CallbackReturn::ERROR;
+  }
   for (const auto & joint : joints_) {
-    if (joint.has_position) {
-      set_state(joint.name + "/" + hardware_interface::HW_IF_POSITION, none);
-    }
-    if (joint.has_velocity) {
-      set_state(joint.name + "/" + hardware_interface::HW_IF_VELOCITY, none);
-    }
-    if (joint.has_effort) {
-      set_state(joint.name + "/" + hardware_interface::HW_IF_EFFORT, none);
-    }
-    set_command(joint.command_interface, none);
+    set_command(joint.command_interface, get_state(joint.name + "/" + hardware_interface::HW_IF_POSITION));
   }
   return CallbackReturn::SUCCESS;
 }

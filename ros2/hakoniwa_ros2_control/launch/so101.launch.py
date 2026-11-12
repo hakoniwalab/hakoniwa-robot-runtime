@@ -49,13 +49,19 @@ def launch_setup(context):
         os.path.join(share, "config", "so101", "so101.urdf.xacro"),
         mappings={"so101_urdf": urdf, "sensors": LaunchConfiguration("sensors").perform(context)}).toxml()
     controllers = os.path.join(share, "config", "so101", "ros2_controllers.yaml")
+    # With sim_time:=true every node runs on the Hakoniwa simulation time, which
+    # hakoniwa_clock publishes on /clock from the joint states.
+    sim_time = {"use_sim_time": LaunchConfiguration("sim_time").perform(context) == "true"}
     actions = [
+        Node(package=PACKAGE, executable="hakoniwa_clock.py",
+             condition=IfCondition(LaunchConfiguration("sim_time"))),
         Node(package="robot_state_publisher", executable="robot_state_publisher",
-             parameters=[{"robot_description": robot_description}]),
+             parameters=[{"robot_description": robot_description}, sim_time]),
         Node(package="controller_manager", executable="ros2_control_node",
-             parameters=[controllers], output="screen"),
+             parameters=[controllers, sim_time], output="screen"),
         Node(package="controller_manager", executable="spawner",
-             arguments=["joint_state_broadcaster", "arm_controller", "gripper_controller"]),
+             arguments=["joint_state_broadcaster", "arm_controller", "gripper_controller"],
+             parameters=[sim_time]),
     ]
     with open(os.path.join(share, "config", "so101", "moveit", "so101.srdf"), encoding="utf-8") as stream:
         robot_description_semantic = stream.read()
@@ -92,7 +98,8 @@ def launch_setup(context):
                 "allowed_start_tolerance": 0.05,
             },
             "publish_robot_description_semantic": True,
-        }],
+        }, sim_time, *([load_yaml("config", "so101", "moveit", "sensors_3d.yaml")]
+              if LaunchConfiguration("sensors").perform(context) == "true" else [])],
     ))
     return actions
 
@@ -101,6 +108,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("so101_urdf", description="The SO-101 URDF (so101_new_calib.urdf)"),
         DeclareLaunchArgument("moveit", default_value="false", description="Also start MoveIt's move_group"),
+        DeclareLaunchArgument("sim_time", default_value="true",
+                              description="Run on the Hakoniwa simulation time (/clock from the joint states)"),
         DeclareLaunchArgument("sensors", default_value="false",
                               description="Add the sensor frames (overhead_lidar, wrist_ft) to the robot description"),
         OpaqueFunction(function=launch_setup),
