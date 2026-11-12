@@ -252,6 +252,8 @@ Robot Runtime の 1 刻み（`ActuatorRuntime::step()`）は、次の段で動�
 - `create`：`rclcpp` を初期化し（プロセスで一度。二つ目は失敗を返す）、ノードと `controller_manager::ControllerManager` を作る。ロボットの記述（URDF）とコントローラの設定は、プラグインの設定ファイルで渡す。`use_sim_time` は真。
 - 箱庭用のハードウェアの口（新規の `SystemInterface`）は、プラグインの中の構造体から状態を読み、指令を書く。PDU も箱庭アセットも使わない。
 - `update_period_ns`：コントローラの設定の `update_rate` から求める（物理の刻みの整数倍でなければ `create` で失敗）。
+- コントローラを動かし始める・止める（`switch_controller`）は、プラグインの中の別のスレッドから頼む。ros2_control では、切り替えは `update()` の中で行われ、頼んだ側はそれが終わるのを待つ。`create` や `on_start` の中（シミュレーションのスレッド）で頼むと、だれも `update()` を回していないので待ちぼうけになる（試作で確かめた：1 秒で時間切れ）。`on_start` は頼みを出すだけで戻り、切り替えは Robot Runtime が刻みごとに呼ぶ `update` の中で済む。
+- 試作で確かめたこと：MuJoCo で物理を回すホストが、`ControllerManager` を作るプラグインを `dlopen`（`RTLD_LOCAL`）で読み込み、物理 1000 刻み・制御 200 回を回して、きれいに終われた。ros2_control が実行中に読み込むハードウェアの口とコントローラも、同じプロセスでぶつからなかった（同じ名前で版の違う共有ライブラリはない。MuJoCo は中に組み込んだ部品の名前を外に出さない）。
 - `update`：状態を写す → `/clock` を配信 → `read(t, period)` → `update(t, period)` → `write(t, period)` → 指令を写して返す。センサーの PDU は `pdu2ros` で ROS のメッセージにして配信する（受け取り先は使い回す）。
 - 通信は、プラグインの中の別のスレッドの executor で回す。コントローラの更新は、シミュレーションのスレッドの `update` の中だけで行う（gz_ros2_control と同じ分け方）。
 - 横取りされたとき（`tick.selected` が 0 に変わったとき）：動いている軌道を取り消し、今の位置を保つ（コントローラを止めて動かし直す）。手動の割り込みなどから戻ったとき、古い軌道を再開しない。今の軌道のコントローラ（`JointTrajectoryController`、ほかの制御に切り替わると軌道を取り消す）と同じ挙動にそろえる。
