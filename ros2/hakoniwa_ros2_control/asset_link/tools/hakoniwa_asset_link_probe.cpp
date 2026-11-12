@@ -1,10 +1,14 @@
 // Checks HakoniwaAssetLink without ROS 2: registers the asset, steps on the
 // Hakoniwa time, and prints once a second
-//   wall [s], asset time [s], steps, time ratio over the last second, CPU [%] of this process
-// until the simulation stops (or --seconds have passed after START).
+//   wall [s], asset time [s], steps, time ratio over the last second, CPU [%] of this process, world time [s],
+//   joint states read so far, read errors, the latest stamp [s] and its age in asset time [ms]
+// until the simulation stops (or --seconds have passed after START). With
+// --state-log, every new joint states PDU goes to a CSV file:
+//   stamp_s, asset_s, <joint>... (positions)
 //
-// hakoniwa_asset_link_probe --pdu-def so101-pdudef.json [--asset-name HakoniwaSystem]
-//                           [--delta-usec 2000] [--realtime-sync 1] [--seconds 0]
+// hakoniwa_asset_link_probe --pdu-def so101-pdudef.json --endpoint so101_endpoint.json --robot SO101
+//                           [--asset-name HakoniwaSystem] [--delta-usec 2000] [--realtime-sync 1]
+//                           [--seconds 0] [--state-log states.csv]
 
 #include <sys/resource.h>
 
@@ -12,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <thread>
 
@@ -33,11 +38,18 @@ int main(int argc, char ** argv)
   hakoniwa_ros2_control::HakoniwaAssetLink::Config config;
   config.asset_name = "HakoniwaSystem";
   double seconds = 0.0;  // 0: until the simulation stops
+  std::string state_log;
   for (int i = 1; i + 1 < argc; i += 2) {
     const std::string key = argv[i];
     const std::string value = argv[i + 1];
     if (key == "--pdu-def") {
       config.pdu_definition_path = value;
+    } else if (key == "--endpoint") {
+      config.endpoint_config_path = value;
+    } else if (key == "--robot") {
+      config.robot_name = value;
+    } else if (key == "--state-log") {
+      state_log = value;
     } else if (key == "--asset-name") {
       config.asset_name = value;
     } else if (key == "--delta-usec") {
@@ -51,8 +63,8 @@ int main(int argc, char ** argv)
       return 2;
     }
   }
-  if (config.pdu_definition_path.empty()) {
-    std::fprintf(stderr, "--pdu-def is required\n");
+  if (config.pdu_definition_path.empty() || config.endpoint_config_path.empty() || config.robot_name.empty()) {
+    std::fprintf(stderr, "--pdu-def, --endpoint and --robot are required\n");
     return 2;
   }
 
@@ -68,18 +80,55 @@ int main(int argc, char ** argv)
   while (!link.running() && !link.finished()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  std::printf("started\n# wall_s asset_s steps ratio cpu_pct\n");
+  std::printf("started\n# wall_s asset_s steps ratio cpu_pct world_s states read_errors stamp_s age_ms\n");
+  std::ofstream log;
+  if (!state_log.empty()) {
+    log.open(state_log);
+  }
+  hakoniwa_ros2_control::JointStateSample sample;
+  std::uint64_t logged = 0;
   const auto begin = std::chrono::steady_clock::now();
   double last_wall = 0.0;
   double last_asset = link.asset_time_usec() * 1e-6;
   double last_cpu = cpu_seconds();
+  auto next_print = std::chrono::steady_clock::now() + std::chrono::seconds(1);
   while (link.running()) {
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    // Every new joint states PDU to the log (polled; the probe is not real time).
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (link.latest_state(sample) && sample.sequence != logged) {
+      if (log.is_open()) {
+        if (logged == 0) {
+          log << "stamp_s,asset_s";
+          for (const auto & name : sample.name) {
+            log << "," << name;
+          }
+          log << "\n";
+        }
+        log << std::fixed;
+        log.precision(6);
+        log << sample.stamp_sec << "," << sample.asset_time_usec * 1e-6;
+        log.precision(9);
+        for (const double value : sample.position) {
+          log << "," << value;
+        }
+        log << "\n";
+      }
+      logged = sample.sequence;
+    }
+    if (std::chrono::steady_clock::now() < next_print) {
+      continue;
+    }
+    next_print += std::chrono::seconds(1);
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
     const double asset = link.asset_time_usec() * 1e-6;
     const double cpu = cpu_seconds();
-    std::printf("%.3f %.6f %llu %.3f %.1f\n", wall, asset, static_cast<unsigned long long>(link.steps()),
-                (asset - last_asset) / (wall - last_wall), 100.0 * (cpu - last_cpu) / (wall - last_wall));
+    const bool have = link.latest_state(sample);
+    std::printf("%.3f %.6f %llu %.3f %.1f %.6f %llu %llu %.6f %.1f\n", wall, asset,
+                static_cast<unsigned long long>(link.steps()), (asset - last_asset) / (wall - last_wall),
+                100.0 * (cpu - last_cpu) / (wall - last_wall), link.world_time_usec() * 1e-6,
+                static_cast<unsigned long long>(have ? sample.sequence : 0),
+                static_cast<unsigned long long>(link.state_read_errors()), have ? sample.stamp_sec : 0.0,
+                have ? (asset - sample.stamp_sec) * 1000.0 : 0.0);
     std::fflush(stdout);
     last_wall = wall;
     last_asset = asset;
