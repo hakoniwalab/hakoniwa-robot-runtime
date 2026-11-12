@@ -33,6 +33,6 @@ install(TARGETS hakoniwa_ros2_control
   RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
-install(PROGRAMS scripts/move_to_joints.py scripts/hakoniwa_clock.py scripts/add_grasp_object.py scripts/pick_and_place.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/move_to_joints.py scripts/hakoniwa_clock.py scripts/add_grasp_object.py scripts/pick_and_place.py scripts/detect_objects.py DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

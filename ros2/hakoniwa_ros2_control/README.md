@@ -232,7 +232,7 @@ ros2 run hakoniwa_ros2_control pick_and_place.py
 - 1〜13 の全段が `OK` で終わる。
 - `holding` の力の変化が、物の重さ（0.294 N）に近い。
 - `released` の力の変化が、0.1 N 未満。
-- 最初と最後の行の LiDAR の点の数が、掴む場所で減り、置く場所で増える（LiDAR は粗いので、数は 1〜3 点です）。
+- 最初と最後の行の LiDAR の点の数が、掴む場所で減り、置く場所で増える。
 
 ホストの MuJoCo のビューアで、物が掴まれて運ばれ、置かれるのが見えます。
 
@@ -240,6 +240,57 @@ ros2 run hakoniwa_ros2_control pick_and_place.py
 
 - 3 か 8 で失敗する：手順 3 の端末 B のログで、`CheckStartStateBounds`（関節の範囲外）か `contact between`（何かとぶつかる）を探します。
 - 5 で失敗する：あごが閉じきった（物が間にない）。物の位置と、手順 2 の姿勢を確かめます。
+
+## 点群から物を見つけて掴む
+
+物の位置を設定で与える代わりに、3D LiDAR の点群から見つけます。上の「センサーを付けて物を掴んで置く」の手順 1 と 3 を済ませ、ROS 2 側が動いている状態から始めます。
+
+| もの | 内容 |
+|---|---|
+| `scripts/detect_objects.py` | 点群（`/pdu/lidar_scan`）を `base_link` に直し、作業台の範囲で机の面より 5 mm 以上高い点を、2 cm のます目で隣り合うものどうしまとめる。まとまりごとに中心・大きさ・向きを出す。ロボットの根元の周り（半径 0.12 m）は除く |
+| 腕をよける姿勢 | 腰（`shoulder_pan`）を -1.5 rad。腕が LiDAR の見ていない側（y > 0.25）に向き、物を隠さない |
+
+- MoveIt の自己フィルタ後の点群は使いません。登録した物（机）の周り 2 cm の点まで消えるので、高さ 3 cm の物は上の縁しか残らないためです。腕をよけてから、元の点群を使います。
+- 向きは、LiDAR から物の一部の面しか見えないとずれます。今は位置だけを使います（グリッパーは 70 mm まで開くので、3 cm の物なら向きがずれても掴めます）。
+
+### 1. 端末 C：机を登録して、腕をよける
+
+```bash
+source "$HAKONIWA_ROS2_WS/activate.bash"
+source "${HAKONIWA_ROS2_WS}-control/install/setup.bash"
+ros2 run hakoniwa_ros2_control add_grasp_object.py --id table --position 0 0 -0.03 --size 2.4 2.4 0.06
+ros2 service call /clear_octomap std_srvs/srv/Empty "{}"
+ros2 run hakoniwa_ros2_control move_to_joints.py --group arm --joints shoulder_pan=-1.5 shoulder_lift=0 elbow_flex=0 wrist_flex=0 wrist_roll=0
+```
+
+`added table: OK` と `MoveIt error code 1 (SUCCESS)` が出れば OK です。机を先に登録するのは、障害物の地図の上の机（2 cm のます目で 2〜4 cm の厚み）に、腰を回したときの肩が触れるためです。
+
+### 2. 端末 C：物を見つける
+
+```bash
+ros2 run hakoniwa_ros2_control detect_objects.py
+```
+
+`1 objects` と、`object_0: ... centre [x, y, z]` が出れば OK です。物が初めの位置にあるときは、`centre [0.28, 0.0, 0.015]`、`size [0.029, 0.03, 0.03]` 程度になります。
+
+### 3. 端末 C：見つけた位置で掴む・置く姿勢を求める
+
+手順 2 の `centre` の x と y を `--pick` に入れます。次は、物が (0.28, 0.0) に見つかり、(0.20, -0.20) に置く例です。
+
+```bash
+cd /workspace/hakoniwa-robot-arm
+python3 tools/recipe/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --model /workspace/work-host/model-forge/so101/install/so101.environment.xml --output /workspace/work-host/so101_pick_and_place.yaml
+```
+
+4 つの姿勢の `error` が数 mm 以内で、`written:` が出れば OK です。
+
+### 4. 端末 C：掴んで置く
+
+```bash
+ros2 run hakoniwa_ros2_control pick_and_place.py --config /workspace/work-host/so101_pick_and_place.yaml
+```
+
+1〜13 の全段が `OK` で終われば OK です。最後の行で、LiDAR の点が置いた場所に増えます。手順 1〜4 をくり返すと、物を見つけては運ぶことができます。
 
 ## 確認した環境
 
@@ -250,5 +301,6 @@ macOS（Apple Silicon）、Docker Desktop、ROS 2 Jazzy（arm64）、SO-101。
 | controller_manager の周期 | 100 Hz（`/actuator/shoulder_pan/command` の実測 100.03 Hz） |
 | 軌道（joint_trajectory_controller に直接） | `SUCCEEDED`、すべての関節が目標の位置に届いた |
 | MoveIt（腕 2 回、グリッパー 1 回） | どれも計画と実行が `SUCCESS`。関節は目標から約 0.01 rad |
+| 点群から見つけて掴んで置く（物を (0.20, -0.20) に置いたあと） | 見つけた中心 (0.203, -0.193)、17 点。そこから掴んで (0.28, 0) に戻し、13 段すべて OK。持ち上げたときの力の変化 0.295 N |
 | 掴んで置く（センサー付き、作業台を初めに戻して 1 回で） | 13 段すべて OK、約 62 秒。持ち上げたときの力の変化 0.294 N（物の重さ 0.294 N）、離したあと 0.018 N。LiDAR の点は掴む場所 3 → 0、置く場所 0 → 1 |
 | TCP Bridge で捨てられた指令 | 0 回 |
