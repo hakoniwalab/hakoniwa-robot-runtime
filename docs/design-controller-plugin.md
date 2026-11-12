@@ -168,6 +168,45 @@ typedef struct {
 - `PluginController`（`IController` の実装、新規）。指令を選ぶときの優先度は、軌道のコントローラと同じ扱い（設定で変えられる）。
 - 箱庭あり（Hakoniwa のランナー）でも、箱庭なしでも、同じように動く（プラグインはランナーを知らない）。
 
+**呼び出しの流れ**（実行の主体は Robot Runtime。時刻を進める、実時間に合わせる、箱庭と同期するのは Robot Runtime で、プラグインは呼ばれたときだけ動き、眠ったり待ったりしない）
+
+```text
+1. 起動（メインのスレッド）
+   マニフェストを読む
+     部品 {kind: "controller", type: "plugin", config: "ros2_control_plugin.json"}
+   build_runtime() が PluginController を作る
+     PluginLibrary：dlopen → 入口の関数 → 表の先頭 → kind と版を確かめる
+     table->create(関節の名前, センサーの PDU の名前, 物理の刻み, プラグインの設定)
+     table->update_period_ns() → 「5 刻みに 1 回」と決める
+   ActuatorRuntime のコントローラの一覧に登録する（指令の優先度つき）
+
+2. 開始（シミュレーションのスレッド）
+   table->on_start()
+
+3. 毎刻み（シミュレーションのスレッド。ランナーの on_step → runtime->step()）
+   状態を読む → 指令の受け口を見る
+   → コントローラの更新
+        PluginController::update()
+          周期の刻みだけ table->update(時刻, 関節の状態, 新しいセンサーの PDU) → 指令
+          それ以外の刻みは、前の指令をそのまま返す
+   → 指令を選ぶ → 物理を 1 刻み進める → センサー → 配信
+   → （ランナーが）実時間に合わせる、箱庭の時刻を進める
+
+4. 停止・リセット（シミュレーションのスレッド）
+   table->on_stop()、table->reset()
+
+5. 終了（メインのスレッド）
+   table->destroy() → 最後の 1 つがなくなったら dlclose
+```
+
+- プラグインの中のスレッド（ROS 2 の通信、センサーの配信役）は、プラグインが自分で持つ。Robot Runtime の関数は呼ばない。
+- 部品の設定ファイル（`ros2_control_plugin.json`）には、プラグインの共有ライブラリの場所、プラグイン自身の設定ファイル（URDF、コントローラの設定）、渡すセンサーの PDU の名前を書く。
+
+```json
+{ "id": "ros2_control", "kind": "controller", "type": "plugin",
+  "config": "config/controller/ros2_control_plugin.json" }
+```
+
 ### 5.3 ros2_control プラグイン
 
 `ros2/hakoniwa_ros2_control/controller_plugin/`（新規）。
