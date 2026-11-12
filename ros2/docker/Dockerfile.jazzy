@@ -1,0 +1,25 @@
+# ROS 2 side of the ros2_control connection (Ubuntu 24.04, ROS 2 Jazzy).
+# The Robot Runtime and MuJoCo run on the host; this image holds only ROS 2:
+# the Hakoniwa ROS 2 Bridge (hakoniwa_pdu_ros, connected to the host by TCP),
+# ros2_control with its standard controllers, and MoveIt 2.
+# Multi-architecture: builds on amd64 and arm64 (Apple Silicon).
+FROM ros:jazzy-ros-base-noble
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV CMAKE_BUILD_PARALLEL_LEVEL=2 \
+    PYTHONUNBUFFERED=1
+
+# Build tools and the packages the Hakoniwa ROS 2 Bridge needs (as the Robot
+# Arm image), then ros2_control, ros2_controllers and MoveIt 2.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates cmake curl git ninja-build patch pkg-config unzip \
+        python-is-python3 python3-dev python3-pip python3-venv \
+        python3-colcon-common-extensions \
+        ros-${ROS_DISTRO}-sensor-msgs ros-${ROS_DISTRO}-trajectory-msgs \
+        ros-${ROS_DISTRO}-ros2-control ros-${ROS_DISTRO}-ros2-controllers \
+        ros-${ROS_DISTRO}-moveit \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash"]
