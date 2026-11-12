@@ -47,7 +47,7 @@ def launch_setup(context):
     urdf = resolved_urdf(LaunchConfiguration("so101_urdf").perform(context))
     robot_description = xacro.process_file(
         os.path.join(share, "config", "so101", "so101.urdf.xacro"),
-        mappings={"so101_urdf": urdf}).toxml()
+        mappings={"so101_urdf": urdf, "sensors": LaunchConfiguration("sensors").perform(context)}).toxml()
     controllers = os.path.join(share, "config", "so101", "ros2_controllers.yaml")
     actions = [
         Node(package="robot_state_publisher", executable="robot_state_publisher",
@@ -101,5 +101,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("so101_urdf", description="The SO-101 URDF (so101_new_calib.urdf)"),
         DeclareLaunchArgument("moveit", default_value="false", description="Also start MoveIt's move_group"),
+        DeclareLaunchArgument("sensors", default_value="false",
+                              description="Add the sensor frames (overhead_lidar, wrist_ft) to the robot description"),
         OpaqueFunction(function=launch_setup),
     ])
