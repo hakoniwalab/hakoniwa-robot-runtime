@@ -9,6 +9,24 @@
   <xacro:arg name="so101_urdf" default=""/>
   <xacro:include filename="$(arg so101_urdf)"/>
 
+  <!-- Sensor frames (TF), as in so101_asset.urdf.xacro: named after the sensors
+       (their frame_id) and placed where the Robot Runtime mounts them. -->
+  <xacro:arg name="sensors" default="false"/>
+  <xacro:if value="$(arg sensors)">
+    <link name="overhead_lidar"/>
+    <joint name="overhead_lidar_mount" type="fixed">
+      <parent link="base_link"/>
+      <child link="overhead_lidar"/>
+      <origin xyz="0.28 0.25 0.475" rpy="0 0 0"/>
+    </joint>
+    <link name="wrist_ft"/>
+    <joint name="wrist_ft_mount" type="fixed">
+      <parent link="gripper_link"/>
+      <child link="wrist_ft"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
+
   <xacro:macro name="plugin_joint" params="name">
     <joint name="${name}">
       <command_interface name="position"/>
