@@ -163,5 +163,5 @@ usleep ：箱庭の時間を 1 刻み進める（世界の時刻に追いつく�
 2. Docker の中で箱庭 ROS 2 Bridge をビルドし、ホストの TCP Bridge につないで、`/pdu/joint_states` が届くこと。済み。
 3. Docker から `/actuator/<joint>/command` に出した指令で、関節が動くこと。済み（4.1）。
 4. `HakoniwaSystem` と joint_trajectory_controller で、軌道を送るとアームが位置制御で動くこと。済み（手順は [ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md)）。
-5. MoveIt 2 から動かすこと。
+5. MoveIt 2 から動かすこと。関節の目標を渡して計画と実行まで済み（腕とグリッパー、RViz なし）。周りの障害物をセンサで見る（点群・深度画像）ことと、手先の位置・姿勢の目標は、まだ。
 6. Ubuntu（同じマシン、Bridge が共有メモリ）で同じことを確かめること。

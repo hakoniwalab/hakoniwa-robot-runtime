@@ -1,11 +1,15 @@
 # SO-101 controllers. update_rate is the rate at which HakoniwaSystem writes
 # the joint commands to the Hakoniwa ROS 2 Bridge (checked up to 100 Hz).
+# The arm and the gripper have their own trajectory controllers, so that
+# MoveIt can execute a plan of one group without the other's joints.
 controller_manager:
   ros__parameters:
     update_rate: 100  # Hz
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
     arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    gripper_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
 arm_controller:
@@ -16,6 +20,15 @@ arm_controller:
       - elbow_flex
       - wrist_flex
       - wrist_roll
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+
+gripper_controller:
+  ros__parameters:
+    joints:
       - gripper
     command_interfaces:
       - position

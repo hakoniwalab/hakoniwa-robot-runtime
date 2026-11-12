@@ -1,6 +1,6 @@
 # hakoniwa_ros2_control
 
-ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です。ROS 2 の標準のコントローラ（joint_trajectory_controller など）で、箱庭のロボットを動かします。設計は [docs/ros2-control.md](../../docs/ros2-control.md) にあります。
+ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です。ROS 2 の標準のコントローラ（joint_trajectory_controller など）と MoveIt 2 で、箱庭のロボットを動かします。設計は [docs/ros2-control.md](../../docs/ros2-control.md) にあります。
 
 - `HakoniwaSystem` は ROS 2 のトピックだけを読み書きします。箱庭の PDU との変換は、箱庭 ROS 2 Bridge（hakoniwa_pdu_ros）が行います。
   - `read()`：`/pdu/joint_states` の最新の値を、関節ごとの State Interface（position、velocity）に入れます。
@@ -11,8 +11,10 @@ ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です
 |---|---|
 | `src/hakoniwa_system.cpp` | `HakoniwaSystem`（`hardware_interface::SystemInterface`） |
 | `config/so101/so101.urdf.xacro` | SO-101 の URDF をそのまま取り込み、`<ros2_control>` を足したもの |
-| `config/so101/ros2_controllers.yaml` | controller_manager（100 Hz）、joint_state_broadcaster、`arm_controller`（joint_trajectory_controller） |
-| `launch/so101.launch.py` | robot_state_publisher、controller_manager、2 つのコントローラの起動 |
+| `config/so101/ros2_controllers.yaml` | controller_manager（100 Hz）、joint_state_broadcaster、`arm_controller`（腕の 5 関節）、`gripper_controller`（グリッパー）。どちらも joint_trajectory_controller |
+| `config/so101/moveit/` | MoveIt の設定：SRDF（`arm`・`gripper` のグループ）、逆運動学（KDL）、関節の速度・加速度の上限、実行先のコントローラ |
+| `launch/so101.launch.py` | robot_state_publisher、controller_manager、3 つのコントローラの起動。`moveit:=true` で move_group も起動する |
+| `scripts/move_to_joints.py` | MoveIt（move_group）に関節の目標を渡し、計画と実行を頼む |
 
 ## SO-101 を動かす（macOS のホスト ＋ Docker の ROS 2）
 
@@ -20,7 +22,7 @@ ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です
 
 ```text
 ホスト  : Robot Runtime（SO-101）＋ TCP Bridge（0.0.0.0:54001）
-Docker  : 箱庭 ROS 2 Bridge ＋ ros2_control（HakoniwaSystem、arm_controller）
+Docker  : 箱庭 ROS 2 Bridge ＋ ros2_control（HakoniwaSystem、arm_controller、gripper_controller）＋ MoveIt 2（move_group）
 ```
 
 前提：
@@ -102,14 +104,17 @@ CONTAINER_NAME=hakoniwa-ros2-control-jazzy bash docker/attach.bash jazzy
 ```bash
 source "$HAKONIWA_ROS2_WS/activate.bash"
 source "${HAKONIWA_ROS2_WS}-control/install/setup.bash"
-ros2 launch hakoniwa_ros2_control so101.launch.py so101_urdf:=/workspace/work-host/model-forge/so101/source/Simulation/SO101/so101_new_calib.urdf
+ros2 launch hakoniwa_ros2_control so101.launch.py so101_urdf:=/workspace/work-host/model-forge/so101/source/Simulation/SO101/so101_new_calib.urdf moveit:=true
 ```
 
-`Configured and activated joint_state_broadcaster` と `Configured and activated arm_controller` が出れば OK です。この端末は開いたままにします。
+`Configured and activated` が `joint_state_broadcaster`・`arm_controller`・`gripper_controller` の 3 つで出て、move_group の `You can start planning now!` が出れば OK です。この端末は開いたままにします。
+
+- `No 3D sensor plugin(s) defined for octomap updates` というエラーが出ますが、周りの障害物を見るセンサをまだ設定していないためで、動作には関係ありません。
+- 起動のときに、URDF のメッシュの相対パス（`assets/...`）を絶対パスに直した写しを一時ディレクトリに作ります。MoveIt が衝突判定でメッシュを読むためです。元の URDF は変えません。
 
 - `activate.bash` は ROS 2 のドメイン（`ROS_DOMAIN_ID=73`）を箱庭 ROS 2 Bridge とそろえます。ROS 2 を使う端末では、どれも最初に読み込みます。読み込まないと、`/pdu/joint_states` が見えません。
 
-### 6. 端末 C：軌道を送って動かす
+### 6. 端末 C：MoveIt と軌道で動かす
 
 端末 B と同じようにコンテナに 3 つ目の端末（端末 C）を開きます。
 
@@ -117,22 +122,32 @@ ros2 launch hakoniwa_ros2_control so101.launch.py so101_urdf:=/workspace/work-ho
 CONTAINER_NAME=hakoniwa-ros2-control-jazzy bash docker/attach.bash jazzy
 ```
 
-端末 C で実行します。
+端末 C で実行します。最後の行は、関節名ごとの今の位置を表示します（`/joint_states` の関節の並びは名前の順なので、名前と組にして見ます）。
 
 ```bash
 source "$HAKONIWA_ROS2_WS/activate.bash"
+source "${HAKONIWA_ROS2_WS}-control/install/setup.bash"
 ros2 control list_controllers
-ros2 action send_goal /arm_controller/follow_joint_trajectory control_msgs/action/FollowJointTrajectory "{trajectory: {joint_names: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper], points: [{positions: [0.6, -0.4, 0.5, 0.3, -0.5, 0.2], time_from_start: {sec: 3}}]}}"
+ros2 run hakoniwa_ros2_control move_to_joints.py --group arm --joints shoulder_pan=0.5 shoulder_lift=-0.3 elbow_flex=0.4 wrist_flex=0.2 wrist_roll=0.0
+ros2 run hakoniwa_ros2_control move_to_joints.py --group gripper --joints gripper=1.0
 python3 -c "import rclpy; from sensor_msgs.msg import JointState; rclpy.init(); n=rclpy.create_node('peek'); m=[]; n.create_subscription(JointState, '/joint_states', m.append, 10); [rclpy.spin_once(n, timeout_sec=1.0) for _ in range(5) if not m]; print({k: round(v, 3) for k, v in zip(m[-1].name, m[-1].position)})"
 ```
 
 次のとおりなら OK です。
 
-- `list_controllers` に、`arm_controller` と `joint_state_broadcaster` が `active` で出る。
-- `send_goal` が `Goal finished with status: SUCCEEDED` で終わる。
-- 最後の行に、関節名ごとの位置が送った値で出る（`shoulder_pan` 0.6、`shoulder_lift` -0.4、`elbow_flex` 0.5、`wrist_flex` 0.3、`wrist_roll` -0.5、`gripper` 0.2）。`/joint_states` の関節の並びは名前の順なので、名前と組にして見ます。
+- `list_controllers` に、3 つのコントローラが `active` で出る。
+- 2 回の `move_to_joints.py` が、どちらも `MoveIt error code 1 (SUCCESS)` で終わる。
+- 最後の行で、`shoulder_pan` 0.5、`shoulder_lift` -0.3、`elbow_flex` 0.4、`wrist_flex` 0.2、`wrist_roll` 0.0、`gripper` 1.0 の近く（0.01 rad 程度の差）になる。
 
-アームは、ホストの MuJoCo のビューアで 3 秒かけて動きます。
+アームとグリッパーは、ホストの MuJoCo のビューアで動きます。
+
+MoveIt を使わずに、joint_trajectory_controller に直接軌道を送ることもできます。
+
+```bash
+ros2 action send_goal /arm_controller/follow_joint_trajectory control_msgs/action/FollowJointTrajectory "{trajectory: {joint_names: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll], points: [{positions: [0.6, -0.4, 0.5, 0.3, -0.5], time_from_start: {sec: 3}}]}}"
+```
+
+`Goal finished with status: SUCCEEDED` で終われば OK です。
 
 ### 7. 終了する
 
@@ -150,5 +165,6 @@ macOS（Apple Silicon）、Docker Desktop、ROS 2 Jazzy（arm64）、SO-101。
 | 確認 | 結果 |
 |---|---|
 | controller_manager の周期 | 100 Hz（`/actuator/shoulder_pan/command` の実測 100.03 Hz） |
-| 軌道（6 関節） | `SUCCEEDED`、すべての関節が目標の位置に届いた |
+| 軌道（joint_trajectory_controller に直接） | `SUCCEEDED`、すべての関節が目標の位置に届いた |
+| MoveIt（腕 2 回、グリッパー 1 回） | どれも計画と実行が `SUCCESS`。関節は目標から約 0.01 rad |
 | TCP Bridge で捨てられた指令 | 0 回 |
