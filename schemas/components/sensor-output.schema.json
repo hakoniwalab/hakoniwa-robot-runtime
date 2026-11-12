@@ -18,11 +18,16 @@
     "pdu_config": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["pdu_name", "message_type", "update_rate_hz"],
+      "required": ["message_type", "update_rate_hz"],
+      "if": {"properties": {"message_type": {"const": "sensor_msgs/CompressedImage"}}},
+      "then": {"required": ["cameras"]},
+      "else": {"required": ["pdu_name"]},
       "properties": {
         "pdu_name": {"type": "string", "minLength": 1},
         "camera_info_pdu_name": {"description": "sensor_msgs/Image only (required there): the channel of its sensor_msgs/CameraInfo.", "type": "string", "minLength": 1},
-        "message_type": {"enum": ["sensor_msgs/JointState", "geometry_msgs/WrenchStamped", "sensor_msgs/Imu", "sensor_msgs/LaserScan", "sensor_msgs/PointCloud2", "sensor_msgs/Range", "sensor_msgs/MagneticField", "sensor_msgs/FluidPressure", "sensor_msgs/NavSatFix", "sensor_msgs/Image"]},
+        "jpeg_quality": {"description": "sensor_msgs/CompressedImage only: JPEG quality.", "type": "integer", "minimum": 1, "maximum": 100, "default": 95},
+        "cameras": {"description": "sensor_msgs/CompressedImage only (required there, instead of pdu_name): the CompressedImage and CameraInfo channels of each camera of the rig; camera is the rig camera name, omitted for a single camera.", "type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["pdu_name", "camera_info_pdu_name"], "properties": {"camera": {"type": "string"}, "pdu_name": {"type": "string", "minLength": 1}, "camera_info_pdu_name": {"type": "string", "minLength": 1}}}},
+        "message_type": {"enum": ["sensor_msgs/JointState", "geometry_msgs/WrenchStamped", "sensor_msgs/Imu", "sensor_msgs/LaserScan", "sensor_msgs/PointCloud2", "sensor_msgs/Range", "sensor_msgs/MagneticField", "sensor_msgs/FluidPressure", "sensor_msgs/NavSatFix", "sensor_msgs/Image", "sensor_msgs/CompressedImage"]},
         "update_rate_hz": {"type": "number", "exclusiveMinimum": 0}
       }
     }

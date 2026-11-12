@@ -2,6 +2,7 @@
 
 #include <mujoco/mujoco.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -44,6 +45,10 @@ struct MujocoSensorStage::Sensor {
     std::unique_ptr<sa::ILidarSensorAdapter> lidar_adapter;
     std::unique_ptr<sa::IRangefinderSensorAdapter> rangefinder_adapter;
     std::unique_ptr<sa::IDepthCameraSensorAdapter> depth_camera_adapter;
+    // RGB camera rigs (mounted like IMUs); the adapter draws through renderer
+    bool rgb_camera {false};
+    std::shared_ptr<sa::IImageRenderer> renderer;
+    std::unique_ptr<sa::IRgbCameraSensorAdapter> rgb_camera_adapter;
     // Magnetometers, barometers and GPS receivers (mounted like IMUs)
     bool mag {false};
     bool baro {false};
@@ -167,7 +172,8 @@ MujocoSensorStage::MujocoSensorStage(
     const std::uint64_t physics_step_usec,
     const runtime::sensor::SensorImplementationRegistry& registry,
     const RayCasterFactory& ray_caster_factory,
-    const runtime::RuntimeSensorWorld& world)
+    const runtime::RuntimeSensorWorld& world,
+    const ImageRendererFactory& image_renderer_factory)
     : model_(model)
     , data_(data)
     , physics_step_usec_(physics_step_usec)
@@ -340,6 +346,42 @@ MujocoSensorStage::MujocoSensorStage(
             rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
             sensor->reading.mount_name = config.mjcf_body;
             needs_kinematics_ = true;
+        } else if (config.type == "rgb_camera") {
+            const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
+            if (body_id < 0) {
+                throw std::invalid_argument(owner + ": MJCF body not found: " + config.mjcf_body);
+            }
+            if (implementation->create_rgb_camera == nullptr) {
+                throw std::invalid_argument(owner + ": implementation " + config.implementation
+                    + " has no rgb_camera adapter");
+            }
+            if (image_renderer_factory) {
+                sensor->renderer = image_renderer_factory();
+            }
+            if (sensor->renderer == nullptr) {
+                throw std::invalid_argument(owner + ": the world provides no image renderer");
+            }
+            sa::RgbCameraAdapterSetup setup;
+            setup.config_path = config.definition_path;
+            setup.vehicle_name = config.pdu_robot;
+            setup.sensor_name = config.name;
+            setup.physics_step_ns = physics_step_usec * 1000;
+            setup.has_random_seed = true;
+            setup.random_seed = seed;
+            setup.renderer = sensor->renderer.get();
+            sensor->rgb_camera_adapter = implementation->create_rgb_camera(setup, error);
+            if (sensor->rgb_camera_adapter == nullptr) {
+                throw std::invalid_argument(owner + ": cannot create the "
+                    + config.implementation + " rgb_camera adapter: " + error);
+            }
+            sensor->rgb_camera = true;
+            sensor->body_id = body_id;
+            for (int axis = 0; axis < 3; ++axis) {
+                sensor->mount_position[axis] = config.position_m[static_cast<std::size_t>(axis)];
+            }
+            rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
+            sensor->reading.mount_name = config.mjcf_body;
+            needs_kinematics_ = true;
         } else if (config.type == "lidar" || config.type == "rangefinder"
             || config.type == "depth_camera") {
             const bool is_lidar = config.type == "lidar";
@@ -389,10 +431,14 @@ MujocoSensorStage::MujocoSensorStage(
                 setup.ray_caster = sensor->ray_caster.get();
             };
             if (is_depth) {
-                // Only the ray caster is given: a definition that renders
-                // (method render) is rejected by the adapter at creation.
+                // The ray caster and, when the world has one, the image renderer:
+                // the definition chooses (method ray or render).
                 sa::DepthCameraAdapterSetup setup;
                 fill(setup);
+                if (image_renderer_factory) {
+                    sensor->renderer = image_renderer_factory();
+                }
+                setup.renderer = sensor->renderer.get();
                 sensor->depth_camera_adapter = implementation->create_depth_camera(setup, error);
                 sensor->depth_camera = sensor->depth_camera_adapter != nullptr;
             } else if (is_lidar) {
@@ -767,6 +813,51 @@ void MujocoSensorStage::step_depth_camera(Sensor& sensor, std::uint64_t local_ti
     sensor.reading.depth_image = std::move(reading);
 }
 
+void MujocoSensorStage::step_rgb_camera(Sensor& sensor, std::uint64_t local_time_ns)
+{
+    const auto truth = sensor_pose(sensor, local_time_ns);
+    sa::RgbImages images;
+    std::string error;
+    if (!sensor.rgb_camera_adapter->step(truth, images, error)) {
+        throw std::runtime_error("sensor " + sensor.name + " failed: " + error);
+    }
+    bool updated = false;
+    for (std::uint32_t i = 0; i < images.count; ++i) {
+        updated = updated || images.images[i].updated;
+    }
+    sensor.reading.updated = updated;
+    if (!updated) {
+        return;
+    }
+    auto reading = std::make_shared<runtime::RgbImagesReading>();
+    reading->cameras.reserve(images.count);
+    for (std::uint32_t i = 0; i < images.count; ++i) {
+        const auto& image = images.images[i];
+        runtime::RgbCameraImageReading camera;
+        camera.camera_name = image.camera_name;
+        camera.width = image.width;
+        camera.height = image.height;
+        // Rows may be padded (step); keep width * 3 bytes per row.
+        const std::size_t row = static_cast<std::size_t>(image.width) * 3;
+        camera.rgb.resize(row * image.height);
+        for (std::uint32_t v = 0; v < image.height; ++v) {
+            std::copy_n(image.data + static_cast<std::size_t>(v) * image.step, row,
+                camera.rgb.data() + static_cast<std::size_t>(v) * row);
+        }
+        camera.info.width = image.info.width;
+        camera.info.height = image.info.height;
+        camera.info.distortion_model = image.info.distortion_model;
+        camera.info.d = image.info.d;
+        camera.info.k = image.info.k;
+        camera.info.r = image.info.r;
+        camera.info.p = image.info.p;
+        reading->cameras.push_back(std::move(camera));
+    }
+    sensor.reading.has_sample = true;
+    sensor.reading.sample_time_usec = first_step_time_usec_ + images.images[0].sample_time_ns / 1000;
+    sensor.reading.rgb_images = std::move(reading);
+}
+
 void MujocoSensorStage::step_lidar(Sensor& sensor, std::uint64_t local_time_ns)
 {
     const auto truth = sensor_pose(sensor, local_time_ns);
@@ -847,6 +938,8 @@ void MujocoSensorStage::step(runtime::RobotState& state)
             step_rangefinder(*sensor, local_time_ns);
         } else if (sensor->depth_camera) {
             step_depth_camera(*sensor, local_time_ns);
+        } else if (sensor->rgb_camera) {
+            step_rgb_camera(*sensor, local_time_ns);
         } else if (sensor->mag) {
             step_mag(*sensor, local_time_ns);
         } else if (sensor->baro) {
@@ -877,6 +970,8 @@ void MujocoSensorStage::reset()
             reset = sensor->rangefinder_adapter->reset(error);
         } else if (sensor->depth_camera) {
             reset = sensor->depth_camera_adapter->reset(error);
+        } else if (sensor->rgb_camera) {
+            reset = sensor->rgb_camera_adapter->reset(error);
         } else if (sensor->mag) {
             reset = sensor->mag_adapter->reset(error);
         } else if (sensor->baro) {

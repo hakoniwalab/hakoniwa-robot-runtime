@@ -213,6 +213,8 @@ struct RuntimeSensorConfig {
     std::string mjcf_body;           ///< body mount
     std::array<double, 3> position_m {0.0, 0.0, 0.0};
     std::array<double, 3> orientation_deg {0.0, 0.0, 0.0};  ///< roll, pitch, yaw
+    /// RGB camera rigs: the camera names of the definition ("" for a single camera).
+    std::vector<std::string> camera_names;
     /// Range sensors: the root body whose subtree the rays never hit. Empty
     /// means the mount body (the sensor housing).
     std::string exclude_mjcf_body;
@@ -242,6 +244,14 @@ struct RuntimeSensorOutputConfig {
     std::string pdu_name;
     std::string message_type;        ///< sensor_msgs/JointState or geometry_msgs/WrenchStamped
     std::string camera_info_pdu_name;  ///< sensor_msgs/Image outputs: the CameraInfo channel
+    /// sensor_msgs/CompressedImage outputs: one entry per camera of the rig.
+    struct CameraChannels {
+        std::string camera;          ///< camera name in the rig ("" for a single camera)
+        std::string pdu_name;        ///< CompressedImage channel
+        std::string camera_info_pdu_name;
+    };
+    std::vector<CameraChannels> cameras;
+    int jpeg_quality {95};
     double update_rate_hz {0.0};
     std::vector<std::string> sensors;
 };

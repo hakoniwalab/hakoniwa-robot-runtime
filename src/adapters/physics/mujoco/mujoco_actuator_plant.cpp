@@ -4,6 +4,10 @@
     && !defined(HAKO_MUJOCO_ROBOTS_ENABLE_RAY_CASTER)
 #error "A sensor build needs HAKO_MUJOCO_ROBOTS_ENABLE_RAY_CASTER for the world's ray caster"
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR \
+    && !defined(HAKO_MUJOCO_ROBOTS_ENABLE_IMAGE_RENDERER)
+#error "A sensor build needs HAKO_MUJOCO_ROBOTS_ENABLE_IMAGE_RENDERER for the world's image renderer"
+#endif
 #include "physics/physics_impl.hpp"
 
 #include <mujoco/mujoco.h>
@@ -1683,6 +1687,11 @@ std::shared_ptr<::hakoniwa::sensor_adapter::IRayCaster> MujocoActuatorPlant::cre
     }
     spec.exclude_root_body = exclude_root_body;
     return impl_->world->createRayCaster(spec);
+}
+
+std::shared_ptr<::hakoniwa::sensor_adapter::IImageRenderer> MujocoActuatorPlant::create_image_renderer()
+{
+    return impl_->world->createImageRenderer();
 }
 #endif
 

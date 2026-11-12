@@ -34,6 +34,9 @@
         },
         "depth_camera": {
           "keys": ["update_rate", "method", "image", "horizontal_fov", "depth_type", "clip", "range", "no_return", "accuracy"]
+        },
+        "rgb_camera": {
+          "keys": ["update_rate", "image", "horizontal_fov", "clip", "noise", "cameras", "output"]
         }
       }
     },

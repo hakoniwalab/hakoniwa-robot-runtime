@@ -12,6 +12,7 @@
 
 namespace hakoniwa::sensor_adapter {
 class IRayCaster;
+class IImageRenderer;
 }
 
 struct mjData_;
@@ -51,6 +52,11 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * axes; the barometer gets the sensor altitude above sea level; the GPS gets
  * the antenna position and velocity in NWU and as WGS-84 coordinates.
  *
+ * RGB camera rigs (1..N cameras): mounted like IMUs, usually on a housing
+ * body. The adapter asks the world's image renderer for all cameras of the rig
+ * in one call; the renderer draws on the render server's thread at the state
+ * after the step (the stage runs mj_forward once after mj_step).
+ *
  * LiDARs (2D and 3D), rangefinders and depth cameras (measured by rays):
  * mounted like IMUs, usually on a housing body. The world's ray
  * caster casts the rays at the state after the step (the stage runs
@@ -69,6 +75,9 @@ public:
     /** Creates a ray caster from the world (nullptr when the world has none). */
     using RayCasterFactory =
         std::function<std::shared_ptr<::hakoniwa::sensor_adapter::IRayCaster>(const RayCasterMount&)>;
+    /** Creates the world's image renderer (nullptr when the world has none). */
+    using ImageRendererFactory =
+        std::function<std::shared_ptr<::hakoniwa::sensor_adapter::IImageRenderer>()>;
 
     /**
      * Resolves every mount in the model and creates the adapters.
@@ -83,7 +92,8 @@ public:
         std::uint64_t physics_step_usec,
         const runtime::sensor::SensorImplementationRegistry& registry,
         const RayCasterFactory& ray_caster_factory = {},
-        const runtime::RuntimeSensorWorld& world = {});
+        const runtime::RuntimeSensorWorld& world = {},
+        const ImageRendererFactory& image_renderer_factory = {});
     ~MujocoSensorStage() override;
 
     void step(runtime::RobotState& state) override;
@@ -97,6 +107,7 @@ private:
     void step_lidar(Sensor& sensor, std::uint64_t local_time_ns);
     void step_rangefinder(Sensor& sensor, std::uint64_t local_time_ns);
     void step_depth_camera(Sensor& sensor, std::uint64_t local_time_ns);
+    void step_rgb_camera(Sensor& sensor, std::uint64_t local_time_ns);
     void step_mag(Sensor& sensor, std::uint64_t local_time_ns);
     void step_baro(Sensor& sensor, std::uint64_t local_time_ns);
     void step_gps(Sensor& sensor, std::uint64_t local_time_ns);

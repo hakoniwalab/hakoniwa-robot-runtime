@@ -13,6 +13,7 @@
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 namespace hakoniwa::sensor_adapter {
 class IRayCaster;
+class IImageRenderer;
 }
 #endif
 
@@ -61,6 +62,8 @@ public:
         const std::array<double, 3>& position_m,
         const std::array<double, 4>& orientation_wxyz,
         const std::string& exclude_root_body);
+    /** The world's image renderer for camera sensors (see IWorld::createImageRenderer). */
+    [[nodiscard]] std::shared_ptr<::hakoniwa::sensor_adapter::IImageRenderer> create_image_renderer();
 #endif
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT

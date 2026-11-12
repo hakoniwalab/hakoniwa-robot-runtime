@@ -217,6 +217,20 @@ struct DepthImageReading {
     CameraInfoReading info;
 };
 
+/** One camera's colour image of an RGB rig, shaped like sensor_msgs/Image (rgb8). */
+struct RgbCameraImageReading {
+    std::string camera_name;         ///< "" for a single camera
+    std::uint32_t width {0};
+    std::uint32_t height {0};
+    std::vector<std::uint8_t> rgb;   ///< rgb8, rows from the top
+    CameraInfoReading info;
+};
+
+/** The images of one RGB camera rig (1..N cameras) for one step. */
+struct RgbImagesReading {
+    std::vector<RgbCameraImageReading> cameras;
+};
+
 /** One GPS fix, shaped like sensor_msgs/NavSatFix (WGS-84). */
 struct GpsFixReading {
     double latitude_deg {0.0};
@@ -259,6 +273,8 @@ struct SensorReading {
     /// Barometers: the latest measured static pressure [Pa].
     bool has_pressure {false};
     double pressure_pa {0.0};
+    /// RGB camera rigs: the latest images of all cameras, shared and never changed.
+    std::shared_ptr<const RgbImagesReading> rgb_images;
     /// Depth cameras: the latest image, shared and never changed.
     std::shared_ptr<const DepthImageReading> depth_image;
     /// GPS receivers: the latest fix.

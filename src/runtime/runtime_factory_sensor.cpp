@@ -7,6 +7,7 @@
 #include "runtime/sensor/sensor_catalog.hpp"
 #include "runtime/sensor/sensor_registry.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <regex>
 #include <unordered_map>
@@ -184,9 +185,9 @@ bool load_sensor(
     if (output.type != "joint" && output.type != "force_torque" && output.type != "imu"
         && output.type != "lidar" && output.type != "rangefinder"
         && output.type != "mag" && output.type != "baro" && output.type != "gps"
-        && output.type != "depth_camera") {
+        && output.type != "depth_camera" && output.type != "rgb_camera") {
         return fail(error, named + ": sensor type \"" + output.type
-            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar, rangefinder, mag, baro, gps, depth_camera)");
+            + "\" is not supported by this Runtime yet (supported: joint, force_torque, imu, lidar, rangefinder, mag, baro, gps, depth_camera, rgb_camera)");
     }
     if (!sensor.contains("mount") || !load_mount(sensor, output, named, error)) {
         if (!sensor.contains("mount")) {
@@ -211,6 +212,18 @@ bool load_sensor(
             const auto vertical = scan->find("vertical");
             output.scans_3d = vertical != scan->end() && vertical->is_object()
                 && vertical->value("samples", 1) > 1;
+        }
+    }
+    if (output.type == "rgb_camera") {
+        // The rig's camera names: "" for a single camera without "cameras".
+        output.camera_names.clear();
+        const auto cameras = definition.is_object() ? definition.find("cameras") : definition.end();
+        if (definition.is_object() && cameras != definition.end() && cameras->is_array()) {
+            for (const auto& camera : *cameras) {
+                output.camera_names.push_back(camera.is_object() ? camera.value("name", "") : "");
+            }
+        } else {
+            output.camera_names.push_back("");
         }
     }
     if (!sensor::validate_sensor_definition(
@@ -365,12 +378,14 @@ bool load_sensor_output(
     const bool pressure = message_type == "sensor_msgs/FluidPressure";
     const bool fix = message_type == "sensor_msgs/NavSatFix";
     const bool image = message_type == "sensor_msgs/Image";
+    const bool compressed = message_type == "sensor_msgs/CompressedImage";
     if (!joint_state && !wrench && !imu && !scan && !cloud && !range && !magnetic && !pressure && !fix
-        && !image) {
+        && !image && !compressed) {
         return fail(error, owner + ": message_type must be sensor_msgs/JointState,"
             " geometry_msgs/WrenchStamped, sensor_msgs/Imu, sensor_msgs/LaserScan,"
             " sensor_msgs/PointCloud2, sensor_msgs/Range, sensor_msgs/MagneticField,"
-            " sensor_msgs/FluidPressure, sensor_msgs/NavSatFix or sensor_msgs/Image");
+            " sensor_msgs/FluidPressure, sensor_msgs/NavSatFix, sensor_msgs/Image"
+            " or sensor_msgs/CompressedImage");
     }
     output.message_type = message_type;
     if (!joint_state && root.at("sensors").size() != 1) {
@@ -391,7 +406,8 @@ bool load_sensor_output(
         }
         const std::string expected_type = joint_state ? "joint"
             : wrench ? "force_torque" : imu ? "imu" : range ? "rangefinder"
-            : magnetic ? "mag" : pressure ? "baro" : fix ? "gps" : image ? "depth_camera" : "lidar";
+            : magnetic ? "mag" : pressure ? "baro" : fix ? "gps" : image ? "depth_camera"
+            : compressed ? "rgb_camera" : "lidar";
         if (found->second->type != expected_type) {
             return fail(error, owner + ": sensor " + name + " is of type " + found->second->type
                 + " and cannot go into " + message_type);
@@ -409,6 +425,60 @@ bool load_sensor_output(
         output.sensors.push_back(name);
     }
     const auto& pdu = root.at("pdu_config");
+    if (compressed) {
+        // One CompressedImage and one CameraInfo channel per camera of the rig.
+        if (!only_keys(pdu, {"message_type", "update_rate_hz", "jpeg_quality", "cameras"},
+                owner + ".pdu_config", error)) {
+            return false;
+        }
+        if (pdu.contains("jpeg_quality")) {
+            if (!pdu.at("jpeg_quality").is_number_integer()
+                || pdu.at("jpeg_quality").get<int>() < 1 || pdu.at("jpeg_quality").get<int>() > 100) {
+                return fail(error, owner + ".pdu_config.jpeg_quality must be an integer from 1 to 100");
+            }
+            output.jpeg_quality = pdu.at("jpeg_quality").get<int>();
+        }
+        if (!pdu.contains("cameras") || !pdu.at("cameras").is_array() || pdu.at("cameras").empty()) {
+            return fail(error, owner + ".pdu_config.cameras must list the channels of each camera");
+        }
+        const auto& rig = *sensors.at(output.sensors.front());
+        std::unordered_set<std::string> listed;
+        for (const auto& item : pdu.at("cameras")) {
+            RuntimeSensorOutputConfig::CameraChannels channels;
+            const std::string where = owner + ".pdu_config.cameras";
+            if (!item.is_object()) {
+                return fail(error, where + " entries must be objects");
+            }
+            if (!only_keys(item, {"camera", "pdu_name", "camera_info_pdu_name"}, where, error)
+                || !required_string(item, "pdu_name", channels.pdu_name, error, where)
+                || !required_string(item, "camera_info_pdu_name", channels.camera_info_pdu_name, error, where)) {
+                return false;
+            }
+            channels.camera = item.value("camera", "");
+            if (std::find(rig.camera_names.begin(), rig.camera_names.end(), channels.camera)
+                == rig.camera_names.end()) {
+                return fail(error, where + ": sensor " + rig.name + " has no camera \"" + channels.camera + "\"");
+            }
+            if (!listed.insert(channels.camera).second) {
+                return fail(error, where + ": camera \"" + channels.camera + "\" listed twice");
+            }
+            if (!verify_pdu_binding(context, output.pdu_robot, channels.pdu_name,
+                    "sensor_msgs/CompressedImage", 1, error)
+                || !verify_pdu_binding(context, output.pdu_robot, channels.camera_info_pdu_name,
+                    "sensor_msgs/CameraInfo", 1, error)) {
+                return false;
+            }
+            output.cameras.push_back(std::move(channels));
+        }
+        if (!pdu.contains("update_rate_hz") || !pdu.at("update_rate_hz").is_number()
+            || !std::isfinite(pdu.at("update_rate_hz").get<double>())
+            || pdu.at("update_rate_hz").get<double>() <= 0.0) {
+            return fail(error, owner + ": update_rate_hz must be finite and positive");
+        }
+        output.update_rate_hz = pdu.at("update_rate_hz").get<double>();
+        output.pdu_name = output.cameras.front().pdu_name;
+        return true;
+    }
     if (!only_keys(pdu, image
                 ? std::unordered_set<std::string>{"pdu_name", "camera_info_pdu_name", "message_type", "update_rate_hz"}
                 : std::unordered_set<std::string>{"pdu_name", "message_type", "update_rate_hz"},
