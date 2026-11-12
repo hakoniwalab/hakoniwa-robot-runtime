@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<!-- SO-101 in Gazebo (Harmonic) with gz_ros2_control, for comparing with
+     Hakoniwa: the arm's own URDF is included unchanged (argument so101_urdf),
+     the joints and controllers are those of so101_asset.urdf.xacro and
+     ros2_controllers.yaml. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="so101">
+  <xacro:arg name="so101_urdf" default=""/>
+  <xacro:arg name="controllers" default=""/>
+  <xacro:include filename="$(arg so101_urdf)"/>
+
+  <!-- Fixed to the world at the origin, as in Hakoniwa. -->
+  <link name="world"/>
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child link="base_link"/>
+  </joint>
+
+  <xacro:macro name="gz_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="so101_gazebo" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+    <xacro:gz_joint name="shoulder_pan"/>
+    <xacro:gz_joint name="shoulder_lift"/>
+    <xacro:gz_joint name="elbow_flex"/>
+    <xacro:gz_joint name="wrist_flex"/>
+    <xacro:gz_joint name="wrist_roll"/>
+    <xacro:gz_joint name="gripper"/>
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(arg controllers)</parameters>
+    </plugin>
+  </gazebo>
+</robot>

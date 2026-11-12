@@ -79,6 +79,9 @@ HakoniwaAssetSystem::CallbackReturn HakoniwaAssetSystem::on_configure(const rclc
   config.endpoint_config_path = parameter(info, "endpoint_config_path", "");
   config.robot_name = parameter(info, "robot_name", "");
   config.delta_usec = std::stoull(parameter(info, "delta_usec", "2000"));
+  // false: no wall-clock pacing here (another asset, e.g. the Robot Runtime, keeps
+  // real time, or the simulation runs as fast as it can); the world time is still waited for.
+  config.realtime_sync = parameter(info, "realtime_sync", "true") == "true";
   for (const auto & joint : joints_) {
     config.command_joints.push_back(joint.name);
   }

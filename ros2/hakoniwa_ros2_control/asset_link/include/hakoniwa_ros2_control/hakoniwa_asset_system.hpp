@@ -11,7 +11,7 @@
 // endpoint_config_path, robot_name, delta_usec (2000), state_timeout_sec (0.5),
 // first_state_timeout_sec (60), sensor_publish_config (a JSON file of sensor PDU
 // name -> rate [Hz]; published as /pdu/<name>), publish_clock (true: /clock from
-// the Hakoniwa time). Each joint: one command interface, position (velocity,
+// the Hakoniwa time), realtime_sync (true: pace to the wall clock). Each joint: one command interface, position (velocity,
 // effort) state interfaces.
 // The design is in docs/ros2-control.md, chapter 10.
 
