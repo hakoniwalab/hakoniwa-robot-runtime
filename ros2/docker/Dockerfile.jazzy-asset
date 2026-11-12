@@ -1,0 +1,19 @@
+# Docker only: the Robot Runtime (MuJoCo), Hakoniwa and ROS 2 in one Linux, for
+# HakoniwaAssetSystem (ros2_control itself as a Hakoniwa asset, shared memory).
+# Built on the Robot Arm development image (hakoniwa-robot-arm
+# docker/create-docker-image.bash jazzy), which builds the Hakoniwa Foundation
+# and the Robot Runtime; this adds ros2_control, ros2_controllers and MoveIt 2.
+# The host + Docker configuration keeps using Dockerfile.jazzy.
+ARG BASE_IMAGE=hakoniwa-arm-dev:jazzy
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-ros2-control ros-${ROS_DISTRO}-ros2-controllers \
+        ros-${ROS_DISTRO}-moveit ros-${ROS_DISTRO}-moveit-ros-perception \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash"]

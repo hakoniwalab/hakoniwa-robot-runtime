@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!-- SO-101 with ros2_control as a Hakoniwa asset (HakoniwaAssetSystem): ROS 2
+     and Hakoniwa on the same Linux, the joint PDUs read and written in shared
+     memory. The arm's own URDF is included unchanged (argument so101_urdf).
+     The configuration through the Hakoniwa ROS 2 Bridge is so101.urdf.xacro. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="so101">
+  <xacro:arg name="so101_urdf" default=""/>
+  <xacro:arg name="pdu_definition_path" default=""/>
+  <xacro:arg name="endpoint_config_path" default=""/>
+  <xacro:arg name="robot_name" default="SO101"/>
+  <xacro:arg name="asset_name" default="HakoniwaSystem"/>
+  <xacro:arg name="delta_usec" default="2000"/>
+  <xacro:include filename="$(arg so101_urdf)"/>
+
+  <xacro:macro name="hakoniwa_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="so101_hakoniwa_asset" type="system">
+    <hardware>
+      <plugin>hakoniwa_ros2_control/HakoniwaAssetSystem</plugin>
+      <param name="asset_name">$(arg asset_name)</param>
+      <param name="pdu_definition_path">$(arg pdu_definition_path)</param>
+      <param name="endpoint_config_path">$(arg endpoint_config_path)</param>
+      <param name="robot_name">$(arg robot_name)</param>
+      <param name="delta_usec">$(arg delta_usec)</param>
+      <param name="state_timeout_sec">0.5</param>
+      <param name="first_state_timeout_sec">60</param>
+    </hardware>
+    <xacro:hakoniwa_joint name="shoulder_pan"/>
+    <xacro:hakoniwa_joint name="shoulder_lift"/>
+    <xacro:hakoniwa_joint name="elbow_flex"/>
+    <xacro:hakoniwa_joint name="wrist_flex"/>
+    <xacro:hakoniwa_joint name="wrist_roll"/>
+    <xacro:hakoniwa_joint name="gripper"/>
+  </ros2_control>
+</robot>

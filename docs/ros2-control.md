@@ -306,11 +306,11 @@ macOS のホストで、SO-101 の Robot Runtime と並べて確かめました�
 
 | ros2_control の段階 | すること |
 |---|---|
-| `on_init` | URDF の設定（通り道、アセット名、PDU の設定のパス、dT、`state_timeout_sec`）を読む |
+| `on_init` | URDF の設定（アセット名、PDU の設定のパス、ロボット名、dT、`state_timeout_sec`、`first_state_timeout_sec`）を読む |
 | `on_configure` | PDU の Endpoint を開き（`Endpoint::open`）、箱庭アセットとして登録する（`hako_asset_register`）。登録はプロセスに 1 回だけ |
-| `on_activate` | アセットのスレッドを動かし、最初の状態が届くまで条件変数で待つ。届いた位置を状態と指令の初めの値にする |
-| `on_deactivate` | その場の位置を指令として置き、それが書かれたのを待ってからスレッドを止める |
-| `on_cleanup`／`on_shutdown` | Endpoint を止めて閉じる |
+| `on_activate` | アセットのスレッドを動かし、最初の状態が届くまで待つ（上限 `first_state_timeout_sec`）。届いた位置を状態と指令の初めの値にする |
+| `on_deactivate` | その場の位置を指令として 1 回置く。アセットのスレッドは止めない（止めると、そのアセットを待ってシミュレーション全体が止まるため） |
+| `on_cleanup`／`on_shutdown` | アセットのスレッドを止め、Endpoint を止めて閉じる |
 
 - 箱庭コアは、シミュレーションが止まっている間（`HakoSim_Stopped`）しかアセットの登録を受け付けません（`alloc_asset`）。そのため、ros2_control_node は箱庭のシミュレーションを始める（START）前に立ち上げます。箱庭のランチャでは、ROS 2 の起動を `activation_timing: before_start` のアセットとして並べます。
 - Endpoint の `post_start` は、Robot Runtime と同じく、START のあとアセットのスレッドの始め（`on_initialize`）で呼びます。
@@ -322,9 +322,11 @@ macOS のホストで、SO-101 の Robot Runtime と並べて確かめました�
 
 ### 10.7 ビルドと選び方
 
-- 箱庭アセットの通り道は、箱庭のライブラリ（コアと PDU Endpoint）に依存します。ROS 2 のトピックの通り道だけを使う構成で箱庭のライブラリを要らないままにするため、CMake の切り替えで足します。
-- どちらの通り道を使うかは、URDF の `<ros2_control>` のハードウェアの設定（`transport`）で選びます。
-- 内部では、ros2_control に向いた部分（`HakoniwaSystem`）と通り道（ROS 2 のトピック、箱庭アセット）を分けます。2 つの通り道は、どちらも 10.3 章の最新値を受け渡す同じ口を持ちます。そのため、10.4 章の古さの判定は ROS 2 のトピックの通り道にも同じく効きます。
+- 箱庭アセット版は、ROS 2 のトピックの `HakoniwaSystem` とは別のプラグイン `HakoniwaAssetSystem`（ライブラリ `hakoniwa_ros2_control_asset`、`hakoniwa_ros2_control_asset.xml`）です。`HakoniwaSystem` は変えません。
+- `HakoniwaAssetSystem` は箱庭のライブラリ（コアと PDU Endpoint）に依存します。CMake の切り替え（`-DHAKONIWA_ROS2_CONTROL_WITH_ASSET=ON`、箱庭のインストール先を `CMAKE_PREFIX_PATH`）のときだけ作ります。切り替えなしでは、これまでどおり ROS 2 だけに依存します。
+- どちらを使うかは、URDF の `<ros2_control>` の `<plugin>` で選びます。SO-101 は `so101_asset.urdf.xacro` と `so101_asset.launch.py`（`so101.urdf.xacro`、`so101.launch.py` はそのまま）。
+- 箱庭の側は ROS 2 に依存しない部品（`asset_link/`、`HakoniwaAssetLink`）に分け、試験プログラム（`hakoniwa_asset_link_probe`）で単体で確かめます。
+- Docker だけの構成のイメージは `ros2/docker/Dockerfile.jazzy-asset` です。hakoniwa-robot-arm の開発用イメージ（Foundation と Robot Runtime を作れるもの）に、ros2_control、ros2_controllers、MoveIt 2 を足します。
 
 ### 10.8 確かめる順番
 
@@ -335,3 +337,11 @@ macOS のホストで、SO-101 の Robot Runtime と並べて確かめました�
 5. MoveIt と、Bridge のセンサーを合わせて、掴んで置く（9 章）。
 
 - 指令の受け取りの周期（アクチュエータの設定の `update_rate_hz`、SO-101 は 50 Hz）と controller_manager の周期（100 Hz）の関係は、3 で確かめます。
+
+4 は Docker だけの構成（macOS の Docker、Linux arm64）で確かめました。箱庭のランチャで、Robot Runtime、状態を記録するだけの別のアセット（試験プログラム）、ros2_control（`so101_asset.launch.py`）を START の前に起動し、arm_controller に 9 秒で 3 点を通る軌道を送りました。
+
+- `HakoniwaAssetSystem` は START の前に登録でき、START のあと最初の関節の状態（箱庭の時刻 0.002 秒）を受けて、3 つのコントローラが動きました。
+- 軌道の結果は `error_code: 0`（SUCCEEDED）でした。
+- 別のアセットが共有メモリから読んだ関節の値と、軌道の 3 点との差は、最大 0.007 rad、0.004 rad、0.0005 rad でした。
+- 箱庭の時間は実時間の 1.00 倍で進みました（TCP Bridge なし）。
+- controller_manager の `Could not enable FIFO RT scheduling policy` は、コンテナに実時間の優先度の権限がないためです。シミュレーションの動きには関係しません。
