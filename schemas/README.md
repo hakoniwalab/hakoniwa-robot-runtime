@@ -11,6 +11,8 @@ Current Runtime-owned schemas:
 - `components/mirror-body-controller.schema.json`
 - `components/impulse-collision-output.schema.json`
 - `components/geom-friction-controller.schema.json`
+- `components/sensor-instances.schema.json`
+- `components/sensor-output.schema.json`
 - `input/logical-joy-layout.schema.json`
 - `runtime/actuator-runtime.schema.json`
 

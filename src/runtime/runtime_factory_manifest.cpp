@@ -291,6 +291,32 @@ static bool load_pdu_types(
         error);
 }
 
+#if !(defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR)
+// A build without sensor support must not silently ignore sensors.
+static bool reject_sensor_components(
+    const RuntimeParseContext& context,
+    std::string* error)
+{
+    for (const auto& component : context.components) {
+        const auto kind = component.value("kind", "");
+        if (kind == "sensor"
+            || (kind == "state_output"
+                && component.value("type", "") == "sensor_output")) {
+            return fail(error,
+                "component " + component.value("id", std::string("?"))
+                + " is a sensor, but this application is built without sensor support"
+                  " (HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR)");
+        }
+    }
+    if (context.runtime_root.is_object() && context.runtime_root.contains("sensors")) {
+        return fail(error,
+            "runtime config has \"sensors\", but this application is built without"
+            " sensor support (HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR)");
+    }
+    return true;
+}
+#endif
+
 static bool validate_component_headers(
     const std::vector<json>& components,
     std::string* error)
@@ -436,6 +462,12 @@ bool resolve_runtime_definition(
 #endif
         || !detail::load_state_output_definitions(
             context, definition, error_message)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+        || !detail::load_sensor_definitions(
+            context, definition, error_message)
+#else
+        || !detail::reject_sensor_components(context, error_message)
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         || !detail::load_mirror_definitions(
             context, definition, error_message)

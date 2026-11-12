@@ -32,6 +32,31 @@
 #include "runner/runner_factory.hpp"
 #include "runtime/runtime_factory.hpp"
 #include "runtime/runtime_factory_manifest.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+#include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
+#include "runtime/publisher/sensor_joint_state_publisher.hpp"
+#include "runtime/publisher/sensor_wrench_publisher.hpp"
+#include "runtime/publisher/sensor_imu_publisher.hpp"
+#include "runtime/publisher/sensor_laser_scan_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/laser_scan_pdu_writer.hpp"
+#include "runtime/publisher/sensor_point_cloud_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/point_cloud2_pdu_writer.hpp"
+#include "runtime/publisher/sensor_range_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/range_pdu_writer.hpp"
+#include "runtime/publisher/sensor_depth_image_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/depth_image_pdu_writer.hpp"
+#include "runtime/publisher/sensor_compressed_image_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/compressed_image_pdu_writer.hpp"
+#include "runtime/publisher/sensor_magnetic_field_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/magnetic_field_pdu_writer.hpp"
+#include "runtime/publisher/sensor_fluid_pressure_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/fluid_pressure_pdu_writer.hpp"
+#include "runtime/publisher/sensor_nav_sat_fix_publisher.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/nav_sat_fix_pdu_writer.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/imu_pdu_writer.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/wrench_stamped_pdu_writer.hpp"
+#include "runtime/sensor/sensor_registry.hpp"
+#endif
 
 #include <memory>
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
@@ -560,6 +585,161 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         return true;
                     });
                 async_rpc_inputs.push_back(std::move(input));
+            }
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+            if (!definition.sensors.empty()) {
+                auto stage = std::make_shared<adapters::mujoco::MujocoSensorStage>(
+                    plant->model(),
+                    plant->data(),
+                    definition.sensors,
+                    definition.sensor_seed,
+                    plant->delta_time_usec(),
+                    runtime::sensor::sensor_implementation_registry(),
+                    // Called only while the stage is built; the plant owns the world.
+                    [plant_ptr = plant.get()](
+                        const adapters::mujoco::MujocoSensorStage::RayCasterMount& mount) {
+                        return plant_ptr->create_ray_caster(mount.body, mount.position_m,
+                            mount.orientation_wxyz, mount.exclude_root_body);
+                    },
+                    definition.sensor_world,
+                    [plant_ptr = plant.get()]() { return plant_ptr->create_image_renderer(); });
+                std::vector<std::shared_ptr<runtime::IStatePublisher>> sensor_publishers;
+                for (const auto& output : definition.sensor_outputs) {
+                    if (output.message_type == "sensor_msgs/Imu") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorImuPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::ImuPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/PointCloud2") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorPointCloudPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::PointCloud2PduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/MagneticField") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorMagneticFieldPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::MagneticFieldPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/FluidPressure") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorFluidPressurePublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::FluidPressurePduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/NavSatFix") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorNavSatFixPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::NavSatFixPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/CompressedImage") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorCompressedImagePublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::CompressedImagePduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.cameras,
+                                    output.jpeg_quality)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/Image") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorDepthImagePublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::DepthImagePduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name,
+                                    output.camera_info_pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/Range") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorRangePublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::RangePduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "sensor_msgs/LaserScan") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorLaserScanPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::LaserScanPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    if (output.message_type == "geometry_msgs/WrenchStamped") {
+                        sensor_publishers.push_back(
+                            std::make_shared<runtime::SensorWrenchPublisher>(
+                                output.component_id,
+                                output.sensors.front(),
+                                output.update_rate_hz,
+                                std::make_shared<adapters::hakoniwa::WrenchStampedPduWriter>(
+                                    *endpoint,
+                                    output.pdu_robot,
+                                    output.pdu_name)));
+                        continue;
+                    }
+                    sensor_publishers.push_back(
+                        std::make_shared<runtime::SensorJointStatePublisher>(
+                            output.component_id,
+                            output.sensors,
+                            output.update_rate_hz,
+                            std::make_shared<adapters::hakoniwa::JointStatePduWriter>(
+                                *endpoint,
+                                output.pdu_robot,
+                                output.pdu_name)));
+                }
+                runtime_instance->attach_sensors(
+                    std::move(stage), std::move(sensor_publishers));
             }
 #endif
             return {

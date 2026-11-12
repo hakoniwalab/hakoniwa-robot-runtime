@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hakoniwa.dev/schemas/sensor-instances.schema.json",
+  "title": "Hakoniwa Robot Runtime sensor instances",
+  "description": "The sensors of one component, independent of the sensor type. Each sensor states (1) what it is: name, type and implementation, (2) where it is mounted in the MJCF, and (3) the sensor definition file with its error model. Rules across files (implementation and keys against catalog/sensor-implementations.json, MJCF names, unique names) are checked by the Runtime at start-up.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "sensors"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": 1},
+    "sensors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/sensor"}
+    }
+  },
+  "$defs": {
+    "sensor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "implementation", "mount", "definition"],
+      "properties": {
+        "name": {
+          "description": "Unique within the Runtime. Also names the random streams of the sensor.",
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+        },
+        "type": {
+          "enum": ["joint", "force_torque", "imu", "mag", "baro", "gps",
+                   "rangefinder", "lidar", "depth_camera", "rgb_camera"]
+        },
+        "implementation": {
+          "description": "An implementation name from the sensor catalog, for example hakoniwa, gazebo or airsim.",
+          "type": "string",
+          "minLength": 1
+        },
+        "mount": {
+          "anyOf": [
+            {"$ref": "#/$defs/joint_mount"},
+            {"$ref": "#/$defs/body_mount"},
+            {"$ref": "#/$defs/range_mount"}
+          ]
+        },
+        "definition": {
+          "description": "Path to the common sensor definition file (error model). Relative to this file.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "joint"}}},
+          "then": {"properties": {"mount": {"$ref": "#/$defs/joint_mount"}}}
+        },
+        {
+          "if": {"properties": {"type": {"enum": ["lidar", "rangefinder", "depth_camera"]}}},
+          "then": {"properties": {"mount": {"$ref": "#/$defs/range_mount"}}}
+        },
+        {
+          "if": {"properties": {"type": {"not": {"enum": ["joint", "lidar", "rangefinder", "depth_camera"]}}}},
+          "then": {"properties": {"mount": {"$ref": "#/$defs/body_mount"}}}
+        }
+      ]
+    },
+    "joint_mount": {
+      "description": "A joint sensor measures one 1-DOF MJCF joint (hinge or slide). It has no position or orientation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mjcf_joint"],
+      "properties": {
+        "mjcf_joint": {"type": "string", "minLength": 1}
+      }
+    },
+    "range_mount": {
+      "description": "A range sensor is fixed to an MJCF body, usually its housing, like a body mount. Its rays never hit the subtree of exclude_mjcf_body; by default that is the mount body, so the robot the sensor looks at stays visible, as with a real sensor.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mjcf_body"],
+      "properties": {
+        "mjcf_body": {"type": "string", "minLength": 1},
+        "position_m": {"$ref": "#/$defs/body_mount/properties/position_m"},
+        "orientation_deg": {"$ref": "#/$defs/body_mount/properties/orientation_deg"},
+        "exclude_mjcf_body": {
+          "description": "Root body whose subtree is never hit, for example the robot base to hide the whole robot.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "body_mount": {
+      "description": "The sensor is fixed to an MJCF body. Position and orientation are relative to the body frame; the sensor axes are FLU.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mjcf_body"],
+      "properties": {
+        "mjcf_body": {"type": "string", "minLength": 1},
+        "position_m": {
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0, 0, 0]
+        },
+        "orientation_deg": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "roll": {"type": "number", "default": 0},
+            "pitch": {"type": "number", "default": 0},
+            "yaw": {"type": "number", "default": 0}
+          }
+        }
+      }
+    }
+  }
+}

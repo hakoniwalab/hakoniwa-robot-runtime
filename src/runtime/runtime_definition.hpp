@@ -198,6 +198,65 @@ struct RuntimeGeomFrictionConfig {
  * message bindings, command types, limits, and controller relationships have
  * already been validated and normalized for Runtime composition.
  */
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+/** One sensor of a `sensor` component (schemas/components/sensor-instances.schema.json). */
+struct RuntimeSensorConfig {
+    std::string component_id;
+    std::string pdu_robot;
+    std::string name;
+    std::string type;
+    std::string implementation;
+    std::string definition_path;     ///< resolved sensor definition file
+    bool measures_torque {false};    ///< joint sensor whose definition has "torque"
+    bool scans_3d {false};           ///< LiDAR whose definition has more than one vertical sample
+    std::string mjcf_joint;          ///< joint mount
+    std::string mjcf_body;           ///< body mount
+    std::array<double, 3> position_m {0.0, 0.0, 0.0};
+    std::array<double, 3> orientation_deg {0.0, 0.0, 0.0};  ///< roll, pitch, yaw
+    /// RGB camera rigs: the camera names of the definition ("" for a single camera).
+    std::vector<std::string> camera_names;
+    /// Range sensors: the root body whose subtree the rays never hit. Empty
+    /// means the mount body (the sensor housing).
+    std::string exclude_mjcf_body;
+};
+
+/**
+ * Where the simulated world is on the earth (runtime_config.sensors.world).
+ * The MuJoCo world axes are NWU (x north, y west, z up) from origin.
+ */
+struct RuntimeSensorWorld {
+    bool has_origin {false};
+    double latitude_deg {0.0};
+    double longitude_deg {0.0};
+    double altitude_m {0.0};              ///< of the world origin, above sea level
+    bool has_magnetic_field {false};
+    double magnetic_intensity_nT {0.0};
+    double magnetic_declination_deg {0.0};  ///< east of true north is positive
+    double magnetic_inclination_deg {0.0};  ///< downward is positive
+    double sea_level_pressure_pa {101325.0};
+    double sea_level_temperature_c {15.0};
+};
+
+/** A sensor output (schemas/components/sensor-output.schema.json). */
+struct RuntimeSensorOutputConfig {
+    std::string component_id;
+    std::string pdu_robot;
+    std::string pdu_name;
+    std::string message_type;        ///< sensor_msgs/JointState or geometry_msgs/WrenchStamped
+    std::string camera_info_pdu_name;  ///< sensor_msgs/Image outputs: the CameraInfo channel
+    /// sensor_msgs/CompressedImage outputs: one entry per camera of the rig.
+    struct CameraChannels {
+        std::string camera;          ///< camera name in the rig ("" for a single camera)
+        std::string pdu_name;        ///< CompressedImage channel
+        std::string camera_info_pdu_name;
+    };
+    std::vector<CameraChannels> cameras;
+    int jpeg_quality {95};
+    double update_rate_hz {0.0};
+    std::vector<std::string> sensors;
+};
+#endif
+
 struct RuntimeDefinition {
     std::string model_path;
     std::vector<RuntimeInitialBodyPoseConfig> initial_body_poses;
@@ -213,6 +272,12 @@ struct RuntimeDefinition {
     std::vector<RuntimeMirrorBodyConfig> mirror_bodies;
     std::vector<RuntimeImpulseCollisionOutputConfig> impulse_collision_outputs;
     std::vector<RuntimeGeomFrictionConfig> geom_frictions;
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+    std::vector<RuntimeSensorConfig> sensors;
+    std::vector<RuntimeSensorOutputConfig> sensor_outputs;
+    std::uint64_t sensor_seed {0};
+    RuntimeSensorWorld sensor_world;
 #endif
 };
 

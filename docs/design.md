@@ -34,7 +34,7 @@ Robot Pack / Application
               ActuatorRuntime
                      |
                      v
- CommandSource -> Controller -> Arbiter -> Plant -> Publisher
+ CommandSource -> Controller -> Arbiter -> Plant -> [SensorStage] -> Publisher
                      |
                      v
                    Runner
@@ -54,8 +54,10 @@ Runtime 固有の manifest semantics は `RuntimeFactory` へ委譲し、transpo
 Runtime core は次の5分類で構成します。
 
 ```text
-CommandSource -> Controller -> Arbiter -> Plant -> Publisher
+CommandSource -> Controller -> Arbiter -> Plant -> [SensorStage] -> Publisher
 ```
+
+`[SensorStage]` は opt-in の拡張です（2.7）。
 
 `ActuatorRuntime` はこの5分類の一つではありません。5責務を **1 simulation step の順序で呼び出す orchestrator** です。
 
@@ -473,6 +475,23 @@ Plant:
 時刻同期は他の directive と同じく、step 開始時の読み取りで成立します。
 ある Hakoniwa step 中に書かれた値は、次の physics step から適用されます。
 
+### 2.7 SensorStage extension（opt-in）
+
+センサを使うビルド（`HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1`）でだけ入る段です。Plant の step の後、Publisher の前に、毎 step 呼ばれます。
+
+- Plant が進めたステップの後の状態から、設定した各センサの真値を取り出す（関節の角度、伝達トルク、力とトルク、角速度と比力、レイの距離など）。
+- 真値を、センサごとに選んだ実装（`hakoniwa`、`gazebo` など）の誤差モデル（`hakoniwa-sensor-adapter` のインタフェース）に通し、測定値を `RobotState.sensor_readings` に入れる。
+- 測定値は、センサ用の Publisher が PDU で送る。
+
+原則:
+
+- Plant の状態と次のステップを変えない（真値をそろえるための再計算だけをする）
+- 制御の判断をしない（今のコントローラは真値を読む）
+- センサの時刻は Plant の時刻から数える
+- 取り付け（MJCF のどこに、どの位置と姿勢で付けるか）と、どの PDU で送るかは [sensor-pdu.md](sensor-pdu.md) を参照
+
+MuJoCo の実装は `MujocoSensorStage` です。レイを使うセンサ（LiDAR、測距）は、ワールドからレイの部品（`IWorld::createRayCaster`）をもらいます。
+
 ## 3. ActuatorRuntime
 
 `ActuatorRuntime` は5責務を1 stepとして順序実行します。
@@ -499,6 +518,9 @@ Plant.apply_directives (opt-in Plant Directive path)
 Plant.step
         |
         v
+SensorStage.step     (opt-in)
+        |
+        v
 Publisher
 ```
 
@@ -512,7 +534,8 @@ const auto outputs = update_controllers(inputs, current_state, context, ...);
 const auto directives = update_directive_controllers(inputs, context, ...); // opt-in
 auto arbitration = arbiter_->arbitrate(outputs, current_state, context);
 plant_->apply_directives(directives);                                     // opt-in
-const auto next_state = plant_->step(arbitration.selected_commands);
+auto next_state = plant_->step(arbitration.selected_commands);
+sensor_stage_->step(next_state);                                          // opt-in
 const auto next_context = complete_step(next_state, arbitration);
 publish_state(next_state, next_context, ...);
 ```
