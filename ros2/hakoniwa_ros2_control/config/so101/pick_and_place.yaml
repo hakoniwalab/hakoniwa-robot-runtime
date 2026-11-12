@@ -1,0 +1,21 @@
+# SO-101 pick and place (written by hakoniwa-robot-arm tools/recipe/so101_grasp_poses.py).
+# Arm joints in the order ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll'].
+object:
+  id: grasp_cube
+  size: [0.03, 0.03, 0.03]
+  pick: [0.28, 0.0, 0.015]
+  place: [0.2, -0.2, 0.015]
+table:
+  id: table
+  size: [2.4, 2.4, 0.06]
+  position: [0.0, 0.0, -0.03]
+joints:
+  pre_grasp: [-0.1024, 0.4739, -0.5648, 1.6481, -1.6143]
+  grasp: [-0.1023, 0.5294, -0.2425, 1.2812, -1.6242]
+  pre_place: [0.8740, 0.5748, -0.6715, 1.6481, -0.6446]
+  place: [0.8739, 0.6045, -0.4391, 1.4031, -0.6481]
+  home: [0.0, 0.0, 0.0, 0.0, 0.0]
+gripper:
+  open: 1.0
+  close: 0.0
+  closed_on_object_min: 0.2  # the jaws stop on the cube above this; below it nothing was grasped

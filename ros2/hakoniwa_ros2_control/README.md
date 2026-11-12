@@ -158,6 +158,89 @@ python tools/recipe/so101.py stop
 python tools/recipe/so101.py status
 ```
 
+## センサーを付けて物を掴んで置く
+
+上の手順の SO-101 に、作業台の上から下向きの 3D LiDAR と手首の力覚センサーを付けます。MoveIt が点群から障害物の地図を作り、物を掴んで別の場所に置きます。設計は [docs/ros2-control.md](../../docs/ros2-control.md) の 9 章にあります。
+
+```text
+ホスト  : Robot Runtime（SO-101、センサー付き）＋ TCP Bridge
+Docker  : 箱庭 ROS 2 Bridge ＋ ros2_control ＋ MoveIt 2（点群から障害物の地図）＋ pick_and_place.py
+```
+
+| もの | 内容 |
+|---|---|
+| 3D LiDAR | 作業台の上の筐体から下向き。点群は `/pdu/lidar_scan`（`frame_id` は `overhead_lidar`） |
+| 力覚センサー | 手首。`/pdu/wrist_wrench`（`frame_id` は `wrist_ft`）。掴めたか（物の重さ）と、離したかを見る |
+| 時刻 | ROS 2 の全ノードを箱庭の時刻で動かす。`hakoniwa_clock.py` が関節の状態の時刻から `/clock` を出す |
+| `scripts/add_grasp_object.py` | 物を MoveIt に登録する。`--attach` で手に付け、`--detach` で置いた場所に戻す |
+| `scripts/pick_and_place.py` | 掴んで置く流れ。どの段でも失敗したら、その場で止まる |
+| `config/so101/pick_and_place.yaml` | 物・机・4 つの姿勢（掴む前・掴む・置く前・置く）の関節の値。hakoniwa-robot-arm の `tools/recipe/so101_grasp_poses.py` が書く |
+
+前提（上の手順の前提に加えて）：
+
+- 3D LiDAR と力覚センサーは `hakoniwa` 実装を使います。そのライブラリは箱庭ラボが提供します（[お問い合わせ](https://hakoniwa-lab.net/contact/)）。受け取ったライブラリのパスを、セミコロンで並べて環境変数 `HAKO_ROBOT_ARM_SENSOR_LIBRARIES` に入れておきます。
+- ROS 2 のイメージは、手順 2 の `docker build` で作ったものを使います（MoveIt の点群の部品 `moveit_ros_perception` が入っています）。
+
+### 1. ホスト：センサー付きで起動する
+
+上の手順 1 の `host-hako` の端末で、`configure` と `build` に `--sensors` を付けます。
+
+```bash
+cd ../hakoniwa-robot-arm
+python tools/recipe/so101.py configure --ros2-control --sensors --realtime-sync-cycle-msec 2
+python tools/recipe/so101.py build --sensors
+python tools/recipe/so101.py start
+python tools/recipe/so101.py status
+```
+
+`configure` の表示が `Sensors         : enabled` で、`status` が `"state": "RUNNING"` なら OK です。作業台の上に LiDAR の筐体（黒い円柱）と、緑の物があります。
+
+### 2. ホスト：掴む・置く姿勢を求める（物の位置を変えるときだけ）
+
+物を (0.28, 0) から (0.20, -0.20) に運ぶ設定は、`config/so101/pick_and_place.yaml` に入っています。別の位置にするときは、同じ `host-hako` の端末で次を実行し、出来た設定を手順 4 の `--config` で渡します。
+
+```bash
+python tools/recipe/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --output ../work-host/so101_pick_and_place.yaml
+```
+
+4 つの姿勢それぞれに `error` と `tilt` が表示され、最後に `written:` が出れば OK です。手が届かない位置では、エラーで止まります。
+
+### 3. Docker：ROS 2 Bridge と ros2_control（センサー付き）を起動する
+
+上の手順 2〜4 でコンテナに入って ROS 2 Bridge を起動し、手順 5 の端末 B では `sensors:=true` を付けて起動します。
+
+```bash
+source "$HAKONIWA_ROS2_WS/activate.bash"
+source "${HAKONIWA_ROS2_WS}-control/install/setup.bash"
+ros2 launch hakoniwa_ros2_control so101.launch.py so101_urdf:=/workspace/work-host/model-forge/so101/source/Simulation/SO101/so101_new_calib.urdf moveit:=true sensors:=true
+```
+
+`Configured and activated` が 3 つ出て、`Listening to '/pdu/lidar_scan'` と `You can start planning now!` が出れば OK です。
+
+### 4. 端末 C：掴んで置く
+
+```bash
+source "$HAKONIWA_ROS2_WS/activate.bash"
+source "${HAKONIWA_ROS2_WS}-control/install/setup.bash"
+ros2 run hakoniwa_ros2_control pick_and_place.py
+```
+
+手順 2 で別の設定を作ったときは、`--config /workspace/work-host/so101_pick_and_place.yaml` を付けます。
+
+次のとおりなら OK です（約 1 分）。
+
+- 1〜13 の全段が `OK` で終わる。
+- `holding` の力の変化が、物の重さ（0.294 N）に近い。
+- `released` の力の変化が、0.1 N 未満。
+- 最初と最後の行の LiDAR の点の数が、掴む場所で減り、置く場所で増える（LiDAR は粗いので、数は 1〜3 点です）。
+
+ホストの MuJoCo のビューアで、物が掴まれて運ばれ、置かれるのが見えます。
+
+うまくいかないときの見どころ：
+
+- 3 か 8 で失敗する：手順 3 の端末 B のログで、`CheckStartStateBounds`（関節の範囲外）か `contact between`（何かとぶつかる）を探します。
+- 5 で失敗する：あごが閉じきった（物が間にない）。物の位置と、手順 2 の姿勢を確かめます。
+
 ## 確認した環境
 
 macOS（Apple Silicon）、Docker Desktop、ROS 2 Jazzy（arm64）、SO-101。
@@ -167,4 +250,5 @@ macOS（Apple Silicon）、Docker Desktop、ROS 2 Jazzy（arm64）、SO-101。
 | controller_manager の周期 | 100 Hz（`/actuator/shoulder_pan/command` の実測 100.03 Hz） |
 | 軌道（joint_trajectory_controller に直接） | `SUCCEEDED`、すべての関節が目標の位置に届いた |
 | MoveIt（腕 2 回、グリッパー 1 回） | どれも計画と実行が `SUCCESS`。関節は目標から約 0.01 rad |
+| 掴んで置く（センサー付き、作業台を初めに戻して 1 回で） | 13 段すべて OK、約 62 秒。持ち上げたときの力の変化 0.294 N（物の重さ 0.294 N）、離したあと 0.018 N。LiDAR の点は掴む場所 3 → 0、置く場所 0 → 1 |
 | TCP Bridge で捨てられた指令 | 0 回 |
