@@ -14,7 +14,7 @@ import statistics
 import sys
 
 R = sys.argv[1] if len(sys.argv) > 1 else "/tmp/transport-bench-sweep"
-CASES = ["ros", "pdu-100", "pdu-0"]
+CASES = ["ros", "gz", "pdu-100", "pdu-0"]
 
 
 def load(case, size, rate, role):

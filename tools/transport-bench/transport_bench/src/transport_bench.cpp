@@ -1,8 +1,9 @@
-// One test driver, two transports: sensor_msgs/PointCloud2 from a sender to a
-// receiver either as ROS 2 messages or as a Hakoniwa PDU in shared memory. Only
-// the transport differs; the payload, the timing and the checks are shared.
+// One test driver, several transports: a point cloud from a sender to a
+// receiver as ROS 2 messages, as a Hakoniwa PDU in shared memory, or (when
+// built with gz-transport) as Gazebo transport messages. Only the transport
+// differs; the payload, the timing and the checks are shared.
 //
-//   transport_bench --transport ros|pdu --role send|recv --size <bytes> --rate <Hz>
+//   transport_bench --transport ros|pdu|gz --role send|recv --size <bytes> --rate <Hz>
 //                   --count <n> [--out <json>] [--pdu-config <pdudef>] [--pdu-size <bytes>]
 //                   [--poll-us <us>] [--qos reliable|best_effort] [--trace <file>]
 //                   [--type cloud|fixed]
@@ -14,6 +15,11 @@
 // side: ROS 2 lends the message in shared memory (loaned message, zero copy
 // when the RMW allows it); the PDU path writes the message's bytes as they are
 // (no conversion; one copy into and one out of the shared memory).
+//
+// --transport gz: Gazebo's own transport (gz-transport, default settings; it
+// has no zero copy). cloud is gz.msgs.PointCloudPacked (what Gazebo's lidar
+// publishes), fixed is gz.msgs.Bytes; both are protobuf, serialised and parsed
+// on the way.
 //
 // Latency is measured type to type: from the sender holding a ROS message to
 // the receiver holding a ROS message again (the PDU path includes the PDU
@@ -50,6 +56,15 @@
 #include "hakoniwa_transport_bench_msgs/msg/fixed320_k.hpp"
 #include "hakoniwa_transport_bench_msgs/msg/fixed1_m.hpp"
 #include "hakoniwa_transport_bench_msgs/msg/fixed4_m.hpp"
+
+#ifdef HAKO_BENCH_WITH_GZ
+#include <atomic>
+#include <mutex>
+
+#include <gz/msgs/bytes.pb.h>
+#include <gz/msgs/pointcloud_packed.pb.h>
+#include <gz/transport/Node.hh>
+#endif
 
 #include "hako_asset.h"
 #include "sensor_msgs/pdu_cpptype_conv_PointCloud2.hpp"
@@ -616,6 +631,99 @@ int run_fixed_size(const Options & o, int argc, char ** argv)
   }
 }
 
+#ifdef HAKO_BENCH_WITH_GZ
+// ---- Gazebo transport ----
+constexpr const char * kGzTopic = "/transport_bench/cloud";
+
+void gz_shape(gz::msgs::PointCloudPacked & msg, std::size_t size)
+{
+  const char * names[] = {"x", "y", "z"};
+  for (int i = 0; i < 3; ++i) {
+    auto * field = msg.add_field();
+    field->set_name(names[i]);
+    field->set_offset(4 * i);
+    field->set_datatype(gz::msgs::PointCloudPacked::Field::FLOAT32);
+    field->set_count(1);
+  }
+  msg.mutable_header()->add_data()->set_key("frame_id");
+  msg.mutable_header()->mutable_data(0)->add_value("bench");
+  msg.set_height(1);
+  msg.set_width(static_cast<std::uint32_t>(size / 12));
+  msg.set_point_step(12);
+  msg.set_row_step(static_cast<std::uint32_t>(size));
+  msg.set_is_bigendian(false);
+  msg.set_is_dense(true);
+}
+
+bool gz_shape_ok(const gz::msgs::PointCloudPacked & msg, std::size_t size)
+{
+  return msg.field_size() == 3 && msg.width() == size / 12;
+}
+bool gz_shape_ok(const gz::msgs::Bytes &, std::size_t) { return true; }
+void gz_shape(gz::msgs::Bytes &, std::size_t) {}
+
+// MsgT has a bytes field "data": PointCloudPacked or Bytes.
+template <typename MsgT>
+int run_gz(const Options & o)
+{
+  gz::transport::Node node;
+  if (o.role == "send") {
+    auto pub = node.Advertise<MsgT>(kGzTopic);
+    if (!pub) {
+      std::cerr << "gz: advertise failed" << std::endl;
+      return 1;
+    }
+    while (!pub.HasConnections()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    MsgT msg;
+    gz_shape(msg, o.size);
+    msg.mutable_data()->resize(o.size);
+    auto data = [&]() { return reinterpret_cast<std::uint8_t *>(msg.mutable_data()->data()); };
+    schedule(o, [&](std::uint64_t seq) { fill_bytes(data(), seq, o.size); },
+             [&]() {
+               stamp_bytes(data());
+               return pub.Publish(msg);
+             });
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    return 0;
+  }
+  // The callback runs on gz-transport's thread; the main thread only waits.
+  std::mutex lock;
+  Record record;
+  RecvClock clock;
+  std::function<void(const MsgT &)> callback = [&](const MsgT & msg) {
+    const std::int64_t t = now_ns();
+    std::lock_guard<std::mutex> guard(lock);
+    record.take_bytes(reinterpret_cast<const std::uint8_t *>(msg.data().data()), msg.data().size(),
+                      gz_shape_ok(msg, o.size), t, o.size);
+    clock.hit();
+  };
+  if (!node.Subscribe(kGzTopic, callback)) {
+    std::cerr << "gz: subscribe failed" << std::endl;
+    return 1;
+  }
+  const auto idle_start = std::chrono::steady_clock::now();
+  while (true) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::lock_guard<std::mutex> guard(lock);
+    if (record.received >= o.count) {
+      break;
+    }
+    const double idle = clock.started ? clock.idle()
+                                      : std::chrono::duration<double>(std::chrono::steady_clock::now() - idle_start).count();
+    if (idle > (clock.started ? kIdleSec : 30.0)) {
+      break;
+    }
+  }
+  node.Unsubscribe(kGzTopic);
+  std::lock_guard<std::mutex> guard(lock);
+  write_receiver(o, record, clock.cpu(), clock.wall(), {{"gz_transport", "13"}});
+  return 0;
+}
+#endif
+
 bool parse(int argc, char ** argv, Options & o)
 {
   for (int i = 1; i + 1 < argc; i += 2) {
@@ -639,7 +747,7 @@ bool parse(int argc, char ** argv, Options & o)
       return false;
     }
   }
-  return (o.transport == "ros" || o.transport == "pdu") && (o.role == "send" || o.role == "recv") &&
+  return (o.transport == "ros" || o.transport == "pdu" || o.transport == "gz") && (o.role == "send" || o.role == "recv") &&
          (o.type == "cloud" || o.type == "fixed") && o.size >= 24 && o.rate > 0.0 && o.count > 0;
 }
 }  // namespace
@@ -648,11 +756,19 @@ int main(int argc, char ** argv)
 {
   Options o;
   if (!parse(argc, argv, o)) {
-    std::cerr << "usage: transport_bench --transport ros|pdu --role send|recv --size <bytes >= 24> --rate <Hz> "
+    std::cerr << "usage: transport_bench --transport ros|pdu|gz --role send|recv --size <bytes >= 24> --rate <Hz> "
                  "--count <n> [--out <json>] [--pdu-config <pdudef>] [--pdu-size <bytes>] [--poll-us <us>] "
                  "[--qos reliable|best_effort] [--trace <file>] [--type cloud|fixed]"
               << std::endl;
     return 2;
+  }
+  if (o.transport == "gz") {
+#ifdef HAKO_BENCH_WITH_GZ
+    return o.type == "fixed" ? run_gz<gz::msgs::Bytes>(o) : run_gz<gz::msgs::PointCloudPacked>(o);
+#else
+    std::cerr << "built without gz-transport" << std::endl;
+    return 2;
+#endif
   }
   if (o.type == "fixed") {
     return run_fixed_size(o, argc, argv);

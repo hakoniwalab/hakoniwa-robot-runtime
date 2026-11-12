@@ -1,6 +1,6 @@
 #!/bin/bash
 # One run of the test driver (README.md), inside the container:
-#   [TYPE=fixed] run.sh ros|pdu <size bytes> <rate Hz> <count> [poll_us (pdu) | qos (ros)]
+#   [TYPE=fixed] run.sh ros|pdu|gz <size bytes> <rate Hz> <count> [poll_us (pdu) | qos (ros)]
 # TYPE: cloud (default, PointCloud2) or fixed (fixed-size message, loaned in ROS 2,
 # written as is to the PDU).
 # Results: /tmp/transport-bench/<transport>[-fixed]-<size>-<rate>-{send,recv}.json
@@ -29,6 +29,13 @@ if [ "$TRANSPORT" = ros ]; then
   $BENCH $COMMON --role recv --qos $QOS --out $OUT/$TAG-recv.json --trace $OUT/$TAG-trace.txt > $OUT/$TAG-recv.log 2>&1 &
   RECV=$!
   $BENCH $COMMON --role send --qos $QOS --out $OUT/$TAG-send.json > $OUT/$TAG-send.log 2>&1
+  wait $RECV
+elif [ "$TRANSPORT" = gz ]; then
+  # Gazebo's transport, default settings, on the loopback in its own partition.
+  export GZ_IP=127.0.0.1 GZ_PARTITION=transport_bench
+  $BENCH $COMMON --role recv --out $OUT/$TAG-recv.json --trace $OUT/$TAG-trace.txt > $OUT/$TAG-recv.log 2>&1 &
+  RECV=$!
+  $BENCH $COMMON --role send --out $OUT/$TAG-send.json > $OUT/$TAG-send.log 2>&1
   wait $RECV
 else
   PDU_SIZE=$((SIZE + 4096))   # the PDU header, the cloud's fixed part and its fields, with room
