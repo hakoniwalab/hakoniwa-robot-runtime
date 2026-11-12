@@ -67,7 +67,7 @@
 #endif
 
 #include "hako_asset.h"
-#include "sensor_msgs/pdu_cpptype_conv_PointCloud2.hpp"
+#include "sensor_msgs/pdu_ctype_conv_PointCloud2.hpp"
 
 namespace
 {
@@ -387,32 +387,10 @@ int pdu_send()
 {
   const Options & o = *g_options;
   std::vector<char> buffer(o.pdu_size);
-  hako::pdu::msgs::sensor_msgs::PointCloud2 conv;
   std::this_thread::sleep_for(std::chrono::seconds(1));  // the receiver registers before the start
-  // One source for every message, as a sender keeps it: assigning the same
-  // size reuses its arrays (no allocation per message).
-  HakoCpp_PointCloud2 cpp{};
+  // The ROS 2 message straight into the PDU (no Hakoniwa C++ type in between).
   send_loop(o, [&](sensor_msgs::msg::PointCloud2 & msg) {
-    cpp.fields.clear();
-    cpp.header.stamp.sec = msg.header.stamp.sec;
-    cpp.header.stamp.nanosec = msg.header.stamp.nanosec;
-    cpp.header.frame_id = msg.header.frame_id;
-    cpp.height = msg.height;
-    cpp.width = msg.width;
-    for (const auto & f : msg.fields) {
-      HakoCpp_PointField field{};
-      field.name = f.name;
-      field.offset = f.offset;
-      field.datatype = f.datatype;
-      field.count = f.count;
-      cpp.fields.push_back(field);
-    }
-    cpp.is_bigendian = msg.is_bigendian;
-    cpp.point_step = msg.point_step;
-    cpp.row_step = msg.row_step;
-    cpp.data = msg.data;
-    cpp.is_dense = msg.is_dense;
-    const int n = conv.cpp2pdu(cpp, buffer.data(), static_cast<int>(buffer.size()));
+    const int n = hako_convert_ros2pdu_into_PointCloud2(msg, buffer.data(), static_cast<int>(buffer.size()));
     if (n <= 0) {
       return false;
     }
@@ -425,12 +403,10 @@ int pdu_recv()
 {
   const Options & o = *g_options;
   std::vector<char> buffer(o.pdu_size);
-  hako::pdu::msgs::sensor_msgs::PointCloud2 conv;
   Record record;
   RecvClock clock;
   // One destination for every message, as a receiver keeps it: no arrays are
-  // allocated per message (a fresh 4 MB array costs ~0.7 ms to touch).
-  HakoCpp_PointCloud2 cpp{};
+  // allocated per message. The PDU straight into the ROS 2 message.
   sensor_msgs::msg::PointCloud2 msg;
   const auto idle_start = std::chrono::steady_clock::now();
   while (record.received < o.count) {
@@ -439,27 +415,10 @@ int pdu_recv()
         g_result = 1;
         break;
       }
-      msg.fields.clear();
-      if (conv.pdu2cpp(buffer.data(), cpp)) {
-        msg.header.stamp.sec = cpp.header.stamp.sec;
-        msg.header.stamp.nanosec = cpp.header.stamp.nanosec;
-        msg.header.frame_id = cpp.header.frame_id;
-        msg.height = cpp.height;
-        msg.width = cpp.width;
-        for (const auto & f : cpp.fields) {
-          sensor_msgs::msg::PointField field;
-          field.name = f.name;
-          field.offset = f.offset;
-          field.datatype = f.datatype;
-          field.count = f.count;
-          msg.fields.push_back(field);
-        }
-        msg.is_bigendian = cpp.is_bigendian;
-        msg.point_step = cpp.point_step;
-        msg.row_step = cpp.row_step;
-        msg.data.resize(cpp.data.size());
-        std::memcpy(msg.data.data(), cpp.data.data(), cpp.data.size());
-        msg.is_dense = cpp.is_dense;
+      auto * base = static_cast<Hako_PointCloud2 *>(hako_get_base_ptr_pdu(buffer.data()));
+      if (base == nullptr || hako_convert_pdu2ros_PointCloud2(*base, msg) != 0) {
+        g_result = 1;
+        break;
       }
       const std::int64_t t = now_ns();
       record.take(msg, t, o.size);
