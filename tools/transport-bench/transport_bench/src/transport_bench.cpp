@@ -5,6 +5,15 @@
 //   transport_bench --transport ros|pdu --role send|recv --size <bytes> --rate <Hz>
 //                   --count <n> [--out <json>] [--pdu-config <pdudef>] [--pdu-size <bytes>]
 //                   [--poll-us <us>] [--qos reliable|best_effort] [--trace <file>]
+//                   [--type cloud|fixed]
+//
+// --type cloud (default): sensor_msgs/PointCloud2, as a sensor is used; the PDU
+// path converts the message to the PDU and back.
+// --type fixed: a fixed-size message (hakoniwa_transport_bench_msgs/Fixed*,
+// size 1024, 65536, 327680, 1048576 or 4194304), the lightest form on each
+// side: ROS 2 lends the message in shared memory (loaned message, zero copy
+// when the RMW allows it); the PDU path writes the message's bytes as they are
+// (no conversion; one copy into and one out of the shared memory).
 //
 // Latency is measured type to type: from the sender holding a ROS message to
 // the receiver holding a ROS message again (the PDU path includes the PDU
@@ -24,7 +33,9 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <functional>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <memory>
 #include <string>
@@ -34,6 +45,11 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rmw/rmw.h"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include "hakoniwa_transport_bench_msgs/msg/fixed1_k.hpp"
+#include "hakoniwa_transport_bench_msgs/msg/fixed64_k.hpp"
+#include "hakoniwa_transport_bench_msgs/msg/fixed320_k.hpp"
+#include "hakoniwa_transport_bench_msgs/msg/fixed1_m.hpp"
+#include "hakoniwa_transport_bench_msgs/msg/fixed4_m.hpp"
 
 #include "hako_asset.h"
 #include "sensor_msgs/pdu_cpptype_conv_PointCloud2.hpp"
@@ -53,6 +69,7 @@ struct Options
   int poll_us{0};
   std::string qos{"reliable"};
   std::string trace;  // receiver: one line per message, "sequence latency_us"
+  std::string type{"cloud"};
 };
 
 constexpr const char * kRobot = "Bench";
@@ -116,10 +133,18 @@ void fill(sensor_msgs::msg::PointCloud2 & msg, std::uint64_t seq, std::size_t si
   std::memcpy(msg.data.data(), &seq, 8);
 }
 
-void stamp(sensor_msgs::msg::PointCloud2 & msg)
+void stamp_bytes(std::uint8_t * data)
 {
   const std::int64_t t = now_ns();
-  std::memcpy(msg.data.data() + 8, &t, 8);
+  std::memcpy(data + 8, &t, 8);
+}
+
+void stamp(sensor_msgs::msg::PointCloud2 & msg) { stamp_bytes(msg.data.data()); }
+
+void fill_bytes(std::uint8_t * data, std::uint64_t seq, std::size_t size)
+{
+  std::memcpy(data + kHead, pattern(seq, size) + kHead, size - kHead);
+  std::memcpy(data, &seq, 8);
 }
 
 // ---- receiver bookkeeping (shared by both transports) ----
@@ -135,16 +160,20 @@ struct Record
 
   void take(const sensor_msgs::msg::PointCloud2 & msg, std::int64_t t_recv, std::size_t size)
   {
+    take_bytes(msg.data.data(), msg.data.size(), msg.fields.size() == 3 && msg.width == size / 12, t_recv, size);
+  }
+
+  void take_bytes(const std::uint8_t * data, std::size_t n, bool shape_ok, std::int64_t t_recv, std::size_t size)
+  {
     std::uint64_t seq = 0;
     std::int64_t t_send = 0;
-    if (msg.data.size() != size) {
+    if (n != size) {
       ++corrupt;
       return;
     }
-    std::memcpy(&seq, msg.data.data(), 8);
-    std::memcpy(&t_send, msg.data.data() + 8, 8);
-    bool ok = msg.fields.size() == 3 && msg.width == size / 12;
-    ok = ok && std::memcmp(msg.data.data() + kHead, pattern(seq, size) + kHead, size - kHead) == 0;
+    std::memcpy(&seq, data, 8);
+    std::memcpy(&t_send, data + 8, 8);
+    bool ok = shape_ok && std::memcmp(data + kHead, pattern(seq, size) + kHead, size - kHead) == 0;
     if (!ok) {
       ++corrupt;
       return;
@@ -219,27 +248,65 @@ void write_receiver(const Options & o, const Record & r, double cpu, double wall
 
 // The sender's schedule: count messages at rate, each stamped just before it is
 // handed to the transport.
-template <typename Send>
-void send_loop(const Options & o, Send send)
+// prepare(seq) builds message seq before its time; send() stamps it and hands
+// it over (false: failed).
+template <typename Prepare, typename Send>
+void schedule(const Options & o, Prepare prepare, Send send, const std::map<std::string, std::string> & text = {})
 {
-  sensor_msgs::msg::PointCloud2 msg;
   const auto period = std::chrono::nanoseconds(static_cast<std::int64_t>(1e9 / o.rate));
   auto next = std::chrono::steady_clock::now();
   const double cpu0 = cpu_seconds();
   const auto t0 = std::chrono::steady_clock::now();
   std::uint64_t failed = 0;
   for (std::uint64_t seq = 1; seq <= o.count; ++seq) {
-    fill(msg, seq, o.size);
+    prepare(seq);
     std::this_thread::sleep_until(next);
     next += period;
-    stamp(msg);
-    if (!send(msg)) {
+    if (!send()) {
       ++failed;
     }
   }
   const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-  write_result(o, {{"failed", static_cast<double>(failed)}, {"cpu_s", cpu_seconds() - cpu0}, {"wall_s", wall}}, {});
+  write_result(o, {{"failed", static_cast<double>(failed)}, {"cpu_s", cpu_seconds() - cpu0}, {"wall_s", wall}}, text);
 }
+
+template <typename Send>
+void send_loop(const Options & o, Send send)
+{
+  sensor_msgs::msg::PointCloud2 msg;
+  schedule(o, [&](std::uint64_t seq) { fill(msg, seq, o.size); },
+           [&]() {
+             stamp(msg);
+             return send(msg);
+           });
+}
+
+// The receiver's clock: wall and CPU time from the first message to the last,
+// so the idle wait after the last message counts in neither.
+struct RecvClock
+{
+  bool started{false};
+  std::chrono::steady_clock::time_point t0;
+  std::chrono::steady_clock::time_point last{std::chrono::steady_clock::now()};
+  double cpu0{0.0};
+  double cpu_last{0.0};
+
+  void hit()
+  {
+    const auto now = std::chrono::steady_clock::now();
+    const double cpu_now = cpu_seconds();
+    if (!started) {
+      started = true;
+      t0 = now;
+      cpu0 = cpu_now;
+    }
+    last = now;
+    cpu_last = cpu_now;
+  }
+  double wall() const { return started ? std::chrono::duration<double>(last - t0).count() : 0.0; }
+  double cpu() const { return started ? cpu_last - cpu0 : 0.0; }
+  double idle() const { return std::chrono::duration<double>(std::chrono::steady_clock::now() - last).count(); }
+};
 
 // The receiver stops at count messages or after idle seconds without one.
 constexpr double kIdleSec = 3.0;
@@ -274,31 +341,22 @@ int run_ros(const Options & o, int argc, char ** argv)
     std::this_thread::sleep_for(std::chrono::seconds(1));
   } else {
     Record record;
-    auto last = std::chrono::steady_clock::now();
-    bool started = false;
-    std::chrono::steady_clock::time_point t0;
-    double cpu0 = 0.0;
+    RecvClock clock;
     auto sub = node->create_subscription<sensor_msgs::msg::PointCloud2>(
       kTopic, make_qos(o), [&](const sensor_msgs::msg::PointCloud2 & msg) {
         const std::int64_t t = now_ns();
-        if (!started) {
-          started = true;
-          t0 = std::chrono::steady_clock::now();
-          cpu0 = cpu_seconds();
-        }
         record.take(msg, t, o.size);
-        last = std::chrono::steady_clock::now();
+        clock.hit();
       });
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node);
     while (rclcpp::ok() && record.received < o.count) {
       executor.spin_once(std::chrono::milliseconds(100));
-      if (started && std::chrono::duration<double>(std::chrono::steady_clock::now() - last).count() > kIdleSec) {
+      if (clock.started && clock.idle() > kIdleSec) {
         break;
       }
     }
-    const double wall = started ? std::chrono::duration<double>(last - t0).count() : 0.0;
-    write_receiver(o, record, cpu_seconds() - cpu0, wall, {{"rmw", rmw_get_implementation_identifier()}});
+    write_receiver(o, record, clock.cpu(), clock.wall(), {{"rmw", rmw_get_implementation_identifier()}});
   }
   rclcpp::shutdown();
   return 0;
@@ -307,6 +365,8 @@ int run_ros(const Options & o, int argc, char ** argv)
 // ---- Hakoniwa PDU ----
 const Options * g_options = nullptr;
 int g_result = 0;
+std::function<int()> g_send;
+std::function<int()> g_recv;
 
 int pdu_send()
 {
@@ -349,10 +409,7 @@ int pdu_recv()
   std::vector<char> buffer(o.pdu_size);
   hako::pdu::msgs::sensor_msgs::PointCloud2 conv;
   Record record;
-  bool started = false;
-  auto last = std::chrono::steady_clock::now();
-  std::chrono::steady_clock::time_point t0;
-  double cpu0 = cpu_seconds();
+  RecvClock clock;
   const auto idle_start = std::chrono::steady_clock::now();
   while (record.received < o.count) {
     if (hako_asset_check_data_recv_event(kRobot, kChannel) == 0) {
@@ -383,26 +440,20 @@ int pdu_recv()
         msg.is_dense = cpp.is_dense;
       }
       const std::int64_t t = now_ns();
-      if (!started) {
-        started = true;
-        t0 = std::chrono::steady_clock::now();
-        cpu0 = cpu_seconds();
-      }
       record.take(msg, t, o.size);
-      last = std::chrono::steady_clock::now();
+      clock.hit();
       continue;
     }
-    const auto now = std::chrono::steady_clock::now();
-    const double idle = std::chrono::duration<double>(now - (started ? last : idle_start)).count();
-    if (idle > (started ? kIdleSec : 30.0)) {
+    const double idle = clock.started ? clock.idle()
+                                      : std::chrono::duration<double>(std::chrono::steady_clock::now() - idle_start).count();
+    if (idle > (clock.started ? kIdleSec : 30.0)) {
       break;
     }
     if (o.poll_us > 0) {
       std::this_thread::sleep_for(std::chrono::microseconds(o.poll_us));
     }
   }
-  const double wall = started ? std::chrono::duration<double>(last - t0).count() : 0.0;
-  write_receiver(o, record, cpu_seconds() - cpu0, wall, {{"poll_us", std::to_string(o.poll_us)}});
+  write_receiver(o, record, clock.cpu(), clock.wall(), {{"poll_us", std::to_string(o.poll_us)}});
   return 0;
 }
 
@@ -421,7 +472,7 @@ int on_initialize(hako_asset_context_t *)
 int on_manual_timing_control(hako_asset_context_t *)
 {
   if (g_result == 0) {
-    g_result = g_options->role == "send" ? pdu_send() : pdu_recv();
+    g_result = g_options->role == "send" ? g_send() : g_recv();
   }
   return 0;
 }
@@ -435,6 +486,10 @@ int run_pdu(const Options & o)
     return 2;
   }
   g_options = &o;
+  if (!g_send) {
+    g_send = pdu_send;
+    g_recv = pdu_recv;
+  }
   hako_asset_callbacks_t callbacks{on_initialize, nullptr, on_manual_timing_control, on_reset};
   const std::string name = "TransportBench_" + o.role;
   if (hako_asset_register(name.c_str(), o.pdu_config.c_str(), &callbacks, 1000, HAKO_ASSET_MODEL_CONTROLLER) != 0) {
@@ -443,6 +498,122 @@ int run_pdu(const Options & o)
   }
   hako_asset_start();  // returns when the simulation stops
   return g_result;
+}
+
+// ---- fixed-size messages ----
+template <typename MsgT>
+int run_fixed_ros(const Options & o, int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<rclcpp::Node>("transport_bench_" + o.role);
+  if (o.role == "send") {
+    auto pub = node->create_publisher<MsgT>(kTopic, make_qos(o));
+    while (rclcpp::ok() && pub->get_subscription_count() == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::optional<rclcpp::LoanedMessage<MsgT>> loaned;
+    schedule(
+      o,
+      [&](std::uint64_t seq) {
+        loaned.emplace(pub->borrow_loaned_message());
+        fill_bytes(loaned->get().data.data(), seq, o.size);
+      },
+      [&]() {
+        stamp_bytes(loaned->get().data.data());
+        pub->publish(std::move(*loaned));
+        loaned.reset();
+        return true;
+      },
+      {{"loan", pub->can_loan_messages() ? "yes" : "no"}});
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  } else {
+    Record record;
+    RecvClock clock;
+    auto sub = node->create_subscription<MsgT>(kTopic, make_qos(o), [&](const MsgT & msg) {
+      const std::int64_t t = now_ns();
+      clock.hit();
+      record.take_bytes(msg.data.data(), msg.data.size(), true, t, o.size);
+    });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    while (rclcpp::ok() && record.received < o.count) {
+      executor.spin_once(std::chrono::milliseconds(100));
+      if (clock.started &&
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - clock.last).count() > kIdleSec) {
+        break;
+      }
+    }
+    write_receiver(o, record, clock.cpu(), clock.wall(),
+                   {{"rmw", rmw_get_implementation_identifier()}, {"loan", sub->can_loan_messages() ? "yes" : "no"}});
+  }
+  rclcpp::shutdown();
+  return 0;
+}
+
+template <typename MsgT>
+int run_fixed_pdu(const Options & o)
+{
+  g_send = [&o]() {
+    auto msg = std::make_unique<MsgT>();
+    std::this_thread::sleep_for(std::chrono::seconds(1));  // the receiver registers before the start
+    schedule(o, [&](std::uint64_t seq) { fill_bytes(msg->data.data(), seq, o.size); },
+             [&]() {
+               stamp_bytes(msg->data.data());
+               return hako_asset_pdu_write(kRobot, kChannel, reinterpret_cast<const char *>(msg->data.data()),
+                                           o.size) == 0;
+             });
+    return 0;
+  };
+  g_recv = [&o]() {
+    auto msg = std::make_unique<MsgT>();
+    Record record;
+    RecvClock clock;
+    const auto idle_start = std::chrono::steady_clock::now();
+    while (record.received < o.count) {
+      if (hako_asset_check_data_recv_event(kRobot, kChannel) == 0) {
+        if (hako_asset_pdu_read(kRobot, kChannel, reinterpret_cast<char *>(msg->data.data()), o.size) != 0) {
+          return 1;
+        }
+        const std::int64_t t = now_ns();
+        clock.hit();
+        record.take_bytes(msg->data.data(), msg->data.size(), true, t, o.size);
+        continue;
+      }
+      const double idle = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                        (clock.started ? clock.last : idle_start)).count();
+      if (idle > (clock.started ? kIdleSec : 30.0)) {
+        break;
+      }
+      if (o.poll_us > 0) {
+        std::this_thread::sleep_for(std::chrono::microseconds(o.poll_us));
+      }
+    }
+    write_receiver(o, record, clock.cpu(), clock.wall(), {{"poll_us", std::to_string(o.poll_us)}});
+    return 0;
+  };
+  return run_pdu(o);
+}
+
+template <typename MsgT>
+int run_fixed(const Options & o, int argc, char ** argv)
+{
+  return o.transport == "ros" ? run_fixed_ros<MsgT>(o, argc, argv) : run_fixed_pdu<MsgT>(o);
+}
+
+int run_fixed_size(const Options & o, int argc, char ** argv)
+{
+  namespace m = hakoniwa_transport_bench_msgs::msg;
+  switch (o.size) {
+    case 1024: return run_fixed<m::Fixed1K>(o, argc, argv);
+    case 65536: return run_fixed<m::Fixed64K>(o, argc, argv);
+    case 327680: return run_fixed<m::Fixed320K>(o, argc, argv);
+    case 1048576: return run_fixed<m::Fixed1M>(o, argc, argv);
+    case 4194304: return run_fixed<m::Fixed4M>(o, argc, argv);
+    default:
+      std::cerr << "--type fixed needs --size 1024, 65536, 327680, 1048576 or 4194304" << std::endl;
+      return 2;
+  }
 }
 
 bool parse(int argc, char ** argv, Options & o)
@@ -461,6 +632,7 @@ bool parse(int argc, char ** argv, Options & o)
     else if (key == "--poll-us") o.poll_us = std::stoi(value);
     else if (key == "--qos") o.qos = value;
     else if (key == "--trace") o.trace = value;
+    else if (key == "--type") o.type = value;
     else if (key.rfind("--ros-args", 0) == 0) break;
     else {
       std::cerr << "unknown option " << key << std::endl;
@@ -468,7 +640,7 @@ bool parse(int argc, char ** argv, Options & o)
     }
   }
   return (o.transport == "ros" || o.transport == "pdu") && (o.role == "send" || o.role == "recv") &&
-         o.size >= 24 && o.rate > 0.0 && o.count > 0;
+         (o.type == "cloud" || o.type == "fixed") && o.size >= 24 && o.rate > 0.0 && o.count > 0;
 }
 }  // namespace
 
@@ -478,9 +650,12 @@ int main(int argc, char ** argv)
   if (!parse(argc, argv, o)) {
     std::cerr << "usage: transport_bench --transport ros|pdu --role send|recv --size <bytes >= 24> --rate <Hz> "
                  "--count <n> [--out <json>] [--pdu-config <pdudef>] [--pdu-size <bytes>] [--poll-us <us>] "
-                 "[--qos reliable|best_effort] [--trace <file>]"
+                 "[--qos reliable|best_effort] [--trace <file>] [--type cloud|fixed]"
               << std::endl;
     return 2;
+  }
+  if (o.type == "fixed") {
+    return run_fixed_size(o, argc, argv);
   }
   return o.transport == "ros" ? run_ros(o, argc, argv) : run_pdu(o);
 }

@@ -1,7 +1,9 @@
 #!/bin/bash
 # One run of the test driver (README.md), inside the container:
-#   run.sh ros|pdu <size bytes> <rate Hz> <count> [poll_us (pdu) | qos (ros)]
-# Results: /tmp/transport-bench/<transport>-<size>-<rate>-{send,recv}.json
+#   [TYPE=fixed] run.sh ros|pdu <size bytes> <rate Hz> <count> [poll_us (pdu) | qos (ros)]
+# TYPE: cloud (default, PointCloud2) or fixed (fixed-size message, loaned in ROS 2,
+# written as is to the PDU).
+# Results: /tmp/transport-bench/<transport>[-fixed]-<size>-<rate>-{send,recv}.json
 set -u
 TRANSPORT=$1 SIZE=$2 RATE=$3 COUNT=$4 EXTRA=${5:-}
 F=/workspace/work-docker-jazzy/foundation
@@ -11,18 +13,26 @@ set +u; source /opt/ros/jazzy/setup.bash; source /workspace/ros2-work-jazzy-asse
 BENCH="$(ros2 pkg prefix hakoniwa_transport_bench)/lib/hakoniwa_transport_bench/transport_bench"
 # One binary for both transports: it links the Hakoniwa core either way.
 export HAKO_CONFIG_PATH=$F/config/cpp_core_config.json LD_LIBRARY_PATH=$F/install/lib:${LD_LIBRARY_PATH:-}
-TAG=$TRANSPORT-$SIZE-$RATE
+TYPE=${TYPE:-cloud}
+TAG=$TRANSPORT-$SIZE-$RATE; [ "$TYPE" = fixed ] && TAG=$TRANSPORT-fixed-$SIZE-$RATE
 rm -f $OUT/$TAG-send.json $OUT/$TAG-recv.json $OUT/$TAG-trace.txt   # never report an earlier run
-COMMON="--transport $TRANSPORT --size $SIZE --rate $RATE --count $COUNT"
+COMMON="--transport $TRANSPORT --type $TYPE --size $SIZE --rate $RATE --count $COUNT"
 
 if [ "$TRANSPORT" = ros ]; then
   QOS=${EXTRA:-reliable}
+  if [ "$TYPE" = fixed ]; then
+    # Zero copy: Fast DDS data sharing (config/fastdds-zero-copy.xml) and loans on
+    # the subscription too (the callback takes a const reference).
+    export FASTRTPS_DEFAULT_PROFILES_FILE=$(cd "$(dirname "$0")" && pwd)/config/fastdds-zero-copy.xml
+    export RMW_FASTRTPS_USE_QOS_FROM_XML=1 ROS_DISABLE_LOANED_MESSAGES=0
+  fi
   $BENCH $COMMON --role recv --qos $QOS --out $OUT/$TAG-recv.json --trace $OUT/$TAG-trace.txt > $OUT/$TAG-recv.log 2>&1 &
   RECV=$!
   $BENCH $COMMON --role send --qos $QOS --out $OUT/$TAG-send.json > $OUT/$TAG-send.log 2>&1
   wait $RECV
 else
   PDU_SIZE=$((SIZE + 4096))   # the PDU header, the cloud's fixed part and its fields, with room
+  [ "$TYPE" = fixed ] && PDU_SIZE=$SIZE   # the message's bytes as they are
   cat > $OUT/pdudef.json <<JSON
 {"robots": [{"name": "Bench", "rpc_pdu_readers": [], "rpc_pdu_writers": [],
   "shm_pdu_readers": [{"type": "sensor_msgs/PointCloud2", "org_name": "cloud", "name": "Bench_cloud", "channel_id": 0, "pdu_size": $PDU_SIZE, "write_cycle": 1, "method_type": "SHM"}],
