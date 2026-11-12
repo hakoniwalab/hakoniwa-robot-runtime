@@ -199,6 +199,7 @@ struct Ros2ControlPlugin
   std::shared_ptr<std::atomic<bool>> active = std::make_shared<std::atomic<bool>>(false);
   bool was_selected{false};
   bool preempted{false};
+  bool updated{false};   // an update has run since the controllers were requested
 
   void request_activation()
   {
@@ -261,7 +262,10 @@ void * create(const HakoControllerCreateV1 * args, char * error, size_t error_si
     for (const auto & argument : arguments) {
       argv.push_back(argument.c_str());
     }
-    rclcpp::init(static_cast<int>(argv.size()), argv.data());
+    // Signals belong to the Robot Runtime: rclcpp must not shut itself down on
+    // SIGINT/SIGTERM before the runtime has stopped the plugin.
+    rclcpp::init(static_cast<int>(argv.size()), argv.data(), rclcpp::InitOptions(),
+                 rclcpp::SignalHandlerOptions::None);
 
     plugin->executor = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
     // The parameter files also go to the controller_manager node's own arguments:
@@ -371,10 +375,12 @@ int32_t update(void * p, const HakoTickV1 * tick, const HakoJointStatesV1 * stat
       plugin->clock->publish(clock);
     }
 
-    // Start (when the runner gave no start event), reset, and take-over.
+    // Start (when the runner gave no start event), reset, and take-over. The
+    // reset flag of the first update after create/start is no reset of a run in
+    // progress: the controllers are just being activated.
     if (!plugin->activation_requested) {
       plugin->request_activation();
-    } else if (tick->reset) {
+    } else if (tick->reset && plugin->updated) {
       plugin->request_restart(true);
     } else if (plugin->was_selected && !tick->selected) {
       plugin->request_restart(false);          // another control took over: drop the trajectory
@@ -384,6 +390,7 @@ int32_t update(void * p, const HakoTickV1 * tick, const HakoJointStatesV1 * stat
       plugin->preempted = false;
     }
     plugin->was_selected = tick->selected != 0;
+    plugin->updated = true;
 
     bridge.clear_commands();
     // ros2_control refuses time 0 before it has received /clock: the step at time
@@ -419,8 +426,11 @@ int32_t on_stop(void * p, char * error, size_t error_size)
   try {
     auto * plugin = static_cast<Ros2ControlPlugin *>(p);
     plugin->active->store(false);
-    plugin->switcher->request({}, plugin->motion_controllers, nullptr);
+    if (rclcpp::ok()) {
+      plugin->switcher->request({}, plugin->motion_controllers, nullptr);
+    }
     plugin->activation_requested = false;
+    plugin->updated = false;
     return 0;
   } catch (const std::exception & e) {
     copy_error(e.what(), error, error_size);
@@ -446,7 +456,9 @@ void destroy(void * p)
   }
   try {
     plugin->switcher.reset();
-    plugin->cm->shutdown_controllers();   // before the libraries they came from are released
+    if (rclcpp::ok()) {
+      plugin->cm->shutdown_controllers();   // before the libraries they came from are released
+    }
     plugin->executor->cancel();
     if (plugin->spin.joinable()) {
       plugin->spin.join();

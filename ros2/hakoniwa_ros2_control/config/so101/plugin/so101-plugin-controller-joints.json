@@ -1,0 +1,10 @@
+{
+  "plugin": {
+    "path": "/tmp/plugin-install/hakoniwa_ros2_control/lib/libhakoniwa_ros2_control_plugin.so",
+    "config": "plugin.yaml"
+  },
+  "joints": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+  "priority": 15,
+  "joint_state_source": "truth",
+  "stop_on_error": true
+}
