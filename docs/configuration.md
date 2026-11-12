@@ -747,6 +747,16 @@ Asset Manifestの例:
 - 取り付け先の関節・bodyがMJCFにあり、種別に合うこと
 - 出力のメッセージ型とセンサの種別が合い、その名前のPDUチャンネルが同じ型であること
 
+実装を替えるときは、センサの設定の `implementation` と `definition`（定義ファイル）だけを替えます。取り付けと出力の設定はそのままです。定義ファイルの書き方は実装ごとに違います。
+
+| 実装 | 種別 | 定義ファイル |
+|---|---|---|
+| `hakoniwa` | 全種別 | hakoniwa-sensor-adapter の仕様の形式 |
+| `airsim` | `imu`、`mag`、`baro`、`gps` | Project AirSim のセンサの JSON（hakoniwa-sensor-adapter-airsim の README）。`type` は Runtime の種別名（`imu`、`mag`、`baro`、`gps`）で書く |
+| `gazebo` | `force_torque` | 実装一覧にある項目 |
+
+`airsim` は Project AirSim のモデルの式を書き直した軽い実装です（必要なのは C++17 と Boost のヘッダだけです）。フィルタ・遅れ・飽和は持たず、GPS は位置の誤差を出しません（精度の報告も無いので、NavSatFix の共分散は UNKNOWN）。アプリは、実装の名前とライブラリをビルドの設定で与えてリンクします（ロボットアームなら `HAKO_ROBOT_ARM_SENSOR_IMPLEMENTATIONS` に `hakoniwa;airsim`、`HAKO_ROBOT_ARM_SENSOR_LIBRARIES` に `libhakoniwa_sensor_adapter_airsim.a`）。
+
 <a id="3-runtime-config"></a>
 
 ## 4. Runtime Config — `runtime_config` の内容

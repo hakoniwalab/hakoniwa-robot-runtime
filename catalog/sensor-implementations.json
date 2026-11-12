@@ -48,7 +48,26 @@
       }
     },
     "airsim": {
-      "sensors": {}
+      "sensors": {
+        "imu": {
+          "keys": ["id", "update-rate-hz", "min-sample-time", "accelerometer", "gyroscope"]
+        },
+        "mag": {
+          "keys": ["id", "update-rate-hz", "scale-factor", "noise-sigma", "noise-bias"]
+        },
+        "baro": {
+          "keys": [
+            "id", "qnh", "pressure_factor_sigma", "pressure-factor-tau",
+            "uncorrelated_noise_sigma", "update-frequency", "update-latency", "startup-delay"
+          ]
+        },
+        "gps": {
+          "keys": [
+            "id", "update-rate-hz", "eph-time-constant", "epv-time-constant", "eph-initial",
+            "epv-initial", "eph-final", "epv-final", "eph-min-3d", "eph-min-2d"
+          ]
+        }
+      }
     }
   }
 }
