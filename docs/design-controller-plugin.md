@@ -198,9 +198,13 @@ Robot Runtime（シミュレーションのスレッド）
 ```
 
 - 関節は、ros2_control の「ハードウェアの口」（`hardware_interface::SystemInterface`）を通る。その口（`HakoniwaPluginSystem`、新規）を、プラグインの中の受け渡し場所（`PluginBridge`）につなぐ。PDU も箱庭アセットも使わない。
-- センサーは 2 通り。
-  - 力センサ：ros2_control の「状態の口」（`force.x` など）として出す。ros2_control の `force_torque_sensor_broadcaster` が、そのまま `geometry_msgs/WrenchStamped` を配信できる。
-  - LiDAR などの大きなセンサー：ros2_control の守備範囲ではないので、プラグインが PDU のバイト列を `pdu2ros` で ROS のメッセージにして、直接トピックに配信する。
+- 組み込むのは制御（ros2_control）だけ。センサーの配信のしかたは、別プロセスの形と同じ。
+  - 今の配信役（`HakoniwaSensorPublisher`：PDU を `pdu2ros` で ROS のメッセージにして `/pdu/<PDU の名前>` に配信する）を、ラッパーの中でそのまま使う。トピックの名前と周期も同じ。
+  - 変わるのは PDU の届き方だけ。別プロセスの形では共有メモリから読むが、組み込みの形では ros2_control 側は箱庭アセットではない（アセットでないプロセスは PDU を読めない）ので、Robot Runtime が作ったセンサーの PDU を `update` の引数で受け取る。
+  - 配信役は自分のスレッドで変換と配信をする。`update` は、新しい PDU を配信役に置く（最新の値だけを残す）だけで戻る。制御の流れは、点群の変換や配信を待たない。
+  - 点群の時刻は、PDU の中の時刻（シミュレーションの時刻）をそのまま使う。
+  - センサーは `HakoniwaPluginSystem`（ハードウェアの口）を通さない。ハードウェアの口は、制御の周期で呼ばれる数値の状態と指令だけを扱う。
+  - 力センサを ros2_control の状態の口（`force.x` など）として出し、コントローラから読めるようにするのは、必要になったときに足す。
 - 確かめたこと（Jazzy）：`ControllerManager(executor, urdf, activate_all, name, ns, options)` で URDF の文字列から作れる。`read(time, period)`、`update(time, period)`、`write(time, period)` は公開されている。細部（引数の既定値など）は、作るときに Jazzy の版で確かめる。
 
 ### 5.5 境界を通るもの（SO-101 の例）
@@ -211,7 +215,7 @@ Robot Runtime（シミュレーションのスレッド）
 | Robot Runtime → プラグイン | `create` の `pdu_names` / `pdu_types` | `lidar_scan` / `sensor_msgs/PointCloud2`、`wrist_wrench` / `geometry_msgs/WrenchStamped` | 配信先のトピックと、変換の方法を決める |
 | Robot Runtime → プラグイン | `update` の `tick` | シミュレーションの時刻、刻みの番号、刻み 2 ms | `/clock`、`read` / `update` / `write` の時刻と周期 |
 | Robot Runtime → プラグイン | `update` の `states` | 6 関節の位置・速度・力 | ハードウェアの口の状態（`position`、`velocity`、`effort`） |
-| Robot Runtime → プラグイン | `update` の `pdus` | 新しくなったときだけ、LiDAR（2 Hz）と力センサ（50 Hz）の PDU | LiDAR：`/pdu/lidar_scan` に配信。力センサ：状態の口 `force.*`、`torque.*` |
+| Robot Runtime → プラグイン | `update` の `pdus` | 新しくなったときだけ、LiDAR（2 Hz）と力センサ（50 Hz）の PDU | 配信役が `/pdu/lidar_scan`、`/pdu/wrist_wrench` に配信（別プロセスの形と同じ） |
 | プラグイン → Robot Runtime | `update` の `commands` | 6 関節の位置の指令 | ハードウェアの口の指令（`position`）から写す |
 
 制御の周期は、コントローラの設定の `update_rate`（100 Hz）から 10 ms。物理の刻み 2 ms の 5 回に 1 回、`update` が呼ばれる。
@@ -256,7 +260,7 @@ static int32_t update(void* p, const HakoTickV1* tick, const HakoJointStatesV1* 
     try {
         self->bridge.set_states(*states);                  // 受け渡し場所へ
         for (uint32_t i = 0; i < pdu_count; ++i) {
-            self->sensors.on_pdu(pdus[i]);                 // LiDAR は配信、力センサは受け渡し場所へ
+            self->sensors.post(pdus[i]);                   // 配信役に置くだけ（変換と配信は配信役のスレッド）
         }
         const rclcpp::Time now(static_cast<int64_t>(tick->sim_time_ns), RCL_ROS_TIME);
         self->publish_clock(now);
@@ -283,7 +287,6 @@ hardware_interface::return_type HakoniwaPluginSystem::read(const rclcpp::Time&, 
         velocity_[j] = bridge.velocity(joint_index_[j]);
         effort_[j] = bridge.effort(joint_index_[j]);
     }
-    bridge.wrench(wrench_);                                 // 力センサの状態の口へ
     return hardware_interface::return_type::OK;
 }
 
