@@ -25,6 +25,8 @@
   <exec_depend>moveit_planners_ompl</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>
   <exec_depend>rosgraph_msgs</exec_depend>
+  <exec_depend>shape_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
