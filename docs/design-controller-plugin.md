@@ -45,6 +45,7 @@ Robot Runtime の本体を外部の仕組みに依存させずに、外部の制
 
 ```c
 #define HAKO_ROBOT_RUNTIME_PLUGIN_ENTRY_V1 "hako_robot_runtime_plugin_v1"
+/* 構造体には型と同じ名前のタグを付ける（前方宣言と同じ型になる） */
 typedef const struct HakoPluginHeaderV1* (*HakoRobotRuntimePluginEntryV1)(void);
 
 #define HAKO_PLUGIN_KIND_CONTROLLER   1u
@@ -53,7 +54,7 @@ typedef const struct HakoPluginHeaderV1* (*HakoRobotRuntimePluginEntryV1)(void);
 
 
 ```c
-typedef struct {
+typedef struct HakoPluginHeaderV1 {
     uint32_t struct_size;          /* この表の大きさ（後ろに足しても古い側が読める） */
     uint32_t abi_version;          /* 種類ごとの ABI の版 */
     uint32_t kind;                 /* HAKO_PLUGIN_KIND_CONTROLLER / _DATA_ADAPTER */
@@ -89,30 +90,34 @@ typedef struct {
 ### 4.4 正規のデータの形
 
 ```c
-typedef struct {                   /* 関節の状態（読み取りだけ、呼び出しの間だけ有効） */
+typedef struct HakoJointStatesV1 {                   /* 関節の状態（読み取りだけ、呼び出しの間だけ有効） */
     uint32_t count;
     const double* position;        /* rad または m */
     const double* velocity;
     const double* effort;
 } HakoJointStatesV1;
 
-typedef struct {                   /* 関節の指令（呼び出し側が用意し、プラグインが書く） */
+typedef struct HakoJointCommandsV1 {                   /* 関節の指令（呼び出し側が用意し、プラグインが書く） */
     uint32_t count;
     uint8_t* has_command;          /* 0：この関節の指令なし */
     uint8_t* command_type;         /* 0：位置 1：速度 2：力 */
     double* value;
 } HakoJointCommandsV1;
 
-typedef struct {                   /* 刻みの情報 */
+typedef struct HakoTickV1 {                   /* 刻みの情報 */
+    uint32_t struct_size;
     uint64_t sim_time_ns;
     uint64_t step_index;
     uint64_t physics_step_ns;
+    uint8_t  selected;             /* 制御プラグイン：前回この部品の指令が選ばれていたら 1 */
+    uint8_t  reset;                /* リセットの直後の最初の呼び出しなら 1 */
 } HakoTickV1;
 
-typedef struct {                   /* 箱庭の PDU のバイト列（呼び出しの間だけ有効） */
+typedef struct HakoPduViewV1 {                   /* 箱庭の PDU のバイト列（呼び出しの間だけ有効） */
     uint32_t channel;              /* create で渡した一覧の番号 */
     uint32_t size;
     const void* data;
+    uint64_t sample_time_ns;       /* 測った時刻（シミュレーションの時刻） */
 } HakoPduViewV1;
 ```
 
@@ -132,7 +137,7 @@ typedef struct {                   /* 箱庭の PDU のバイト列（呼び出�
 
 ```c
 
-typedef struct {
+typedef struct HakoControllerCreateV1 {
     uint32_t struct_size;
     const char* config_path;              /* プラグイン自身の設定ファイル */
     uint32_t joint_count;
@@ -145,7 +150,7 @@ typedef struct {
     void* log_user;
 } HakoControllerCreateV1;
 
-typedef struct {
+typedef struct HakoControllerPluginV1 {
     HakoPluginHeaderV1 header;
     void* (*create)(const HakoControllerCreateV1* args, char* error, size_t error_size);
     uint64_t (*update_period_ns)(void* plugin);   /* 物理の刻みの整数倍。0：毎刻み */
@@ -160,7 +165,10 @@ typedef struct {
 ```
 
 - `update` は、制御の周期にあたる刻みだけ呼ぶ（刻みの番号が周期の倍数のとき）。周期の間の刻みは、前の指令を使い続ける。
-- `pdus` は、前回の `update` から新しくなったセンサーの PDU だけ。
+- `pdus` は、前回の `update` から新しくなったセンサーの PDU だけ。PDU の種類ごとに最新の 1 つを、測った時刻つきで渡す。制御より速いセンサー（制御 100 Hz に対する 1 kHz の IMU など）の途中の値は渡らない（ROS のトピックを深さ 1 で受けるのと同じ）。履歴を渡す形は、構造体の大きさで版を広げて後で足す。
+- 関節の状態をどこから取るかは、部品の設定（`joint_state_source`）で選ぶ。既定は、別プロセスの形で ros2_control に渡している関節の状態（`joint_states` の出力）と同じ出どころ。ノイズや測る周期を入れた値を渡せば、エンコーダーの観測値で制御できる。どちらの形でも同じ条件で比べられるように、既定をそろえる。
+- 制御の横取り：`tick.selected` で、前回この部品の指令が選ばれたかを伝える（Robot Runtime は前の刻みで選ばれた制御を覚えている：`previous_selected_control_id`）。選ばれなかった間も `update` は呼び続け、状態は流し続ける。
+- リセット：`reset` のあと最初の `update` は `tick.reset` が 1。プラグインは、今の位置を保つ指令を返す。
 
 ### 5.2 Robot Runtime 側：今の流れのまま、4 段目に入れる
 
@@ -246,7 +254,8 @@ Robot Runtime の 1 刻み（`ActuatorRuntime::step()`）は、次の段で動�
 - `update_period_ns`：コントローラの設定の `update_rate` から求める（物理の刻みの整数倍でなければ `create` で失敗）。
 - `update`：状態を写す → `/clock` を配信 → `read(t, period)` → `update(t, period)` → `write(t, period)` → 指令を写して返す。センサーの PDU は `pdu2ros` で ROS のメッセージにして配信する（受け取り先は使い回す）。
 - 通信は、プラグインの中の別のスレッドの executor で回す。コントローラの更新は、シミュレーションのスレッドの `update` の中だけで行う（gz_ros2_control と同じ分け方）。
-- `reset`：コントローラを止めて状態を戻し、動かし直す。
+- 横取りされたとき（`tick.selected` が 0 に変わったとき）：動いている軌道を取り消し、今の位置を保つ（コントローラを止めて動かし直す）。手動の割り込みなどから戻ったとき、古い軌道を再開しない。今の軌道のコントローラ（`JointTrajectoryController`、ほかの制御に切り替わると軌道を取り消す）と同じ挙動にそろえる。
+- `reset`：コントローラを止め、受け付け中の MoveIt の軌道を捨てる。次の `update`（`tick.reset` が 1）で、今の状態を受け取ってからコントローラを動かし直し、今の位置を保つ指令を返す。リセット直後に関節が勝手に動かない。
 
 ### 5.4 ros2_control とは何で、どう呼ばれるか
 
@@ -327,6 +336,10 @@ static int32_t update(void* p, const HakoTickV1* tick, const HakoJointStatesV1* 
 {
     auto* self = static_cast<Ros2ControlPlugin*>(p);
     try {
+        if (tick->reset || (self->was_selected && !tick->selected)) {
+            self->hold_current_position(*states);          // 軌道を取り消し、今の位置を保つ
+        }
+        self->was_selected = tick->selected;
         self->bridge.set_states(*states);                  // 受け渡し場所へ
         for (uint32_t i = 0; i < pdu_count; ++i) {
             self->sensors.post(pdus[i]);                   // 配信役に置くだけ（変換と配信は配信役のスレッド）
@@ -381,9 +394,15 @@ ControllerOutput PluginController::update(std::shared_ptr<const IControllerInput
     if (context.step_index % steps_per_update_ != 0) {
         return last_output_;                                // 周期の間は前の指令
     }
-    copy_states(state, position_, velocity_, effort_);      // アクチュエータの並びで
+    copy_states(joint_state_source_, state, position_, velocity_, effort_);  // 真値か観測値（設定で選ぶ）
     const HakoJointStatesV1 states{count_, position_.data(), velocity_.data(), effort_.data()};
-    const HakoTickV1 tick{context.simulation_time_usec * 1000, context.step_index, step_ns_};
+    HakoTickV1 tick{};
+    tick.struct_size = sizeof(tick);
+    tick.sim_time_ns = context.simulation_time_usec * 1000;
+    tick.step_index = context.step_index;
+    tick.physics_step_ns = step_ns_;
+    tick.selected = context.previous_selected_control_id == control_group_id_;  // 横取りされていないか
+    tick.reset = std::exchange(just_reset_, false);
     collect_new_pdus(state, pdus_);                         // 前回から新しくなったセンサーの PDU
     HakoJointCommandsV1 commands{count_, has_.data(), type_.data(), value_.data()};
     char error[256] = {};
@@ -405,7 +424,9 @@ ControllerOutput PluginController::update(std::shared_ptr<const IControllerInput
 ## 7. 時刻と速さ
 
 - 制御は、シミュレーションの時刻で、物理の刻みの整数倍ごとに回る。実時間に合わせるかどうかは、Robot Runtime の既存の設定（`--realtime-sync-cycle-msec`）で決める。速く回しても、制御の回数は変わらない。
-- MoveIt からの軌道の受け付けは通信のスレッドで起きるので、軌道が始まる刻みは毎回少しずれうる（Gazebo も同じ）。ここまで同じにしたい場合は、別の課題として扱う。
+- 2 つを分けて言う。
+  - **制御の周期は決まっている**（保証する）：どの刻みでプラグインが呼ばれるかは、刻みの番号だけで決まる。
+  - **シミュレーション全体が毎回同じ結果になる**（保証しない）：MoveIt からの軌道の受け付けは通信のスレッドで起きるので、軌道が始まる刻みは毎回少しずれうる（Gazebo の gz_ros2_control も同じ）。ここまで同じにしたい場合は、別の課題として扱う。
 
 ## 8. 決めたこと（レビューで見直す）
 
@@ -417,4 +438,5 @@ ControllerOutput PluginController::update(std::shared_ptr<const IControllerInput
 ## 9. 確かめ方
 
 - 単体：見本の制御プラグイン（ROS なし。目標の位置をそのまま返すもの）で、読み込み、版の確認、周期、指令の受け渡し、PDU の受け渡しを確かめる。
+- 結合：横取り（手動の割り込みのあと、古い軌道が再開しないこと）、リセット（直後に関節が動かないこと、時刻の巻き戻しのあと受け付け中の軌道が捨てられること）。
 - 結合：SO-101 で、Gazebo との比較（`docs/evaluation-gazebo.md`）と同じ測り方をする。速く回したときの制御の差、毎回同じか、掴んで置く作業、CPU を、別プロセスの形と Gazebo と並べる。
