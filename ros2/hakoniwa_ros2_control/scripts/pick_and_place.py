@@ -121,6 +121,16 @@ class PickAndPlace:
         self.spin(seconds + 1.0)
         return self.joints.get("gripper", float("nan"))
 
+    def transform(self, target, source, timeout=10.0):
+        """The latest transform source -> target, waiting until TF has it (None after timeout)."""
+        end = time.time() + timeout
+        while not self.tf.can_transform(target, source, rclpy.time.Time()):
+            if time.time() > end:
+                print(f"   no transform {source} -> {target} after {timeout:.0f} s")
+                return None
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        return self.tf.lookup_transform(target, source, rclpy.time.Time()).transform
+
     def points_near(self, xy, radius=0.025):
         """LiDAR points at object height (5-50 mm) near xy, in base_link."""
         clouds = []
@@ -133,7 +143,9 @@ class PickAndPlace:
         if not clouds:
             return None
         cloud = clouds[-1]
-        t = self.tf.lookup_transform("base_link", cloud.header.frame_id, rclpy.time.Time()).transform
+        t = self.transform("base_link", cloud.header.frame_id)
+        if t is None:
+            return None
         q = t.rotation
         rotation = np.array([
             [1 - 2 * (q.y * q.y + q.z * q.z), 2 * (q.x * q.y - q.z * q.w), 2 * (q.x * q.z + q.y * q.w)],
