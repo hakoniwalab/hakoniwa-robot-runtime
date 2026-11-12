@@ -389,8 +389,11 @@ int pdu_send()
   std::vector<char> buffer(o.pdu_size);
   hako::pdu::msgs::sensor_msgs::PointCloud2 conv;
   std::this_thread::sleep_for(std::chrono::seconds(1));  // the receiver registers before the start
+  // One source for every message, as a sender keeps it: assigning the same
+  // size reuses its arrays (no allocation per message).
+  HakoCpp_PointCloud2 cpp{};
   send_loop(o, [&](sensor_msgs::msg::PointCloud2 & msg) {
-    HakoCpp_PointCloud2 cpp{};
+    cpp.fields.clear();
     cpp.header.stamp.sec = msg.header.stamp.sec;
     cpp.header.stamp.nanosec = msg.header.stamp.nanosec;
     cpp.header.frame_id = msg.header.frame_id;
@@ -425,6 +428,10 @@ int pdu_recv()
   hako::pdu::msgs::sensor_msgs::PointCloud2 conv;
   Record record;
   RecvClock clock;
+  // One destination for every message, as a receiver keeps it: no arrays are
+  // allocated per message (a fresh 4 MB array costs ~0.7 ms to touch).
+  HakoCpp_PointCloud2 cpp{};
+  sensor_msgs::msg::PointCloud2 msg;
   const auto idle_start = std::chrono::steady_clock::now();
   while (record.received < o.count) {
     if (hako_asset_check_data_recv_event(kRobot, kChannel) == 0) {
@@ -432,8 +439,7 @@ int pdu_recv()
         g_result = 1;
         break;
       }
-      HakoCpp_PointCloud2 cpp{};
-      sensor_msgs::msg::PointCloud2 msg;
+      msg.fields.clear();
       if (conv.pdu2cpp(buffer.data(), cpp)) {
         msg.header.stamp.sec = cpp.header.stamp.sec;
         msg.header.stamp.nanosec = cpp.header.stamp.nanosec;
@@ -451,7 +457,8 @@ int pdu_recv()
         msg.is_bigendian = cpp.is_bigendian;
         msg.point_step = cpp.point_step;
         msg.row_step = cpp.row_step;
-        msg.data = std::move(cpp.data);
+        msg.data.resize(cpp.data.size());
+        std::memcpy(msg.data.data(), cpp.data.data(), cpp.data.size());
         msg.is_dense = cpp.is_dense;
       }
       const std::int64_t t = now_ns();
