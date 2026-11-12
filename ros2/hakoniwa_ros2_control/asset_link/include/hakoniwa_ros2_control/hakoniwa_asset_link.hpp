@@ -8,6 +8,8 @@
 //   register_asset(): once per process, while the simulation is stopped
 //   start():          starts the asset thread; it waits for START, then steps
 //   latest_state():   the joint states the asset thread read last (any thread)
+//   put_command():    the latest command for all command joints (any thread); the
+//                     asset thread writes it once, retrying the joints refused
 //   stop():           asks the asset thread to stop and joins it
 //
 // The design is in docs/ros2-control.md, chapter 10.
@@ -49,6 +51,8 @@ public:
     std::string endpoint_config_path;  // the PDU Endpoint (shared memory) of the same robot
     std::string robot_name;            // the PDU robot, e.g. "SO101"
     std::string joint_states_pdu{"joint_states"};
+    // The joints commanded, each through its PDU "actuator/<joint>/command" (std_msgs/Float64).
+    std::vector<std::string> command_joints;
     std::uint64_t delta_usec{2000};    // the asset's step; the Robot Runtime's dT
     // Before each step, sleep until the wall clock has caught up with the
     // asset's time (as the Robot Runtime's real-time sync does). Without it the
@@ -67,6 +71,20 @@ public:
 
   // Copies the latest joint states into out; false while none has been read.
   bool latest_state(JointStateSample & out) const;
+
+  // Sets the command for all command_joints (same order). The asset thread
+  // writes it on its next step; a newer command replaces one not yet written.
+  void put_command(const std::vector<double> & values);
+
+  struct CommandCounts
+  {
+    std::uint64_t put{0};         // commands given with put_command()
+    std::uint64_t written{0};     // commands written completely (every joint)
+    std::uint64_t replaced{0};    // commands replaced by a newer one before written completely (or taken)
+    std::uint64_t pdu_writes{0};  // joint PDU writes accepted
+    std::uint64_t pdu_refused{0}; // joint PDU writes refused (the receiver had not taken the last one)
+  };
+  CommandCounts command_counts() const;
 
   // The asset's own Hakoniwa time after its last step [usec], and the number of steps.
   std::uint64_t asset_time_usec() const { return asset_time_usec_.load(); }
@@ -91,6 +109,7 @@ private:
   static int is_force_stop();
   int run_steps();
   void read_joint_states();
+  void write_command();
 
   Config config_;
   std::unique_ptr<Pdu> pdu_;
@@ -108,6 +127,16 @@ private:
 
   mutable std::mutex state_mutex_;  // guards state_: written by the asset thread, read by any thread
   JointStateSample state_;
+
+  // The command: put by any thread, written by the asset thread.
+  mutable std::mutex command_mutex_;
+  std::vector<double> command_;
+  std::uint64_t command_sequence_{0};  // counts put_command() calls
+  CommandCounts counts_;
+  // The asset thread's copy of the command being written, and which joints still wait.
+  std::vector<double> writing_;
+  std::vector<bool> pending_;
+  std::uint64_t writing_sequence_{0};
 
   // The core's callbacks carry no user pointer: one asset per process.
   static std::atomic<HakoniwaAssetLink *> instance_;

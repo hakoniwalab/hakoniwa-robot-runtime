@@ -9,6 +9,7 @@
 #define hako_convert_pdu2cpp_array_string_varray hako_convert_pdu2ros_array_string_varray
 #define hako_convert_cpp2pdu_array_string_varray hako_convert_ros2pdu_array_string_varray
 #include "sensor_msgs/pdu_cpptype_conv_JointState.hpp"
+#include "std_msgs/pdu_cpptype_conv_Float64.hpp"
 #undef hako_convert_pdu2cpp_array_string_varray
 #undef hako_convert_cpp2pdu_array_string_varray
 
@@ -20,13 +21,19 @@ namespace hakoniwa_ros2_control
 
 struct HakoniwaAssetLink::Pdu
 {
-  Pdu(const std::string & robot, const std::string & joint_states)
+  using Command = hakoniwa::pdu::TypedEndpoint<HakoCpp_Float64, hako::pdu::msgs::std_msgs::Float64>;
+
+  Pdu(const std::string & robot, const std::string & joint_states, const std::vector<std::string> & joints)
   : endpoint("hakoniwa_system_endpoint", HAKO_PDU_ENDPOINT_DIRECTION_INOUT),
     joint_states(endpoint, hakoniwa::pdu::PduKey{robot, joint_states})
   {
+    for (const auto & joint : joints) {
+      commands.push_back(std::make_unique<Command>(endpoint, hakoniwa::pdu::PduKey{robot, "actuator/" + joint + "/command"}));
+    }
   }
   hakoniwa::pdu::Endpoint endpoint;
   hakoniwa::pdu::TypedEndpoint<HakoCpp_JointState, hako::pdu::msgs::sensor_msgs::JointState> joint_states;
+  std::vector<std::unique_ptr<Command>> commands;  // in the order of Config::command_joints
   bool started{false};
 };
 
@@ -71,7 +78,9 @@ bool HakoniwaAssetLink::register_asset()
   };
   // The same order as the Robot Runtime: open the Endpoint, register the
   // asset, start the Endpoint; post_start comes after START (on_initialize).
-  pdu_ = std::make_unique<Pdu>(config_.robot_name, config_.joint_states_pdu);
+  pdu_ = std::make_unique<Pdu>(config_.robot_name, config_.joint_states_pdu, config_.command_joints);
+  writing_.assign(config_.command_joints.size(), 0.0);
+  pending_.assign(config_.command_joints.size(), false);
   if (pdu_->endpoint.open(config_.endpoint_config_path, config_.asset_name.c_str()) != HAKO_PDU_ERR_OK) {
     std::cerr << "[HakoniwaAssetLink] cannot open the PDU Endpoint " << config_.endpoint_config_path << std::endl;
     return give_up();
@@ -134,6 +143,23 @@ bool HakoniwaAssetLink::latest_state(JointStateSample & out) const
   }
   out = state_;
   return true;
+}
+
+void HakoniwaAssetLink::put_command(const std::vector<double> & values)
+{
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  if (command_sequence_ != writing_sequence_) {
+    ++counts_.replaced;  // the previous command was never taken by the asset thread
+  }
+  command_ = values;
+  ++command_sequence_;
+  ++counts_.put;
+}
+
+HakoniwaAssetLink::CommandCounts HakoniwaAssetLink::command_counts() const
+{
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  return counts_;
 }
 
 int HakoniwaAssetLink::on_initialize(hako_asset_context_t *)
@@ -206,6 +232,7 @@ int HakoniwaAssetLink::run_steps()
     world_time_usec_ = static_cast<std::uint64_t>(hako_asset_simulation_time());
     ++steps_;
     read_joint_states();
+    write_command();
   }
   return 0;
 }
@@ -232,6 +259,58 @@ void HakoniwaAssetLink::read_joint_states()
   state_.asset_time_usec = asset_time_usec_.load();
   state_.received = std::chrono::steady_clock::now();
   ++state_.sequence;
+}
+
+void HakoniwaAssetLink::write_command()
+{
+  if (pdu_->commands.empty()) {
+    return;
+  }
+  {
+    // Take a newer command, if any: it replaces the one being written.
+    std::lock_guard<std::mutex> lock(command_mutex_);
+    if (command_sequence_ != writing_sequence_ && command_.size() == writing_.size()) {
+      for (bool waiting : pending_) {
+        if (waiting) {
+          ++counts_.replaced;
+          break;
+        }
+      }
+      writing_ = command_;
+      pending_.assign(writing_.size(), true);
+      writing_sequence_ = command_sequence_;
+    }
+  }
+  // Write each joint still waiting. A refused write (the Robot Runtime has
+  // not taken the last value yet) stays waiting for the next step.
+  std::uint64_t accepted = 0;
+  std::uint64_t refused = 0;
+  bool all_written = true;
+  bool any_written = false;
+  for (std::size_t i = 0; i < writing_.size(); ++i) {
+    if (!pending_[i]) {
+      continue;
+    }
+    HakoCpp_Float64 value{};
+    value.data = writing_[i];
+    if (pdu_->commands[i]->send(value) == HAKO_PDU_ERR_OK) {
+      pending_[i] = false;
+      ++accepted;
+      any_written = true;
+    } else {
+      ++refused;
+      all_written = false;
+    }
+  }
+  if (accepted == 0 && refused == 0) {
+    return;  // nothing to write
+  }
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  counts_.pdu_writes += accepted;
+  counts_.pdu_refused += refused;
+  if (all_written && any_written) {
+    ++counts_.written;
+  }
 }
 
 }  // namespace hakoniwa_ros2_control

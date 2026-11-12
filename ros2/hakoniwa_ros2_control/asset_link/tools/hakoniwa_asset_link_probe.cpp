@@ -9,10 +9,16 @@
 // hakoniwa_asset_link_probe --pdu-def so101-pdudef.json --endpoint so101_endpoint.json --robot SO101
 //                           [--asset-name HakoniwaSystem] [--delta-usec 2000] [--realtime-sync 1]
 //                           [--seconds 0] [--state-log states.csv]
+//                           [--command-joint shoulder_pan --command-hz 100 --amplitude 0.5 --period 5
+//                            --command-log commands.csv]
+// With --command-joint, the probe plays controller_manager: it puts
+// amplitude * sin(2 pi t / period) for that joint at command-hz (wall clock),
+// logs each command (asset_s, value) and prints the command counts at the end.
 
 #include <sys/resource.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +45,10 @@ int main(int argc, char ** argv)
   config.asset_name = "HakoniwaSystem";
   double seconds = 0.0;  // 0: until the simulation stops
   std::string state_log;
+  std::string command_log;
+  double command_hz = 100.0;
+  double amplitude = 0.5;
+  double period = 5.0;
   for (int i = 1; i + 1 < argc; i += 2) {
     const std::string key = argv[i];
     const std::string value = argv[i + 1];
@@ -48,6 +58,16 @@ int main(int argc, char ** argv)
       config.endpoint_config_path = value;
     } else if (key == "--robot") {
       config.robot_name = value;
+    } else if (key == "--command-joint") {
+      config.command_joints.push_back(value);
+    } else if (key == "--command-hz") {
+      command_hz = std::atof(value.c_str());
+    } else if (key == "--amplitude") {
+      amplitude = std::atof(value.c_str());
+    } else if (key == "--period") {
+      period = std::atof(value.c_str());
+    } else if (key == "--command-log") {
+      command_log = value;
     } else if (key == "--state-log") {
       state_log = value;
     } else if (key == "--asset-name") {
@@ -87,6 +107,15 @@ int main(int argc, char ** argv)
   }
   hakoniwa_ros2_control::JointStateSample sample;
   std::uint64_t logged = 0;
+  std::ofstream commands;
+  if (!command_log.empty()) {
+    commands.open(command_log);
+    commands << "asset_s,value\n";
+  }
+  const auto command_start = std::chrono::steady_clock::now();
+  auto next_command = command_start;
+  const auto command_period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+    std::chrono::duration<double>(1.0 / command_hz));
   const auto begin = std::chrono::steady_clock::now();
   double last_wall = 0.0;
   double last_asset = link.asset_time_usec() * 1e-6;
@@ -95,6 +124,19 @@ int main(int argc, char ** argv)
   while (link.running()) {
     // Every new joint states PDU to the log (polled; the probe is not real time).
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (!config.command_joints.empty() && std::chrono::steady_clock::now() >= next_command) {
+      const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - command_start).count();
+      const double value = amplitude * std::sin(2.0 * M_PI * t / period);
+      link.put_command(std::vector<double>(config.command_joints.size(), value));
+      if (commands.is_open()) {
+        commands << std::fixed;
+        commands.precision(6);
+        commands << link.asset_time_usec() * 1e-6 << ",";
+        commands.precision(9);
+        commands << value << "\n";
+      }
+      next_command += command_period;
+    }
     if (link.latest_state(sample) && sample.sequence != logged) {
       if (log.is_open()) {
         if (logged == 0) {
@@ -138,6 +180,11 @@ int main(int argc, char ** argv)
     }
   }
   link.stop();
+  const auto counts = link.command_counts();
+  std::printf("commands: put %llu, written %llu, replaced %llu; joint PDU writes %llu, refused %llu\n",
+              static_cast<unsigned long long>(counts.put), static_cast<unsigned long long>(counts.written),
+              static_cast<unsigned long long>(counts.replaced), static_cast<unsigned long long>(counts.pdu_writes),
+              static_cast<unsigned long long>(counts.pdu_refused));
   std::printf("ended: result %d, asset time %.6f s, %llu steps\n", link.result(), link.asset_time_usec() * 1e-6,
               static_cast<unsigned long long>(link.steps()));
   return link.result() == 0 ? 0 : 1;
