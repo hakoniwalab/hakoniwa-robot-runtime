@@ -753,9 +753,9 @@ Asset Manifestの例:
 |---|---|---|
 | `hakoniwa` | 全種別 | hakoniwa-sensor-adapter の仕様の形式 |
 | `airsim` | `imu`、`mag`、`baro`、`gps` | Project AirSim のセンサの JSON（hakoniwa-sensor-adapter-airsim の README）。`type` は Runtime の種別名（`imu`、`mag`、`baro`、`gps`）で書く |
-| `gazebo` | `force_torque` | 実装一覧にある項目 |
+| `gazebo` | `joint`、`force_torque`、`imu`、`mag`、`baro`、`gps` | Gazebo の SDFormat の `<sensor>` を 1 対 1 で JSON に写したもの（hakoniwa-sensor-adapter-gazebo の `tools/sdf_json.py` で変換）。`joint` は真値（Gazebo の JointStatePublisher と同じ）で、`update_rate` だけ |
 
-`airsim` は Project AirSim のモデルの式を書き直した軽い実装です（必要なのは C++17 と Boost のヘッダだけです）。フィルタ・遅れ・飽和は持たず、GPS は位置の誤差を出しません（精度の報告も無いので、NavSatFix の共分散は UNKNOWN）。アプリは、実装の名前とライブラリをビルドの設定で与えてリンクします（ロボットアームなら `HAKO_ROBOT_ARM_SENSOR_IMPLEMENTATIONS` に `hakoniwa;airsim`、`HAKO_ROBOT_ARM_SENSOR_LIBRARIES` に `libhakoniwa_sensor_adapter_airsim.a`）。
+`airsim` は Project AirSim のモデルの式を書き直した軽い実装です（必要なのは C++17 と Boost のヘッダだけです）。フィルタ・遅れ・飽和は持たず、GPS は位置の誤差を出しません（精度の報告も無いので、NavSatFix の共分散は UNKNOWN）。アプリは、実装の名前とライブラリをビルドの設定で与えてリンクします。ロボットアームでの準備は [hakoniwa-robot-arm のビルド手順](https://github.com/hakoniwalab/hakoniwa-robot-arm/blob/main/docs/procedures/build.md#センサの実装を選ぶ準備) にあります（`hakoniwa` 実装のライブラリは箱庭ラボへの問い合わせ）。
 
 <a id="3-runtime-config"></a>
 

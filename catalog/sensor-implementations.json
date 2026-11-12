@@ -42,8 +42,28 @@
     },
     "gazebo": {
       "sensors": {
+        "joint": {
+          "keys": ["update_rate"]
+        },
         "force_torque": {
-          "keys": ["update_rate", "noise", "bias", "resolution"]
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.force_torque"]
+        },
+        "imu": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.imu"]
+        },
+        "mag": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.magnetometer"]
+        },
+        "baro": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.air_pressure"]
+        },
+        "gps": {
+          "keys": ["sdf_version", "sensor.@name", "sensor.@type", "sensor.update_rate", "sensor.always_on",
+            "sensor.topic", "sensor.navsat"]
         }
       }
     },
