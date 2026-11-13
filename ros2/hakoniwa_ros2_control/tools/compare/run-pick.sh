@@ -7,7 +7,7 @@
 # MoveIt in a separate process (config/so101/hakoniwa-launcher-docker-plugin.json).
 # Each run starts the simulator, ros2_control and MoveIt, runs pick_and_place.py once
 # while self_filter_leak.py counts the arm's points left in MoveIt's map, and stops.
-# "instant" (Hakoniwa): the overhead LiDAR as an instant scan, in copies of the
+# "instant" (hakoniwa, hakoniwa-plugin): the overhead LiDAR as an instant scan, in copies of the
 # configuration under /tmp/compare-pick/instant (the recipe's files are unchanged).
 # Results in /tmp/compare-pick (or $COMPARE_PICK_DIR)/<label>-<n>.{out,leak.csv,ps0,ps1}; pick_summary.py sums them.
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -30,8 +30,28 @@ if [ "$SIM" = hakoniwa-plugin ]; then
   ROS_LOG=moveit
 fi
 if [ "$SIM" = hakoniwa-plugin ] && [ "$MODE" = instant ]; then
-  echo "instant is not prepared for hakoniwa-plugin" >&2
-  exit 1
+  # As the hakoniwa mode: the overhead LiDAR as an instant scan, in copies of the
+  # sensor configuration; the plugin manifest and the launcher point at them.
+  C=/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors
+  PM=$HERE/../../config/so101/plugin/asset-manifest-sensors-plugin.json
+  I=$O/instant; rm -rf $I; mkdir -p $I/sensors; cp -r $C/lidar $C/force_torque $C/so101-sensors.json $I/sensors/
+  python3 - "$I" "$(readlink -f $PM)" "$(readlink -f $LAUNCHER)" <<'PY'
+import json, sys
+i, manifest, launcher = sys.argv[1:]
+lidar = f"{i}/sensors/lidar/overhead-lidar3d.json"
+j = json.load(open(lidar)); j["scan_mode"] = "instant"; json.dump(j, open(lidar, "w"), indent=2)
+m = json.load(open(manifest))
+n = 0
+for c in m["components"]:
+    if c["id"] == "sensors":
+        c["config"] = f"{i}/sensors/so101-sensors.json"; n += 1
+assert n == 1
+json.dump(m, open(f"{i}/asset-manifest-sensors-plugin.json", "w"), indent=2)
+text = open(launcher).read()
+assert manifest in text, (manifest, launcher)
+open(f"{i}/launcher.json", "w").write(text.replace(manifest, f"{i}/asset-manifest-sensors-plugin.json"))
+PY
+  LAUNCHER=$I/launcher.json
 fi
 if [ "$SIM" = hakoniwa ] && [ "$MODE" = instant ]; then
   C=/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors
