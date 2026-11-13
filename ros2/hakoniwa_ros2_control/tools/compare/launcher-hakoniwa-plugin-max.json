@@ -1,0 +1,38 @@
+{
+  "version": "0.1",
+  "defaults": {
+    "cwd": "/workspace/hakoniwa-robot-arm",
+    "stdout": "/tmp/compare/hakoniwa-plugin-max-${asset}.out",
+    "stderr": "/tmp/compare/hakoniwa-plugin-max-${asset}.err",
+    "start_grace_sec": 2,
+    "delay_sec": 1,
+    "env": {
+      "set": {
+        "HAKO_CONFIG_PATH": "/workspace/work-docker-jazzy/foundation/config/cpp_core_config.json",
+        "HAKO_PDU_ENDPOINT_SHARED_LIB": "/workspace/work-docker-jazzy/foundation/install/lib/libhakoniwa_pdu_endpoint_core_callback.so",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "prepend": {
+        "lib_path": [
+          "/workspace/work-docker-jazzy/foundation/install/lib"
+        ],
+        "PATH": [
+          "/workspace/work-docker-jazzy/foundation/install/python/bin",
+          "/workspace/work-docker-jazzy/foundation/install/bin"
+        ]
+      }
+    }
+  },
+  "assets": [
+    {
+      "name": "so101-plant-plugin",
+      "activation_timing": "before_start",
+      "command": "bash",
+      "args": [
+        "-c",
+        "source /opt/ros/jazzy/setup.bash && source /tmp/plugin-install/setup.bash && mkdir -p /tmp/hakoniwa-so101-plugin && xacro /workspace/hakoniwa-robot-runtime-design/ros2/hakoniwa_ros2_control/config/so101/so101_plugin.urdf.xacro so101_urdf:=/workspace/work-docker-jazzy/model-forge/so101/source/Simulation/SO101/so101_new_calib.urdf sensors:=false -o /tmp/hakoniwa-so101-plugin/so101_plugin.urdf && exec /tmp/arm-plugin-release/bin/robot-arm-hakoniwa-asset --manifest /workspace/hakoniwa-robot-runtime-design/ros2/hakoniwa_ros2_control/config/so101/plugin/asset-manifest-environment-plugin.json --no-viewer --realtime-sync-cycle-msec 0"
+      ],
+      "delay_sec": 4
+    }
+  ]
+}

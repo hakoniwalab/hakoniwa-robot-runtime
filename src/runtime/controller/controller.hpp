@@ -3,6 +3,7 @@
 #include "runtime/source/command_source.hpp"
 
 #include <memory>
+#include <string>
 #include <string_view>
 
 namespace hakoniwa::robot_runtime::runtime {
@@ -30,6 +31,31 @@ public:
         const RobotState& current_state,
         const RuntimeStepContext& context) = 0;
     virtual void reset(const RobotState& current_state) = 0;
+
+    /**
+     * Start and stop events of the simulation (called by
+     * ActuatorRuntime::start() / stop() from the simulation thread). The
+     * defaults do nothing; built-in controllers keep their behaviour.
+     */
+    [[nodiscard]] virtual ComponentStatus on_start()
+    {
+        return {std::string(id()), ComponentState::Ready, {}};
+    }
+    [[nodiscard]] virtual ComponentStatus on_stop()
+    {
+        return {std::string(id()), ComponentState::Ready, {}};
+    }
+
+    /**
+     * True when an Error status of this controller must end the run
+     * (ActuatorRuntime throws from start(), step() and stop()). The default
+     * keeps the existing behaviour: an Error status only removes the
+     * controller's commands from the arbitration of that step.
+     */
+    [[nodiscard]] virtual bool error_stops_run() const noexcept
+    {
+        return false;
+    }
 };
 
 } // namespace hakoniwa::robot_runtime::runtime

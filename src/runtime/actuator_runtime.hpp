@@ -80,6 +80,23 @@ public:
 
     [[nodiscard]] RobotState reset(std::uint64_t simulation_time_usec = 0);
 
+    /**
+     * Start event: calls every Controller's on_start() in order, from the
+     * simulation thread, before the first step of a run. Returns their
+     * statuses. Throws std::runtime_error when a Controller whose
+     * error_stops_run() is true reports Error (the later ones are not started).
+     */
+    [[nodiscard]] std::vector<ComponentStatus> start();
+
+    /**
+     * Stop event: calls every Controller's on_stop() in order, from the
+     * simulation thread, after the last step of a run. Every Controller is
+     * called, also after a failure. Returns their statuses; then throws
+     * std::runtime_error for the first Error of a Controller whose
+     * error_stops_run() is true.
+     */
+    [[nodiscard]] std::vector<ComponentStatus> stop();
+
 private:
     using ControllerInputMap = std::unordered_map<
         std::string_view,

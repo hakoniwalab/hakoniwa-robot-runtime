@@ -4,8 +4,7 @@
 
 #include "geometry_msgs/pdu_cpptype_WrenchStamped.hpp"
 #include "geometry_msgs/pdu_cpptype_conv_WrenchStamped.hpp"
-#include "hakoniwa/pdu/endpoint.hpp"
-#include "hakoniwa/pdu/type_endpoint.hpp"
+#include "adapters/endpoint/encoding_pdu_endpoint.hpp"
 
 #include <utility>
 
@@ -16,14 +15,16 @@ public:
     Impl(
         ::hakoniwa::pdu::Endpoint& endpoint_value,
         std::string pdu_robot,
-        std::string pdu_name)
+        std::string pdu_name,
+        std::shared_ptr<runtime::IEncodedPduSink> sink)
         : endpoint(endpoint_value,
             ::hakoniwa::pdu::PduKey {
-                std::move(pdu_robot), std::move(pdu_name)})
+                std::move(pdu_robot), std::move(pdu_name)},
+            std::move(sink))
     {
     }
 
-    ::hakoniwa::pdu::TypedEndpoint<
+    EncodingPduEndpoint<
         HakoCpp_WrenchStamped,
         ::hako::pdu::msgs::geometry_msgs::WrenchStamped> endpoint;
 };
@@ -31,9 +32,10 @@ public:
 WrenchStampedPduWriter::WrenchStampedPduWriter(
     ::hakoniwa::pdu::Endpoint& endpoint,
     std::string pdu_robot,
-    std::string pdu_name)
+    std::string pdu_name,
+    std::shared_ptr<runtime::IEncodedPduSink> sink)
     : impl_(std::make_unique<Impl>(
-        endpoint, std::move(pdu_robot), std::move(pdu_name)))
+        endpoint, std::move(pdu_robot), std::move(pdu_name), std::move(sink)))
 {
 }
 
@@ -51,11 +53,12 @@ bool WrenchStampedPduWriter::send(const runtime::WrenchOutput& output) noexcept
     pdu.wrench.torque.x = output.torque[0];
     pdu.wrench.torque.y = output.torque[1];
     pdu.wrench.torque.z = output.torque[2];
-    return impl_->endpoint.send(pdu) == HAKO_PDU_ERR_OK;
+    return impl_->endpoint.send(pdu, output.simulation_time_usec) == HAKO_PDU_ERR_OK;
 }
 
 void WrenchStampedPduWriter::reset() noexcept
 {
+    impl_->endpoint.reset();
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

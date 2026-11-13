@@ -1,0 +1,92 @@
+# hakoniwa-robot-runtime
+
+[English](README.md) | 日本語
+
+`hakoniwa-robot-runtime` は、箱庭上でアクチュエータ型ロボットを実行するための共通 Runtime です。
+
+ロボット固有のモデルや Recipe を持つのではなく、外部入力を受け取り、制御候補を生成・選択し、物理 Plant へ適用し、更新後の状態を外部へ返す実行層を提供します。
+
+現在の Runtime core は、次の5つの責務で構成されています。センサを使うビルド（opt-in）では、Plant と Publisher の間に SensorStage が入ります。
+
+```text
+CommandSource -> Controller -> Arbiter -> Plant -> [SensorStage] -> Publisher
+```
+
+`ActuatorRuntime` はこれらを 1 simulation step の順序で実行する orchestrator です。制御プラグイン（opt-in。ros2_control など）は、Controller の 1 つとして同じ順序の中で呼ばれます。SensorStage は、ステップの後の状態からセンサの真値を取り出し、選んだ実装の誤差モデルを通した測定値を RobotState に入れます。Publisher はそれを PDU で送ります（[docs/sensor-pdu.md](docs/sensor-pdu.md)）。
+
+## 位置づけ
+
+```text
+Robot Pack / Application
+        |
+        v
+   ManifestFactory
+        |
+        +--> RuntimeFactory
+        |       |
+        |       v
+        |  ActuatorRuntime
+        |       |
+        |       v
+        |  Source -> Controller -> Arbiter -> Plant -> [SensorStage] -> Publisher
+        |
+        +--> Endpoint / Physics Adapters
+        |
+        +--> Runner
+                |
+                v
+          Hakoniwa Asset
+```
+
+このリポジトリが担当するのは、主に以下です。
+
+- Runtime core
+- RuntimeDefinition / RuntimeFactory
+- Hakoniwa Runner
+- Hakoniwa PDU Endpoint adapter
+- MuJoCo Plant adapter
+- Manifest から Runtime / Adapter / Runner を組み立てる ManifestFactory
+- Asset Manifest / Runtime config / actuator / controller / state-output の **format / semantics / cross-reference validation**
+
+一方、次は Robot Pack や上位アプリケーション側の責務です。
+
+- ロボット固有の MuJoCo モデル
+- Runtime contract に従う **具体的な config instance / robot-specific value**
+- Recipe / demo / Launcher 構成
+- ROS 2 bridge
+- Gamepad frontend
+- ロボット固有の追加 Controller
+
+PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint` 側の contract を利用します。本 Runtime は、それらを独自に再定義せず、Runtime component から見た binding 条件だけを定義・検証します。
+
+本 Runtime は、これらの Robot Pack / Application から共通実行層として利用することを想定しています。
+
+## Documentation
+
+- [docs/design.md](docs/design.md) — Runtime architecture / responsibility boundary
+- [docs/configuration.md](docs/configuration.md) — Asset Manifest、Runtime config、actuator / controller / state-output、PDU / Endpoint contract
+- [docs/ros2-control.md](docs/ros2-control.md) — ros2_control / MoveIt 2 との接続（HakoniwaSystem、箱庭 ROS 2 Bridge、トピック）
+- [docs/design-controller-plugin.md](docs/design-controller-plugin.md) — プラグイン（opt-in）：ros2_control などの制御を Robot Runtime のプロセスの中で、シミュレーションの刻みで回す制御プラグインと、その共通の C の境界
+- [docs/gazebo-comparison/README.md](docs/gazebo-comparison/README.md) — Gazebo との比較（SO-101、ros2_control、MoveIt。英語）
+- [schemas/README.md](schemas/README.md) — Runtime-owned JSON Schemas
+- [docs/sensor-pdu.md](docs/sensor-pdu.md) — センサ（opt-in）：取り付けられるセンサ種別、MJCF への取り付け方、送信する PDU と欄の対応
+- [docs/sensor-prerequisites.md](docs/sensor-prerequisites.md) — センサ統合の全体像、フェーズ、各フェーズの実証結果
+
+## 設計上の重要点
+
+- Runtime は独立した simulation clock を持ちません。
+- 物理 Plant の時刻と timestep を Runtime の Source of Truth とします。
+- Controller は物理 backend に直接依存しません。
+- Arbiter は AUTO / MANUAL / HOLD のような mode state を保持せず、現在 step の logical control を選択します。
+- command type / expiration / finite value / limit / fallback などの最終 guard は Plant 入口で行います。
+- transport、physics backend、execution policy は Runtime core から分離します。
+
+## 現在のスコープ
+
+現在の実装は joint / scalar actuator を中心とした Runtime を正本としています。ロボットアームで実運用・検証され、opt-inのmobile-base拡張としてAckermann controllerとMultiDOF body-state output、opt-inのPlant Directive拡張として外部body同期（Mirror）とImpulse collision output、geom frictionの外部設定、opt-inの制御プラグインを提供します。Runtime 自体は特定のロボット機種やアーム専用 API を前提にしない構造です。
+
+車輪型・脚型などへの展開は可能な設計ですが、各ロボット固有の運動学・制御方式・モデル構成まで本 Runtime が提供するものではありません。
+
+## License
+
+MIT License
