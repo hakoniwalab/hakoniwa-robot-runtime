@@ -5,7 +5,7 @@
 // Hakoniwa time as /clock. The asset thread only copies the raw PDUs; decoding
 // and publishing here keeps it (and so the whole simulation) from waiting.
 // Types: sensor_msgs/PointCloud2, geometry_msgs/WrenchStamped.
-// The design is in docs/ros2-control.md, chapter 10.6.
+// The design is in ros2/docs/ros2-control.md, chapter 10.6.
 
 #include <atomic>
 #include <memory>

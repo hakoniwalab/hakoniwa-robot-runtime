@@ -1,5 +1,5 @@
 #!/bin/bash
-# The controller-plugin form in the Gazebo comparison (docs/evaluation-gazebo.md 3.2, 3.3),
+# The controller-plugin form in the Gazebo comparison (ros2/docs/evaluation-gazebo.md 3.2, 3.3),
 # inside the container:
 #   run-hakoniwa-plugin.sh rt|max <runs> [speed]
 # Starts only the Robot Runtime (SO-101, no sensors) with ros2_control inside it (the

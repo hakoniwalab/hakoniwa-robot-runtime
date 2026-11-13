@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hakoniwa side of the comparison (Docker only, docs/evaluation-gazebo.md):
+# Hakoniwa side of the comparison (Docker only, ros2/docs/evaluation-gazebo.md):
 #   run-hakoniwa.sh rt|max <runs> [speed]
 # Starts the Robot Runtime (SO-101, no sensors) and ros2_control (HakoniwaAssetSystem)
 # with the Hakoniwa launcher, then measures <runs> trajectories (measure.py, results in

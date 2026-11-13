@@ -1,8 +1,8 @@
 #!/bin/bash
-# Pick and place with sensors and MoveIt (docs/evaluation-gazebo.md 3.4), inside the container:
+# Pick and place with sensors and MoveIt (ros2/docs/evaluation-gazebo.md 3.4), inside the container:
 #   run-pick.sh hakoniwa|hakoniwa-plugin|gazebo <runs> [instant]
 # hakoniwa: ros2_control as a separate Hakoniwa asset (HakoniwaAssetSystem), with the
-# launcher of the comparison (feat/gazebo-comparison checkout).
+# launcher of the comparison (this repository).
 # hakoniwa-plugin: ros2_control inside the Robot Runtime (the controller plugin),
 # MoveIt in a separate process (config/so101/hakoniwa-launcher-docker-plugin.json).
 # Each run starts the simulator, ros2_control and MoveIt, runs pick_and_place.py once

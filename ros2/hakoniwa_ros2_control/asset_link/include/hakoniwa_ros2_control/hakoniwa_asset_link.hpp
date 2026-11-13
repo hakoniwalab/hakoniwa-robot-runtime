@@ -13,7 +13,7 @@
 //   take_sensor():    the latest raw PDU of a sensor, read at its rate (any thread)
 //   stop():           asks the asset thread to stop and joins it
 //
-// The design is in docs/ros2-control.md, chapter 10.
+// The design is in ros2/docs/ros2-control.md, chapter 10.
 
 #include <atomic>
 #include <chrono>

@@ -32,7 +32,7 @@ In short:
 
 Hakoniwa runs the physics (MuJoCo) in its Robot Runtime, a Hakoniwa asset. ros2_control runs **inside the same process** as a plugin: the Robot Runtime calls `ControllerManager::read/update/write` on its simulation thread, in simulation time, every control period (2 ms physics steps, 100 Hz control). Only what other programs need goes out on ROS 2: `/clock`, the joint states, the sensors (`/pdu/lidar_scan`, `/pdu/wrist_wrench`) and the controllers' actions for MoveIt. This is the same structure as Hakoniwa's drone simulator, where the flight controller runs in the physics process.
 
-The plugin boundary is C only and carries no ROS types; ROS lives in the plugin. Design: [design-controller-plugin.md](../design-controller-plugin.md).
+The plugin boundary is C only and carries no ROS types; ROS lives in the plugin. Design: [design-controller-plugin.md](../../../docs/design-controller-plugin.md).
 
 ### Gazebo: gz_ros2_control
 
@@ -70,7 +70,7 @@ Gazebo Harmonic runs as a server (`gz sim -s`), with `gz_ros2_control`: the cont
 | hakoniwa-robot-runtime | Robot Runtime and controller plugin 3826abf; Gazebo side and comparison tools 9556611 |
 | hakoniwa-robot-arm | 3e15d54 |
 | hakoniwa-pdu-registry | `main` a8ad04c (PDU types and converters) |
-| Transport bench | hakoniwa-robot-runtime 3cc055d (`tools/transport-bench`) |
+| Transport bench | hakoniwa-robot-runtime 3cc055d (`ros2/tools/transport-bench`) |
 
 Every Hakoniwa program was built fresh (Release) from these commits for this run. All of them are on the main branches of these repositories.
 
@@ -225,11 +225,11 @@ Each point of the Hakoniwa cloud already carries its own measurement time (`time
 
 ## 6. Reproduce
 
-All runs were made in one container (ROS 2 Jazzy, Gazebo Harmonic, the Hakoniwa core installed), from the commits in section 2, built fresh in Release. The scripts below take their paths from that container's layout (the Docker layout of [ros2/hakoniwa_ros2_control](../../ros2/hakoniwa_ros2_control/README.md), section "Docker だけで動かす（コントローラプラグイン）", which builds the Robot Runtime and the controller plugin); they are written to show what is run and in which order.
+All runs were made in one container (ROS 2 Jazzy, Gazebo Harmonic, the Hakoniwa core installed), from the commits in section 2, built fresh in Release. The scripts below take their paths from that container's layout (the Docker layout of [ros2/hakoniwa_ros2_control](../../hakoniwa_ros2_control/README.md), section "Docker だけで動かす（コントローラプラグイン）", which builds the Robot Runtime and the controller plugin); they are written to show what is run and in which order.
 
 | Step | Script | What it does |
 |---|---|---|
-| Transport | `tools/transport-bench/sweep.sh` ([README](../../tools/transport-bench/README.md)), with `TYPE=fixed` for the fixed-size messages and `CASES="gz"` for gz-transport; `summarize.py` | every size and rate, 3 runs, one transport at a time |
+| Transport | `ros2/tools/transport-bench/sweep.sh` ([README](../../tools/transport-bench/README.md)), with `TYPE=fixed` for the fixed-size messages and `CASES="gz"` for gz-transport; `summarize.py` | every size and rate, 3 runs, one transport at a time |
 | Physics only | `ros2/hakoniwa_ros2_control/tools/compare/run-physics.sh` | each simulator alone, 3 x 5 s of wall time |
 | Control, Hakoniwa | `ros2/hakoniwa_ros2_control/tools/compare/run-hakoniwa-plugin.sh rt 3`, `... max 3`, `... max 3 speed` | the Robot Runtime with ros2_control inside it, then the trajectory measured by `measure.py` |
 | Control, Gazebo | `ros2/hakoniwa_ros2_control/tools/compare/run-gazebo.sh rt 3`, `... max 3`, `... max 3 speed` | `gz sim -s` with `gz_ros2_control`, same measurement |

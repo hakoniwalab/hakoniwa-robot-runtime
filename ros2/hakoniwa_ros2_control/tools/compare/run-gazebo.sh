@@ -1,5 +1,5 @@
 #!/bin/bash
-# Gazebo side of the comparison (Docker only, docs/evaluation-gazebo.md):
+# Gazebo side of the comparison (Docker only, ros2/docs/evaluation-gazebo.md):
 #   run-gazebo.sh rt|max|urdf-max <runs> [speed]
 # gz sim -s with gz_ros2_control (so101_gz.launch.py); rt/max with the collision hulls
 # (/workspace/work-docker-jazzy/model-forge/so101/gazebo-hull, tools/so101_collision_hulls.py),

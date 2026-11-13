@@ -65,14 +65,21 @@ Robot packs and applications use this runtime as their common execution layer.
 
 - [docs/design.md](docs/design.md) — runtime architecture and responsibility boundaries
 - [docs/configuration.md](docs/configuration.md) — asset manifest, runtime config, actuators, controllers, state outputs, PDU / endpoint contract
-- [docs/ros2-control.md](docs/ros2-control.md) — connecting ros2_control / MoveIt 2 (HakoniwaSystem, the Hakoniwa ROS 2 Bridge, topics)
 - [docs/design-controller-plugin.md](docs/design-controller-plugin.md) — plugins (opt-in): a controller plugin that runs control such as ros2_control inside the Robot Runtime process, stepped in simulation time, and the common C boundary
-- [docs/gazebo-comparison/README.md](docs/gazebo-comparison/README.md) — comparison with Gazebo (SO-101, ros2_control, MoveIt)
 - [schemas/README.md](schemas/README.md) — runtime-owned JSON Schemas
 - [docs/sensor-pdu.md](docs/sensor-pdu.md) — sensors (opt-in): sensor types, how to mount them in MJCF, the PDUs sent and their fields
 - [docs/sensor-prerequisites.md](docs/sensor-prerequisites.md) — overview of the sensor integration, its phases and the results of each
 
-Most documents under `docs/` are in Japanese; the comparison with Gazebo is in English.
+Most documents under `docs/` are in Japanese.
+
+### ROS 2
+
+The runtime itself does not depend on ROS 2. Everything that needs a ROS 2 installation is under [ros2/](ros2/):
+
+- [ros2/hakoniwa_ros2_control/README.md](ros2/hakoniwa_ros2_control/README.md) — the ros2_control package for SO-101: how to build and run each form (through the ROS 2 Bridge, as a Hakoniwa asset, as a controller plugin)
+- [ros2/docs/ros2-control.md](ros2/docs/ros2-control.md) — connecting ros2_control / MoveIt 2 (HakoniwaSystem, the Hakoniwa ROS 2 Bridge, topics)
+- [ros2/docs/gazebo-comparison/README.md](ros2/docs/gazebo-comparison/README.md) — comparison with Gazebo (SO-101, ros2_control, MoveIt; in English)
+- [ros2/tools/transport-bench/README.md](ros2/tools/transport-bench/README.md) — transport bench: ROS 2, zero copy, gz-transport and Hakoniwa PDU
 
 ## Key design points
 

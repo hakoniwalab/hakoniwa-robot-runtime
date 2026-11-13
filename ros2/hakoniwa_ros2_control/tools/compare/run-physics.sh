@@ -1,6 +1,6 @@
 #!/bin/bash
 # Physics only (no ros2_control), as fast as possible, three 5 s wall windows each
-# (docs/evaluation-gazebo.md): the simulation seconds per wall second and the CPU
+# (ros2/docs/evaluation-gazebo.md): the simulation seconds per wall second and the CPU
 # seconds (all processes) per simulation second.
 #  Hakoniwa: the Robot Runtime alone (SO-101 environment, real-time sync 0); progress
 #            from the world time (hako-cmd pmeta).

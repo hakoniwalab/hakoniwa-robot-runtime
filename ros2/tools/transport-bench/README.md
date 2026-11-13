@@ -32,11 +32,16 @@ On a corrupted message the receiver records, in `<trace>.corrupt`, the sequence 
 
 ## Build and run
 
-Inside a ROS 2 Jazzy environment with the Hakoniwa core and the PDU Endpoint installed (on `CMAKE_PREFIX_PATH`):
+Inside a ROS 2 Jazzy environment with the Hakoniwa core and the PDU Endpoint installed, and a checkout of hakoniwa-pdu-registry at `a8ad04c` or later (the converters write into the caller's buffer, `hako_convert_ros2pdu_into_*`). In the Docker layout of [ros2/hakoniwa_ros2_control](../../hakoniwa_ros2_control/README.md):
 
 ```bash
-colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
+source /opt/ros/jazzy/setup.bash
+colcon build --base-paths /workspace/hakoniwa-robot-runtime/ros2/tools/transport-bench --cmake-args -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/workspace/work-docker-jazzy/foundation/install \
+  -DCMAKE_CXX_FLAGS=-I/workspace/hakoniwa-pdu-registry/pdu/types
 ```
+
+`Summary: 2 packages finished` means it is built. Without the `-I`, the older converter headers installed with the Hakoniwa core are used and the build stops at `hako_convert_ros2pdu_into_PointCloud2`.
 
 The scripts take the Hakoniwa installation from `/workspace/work-docker-jazzy/foundation` and the bench from the ROS 2 workspace they source; adapt these paths to your environment.
 

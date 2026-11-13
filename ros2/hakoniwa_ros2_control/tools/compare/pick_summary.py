@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sum the pick-and-place runs of run-pick.sh (docs/evaluation-gazebo.md 3.4):
+"""Sum the pick-and-place runs of run-pick.sh (ros2/docs/evaluation-gazebo.md 3.4):
 python3 pick_summary.py [/tmp/compare-pick]
 
 Per configuration: the runs that passed every step, the CPU of the container

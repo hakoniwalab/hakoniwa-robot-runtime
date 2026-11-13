@@ -65,12 +65,19 @@ PDU Definition / Endpoint config の構文そのものは `hakoniwa-pdu-endpoint
 
 - [docs/design.md](docs/design.md) — Runtime architecture / responsibility boundary
 - [docs/configuration.md](docs/configuration.md) — Asset Manifest、Runtime config、actuator / controller / state-output、PDU / Endpoint contract
-- [docs/ros2-control.md](docs/ros2-control.md) — ros2_control / MoveIt 2 との接続（HakoniwaSystem、箱庭 ROS 2 Bridge、トピック）
 - [docs/design-controller-plugin.md](docs/design-controller-plugin.md) — プラグイン（opt-in）：ros2_control などの制御を Robot Runtime のプロセスの中で、シミュレーションの刻みで回す制御プラグインと、その共通の C の境界
-- [docs/gazebo-comparison/README.md](docs/gazebo-comparison/README.md) — Gazebo との比較（SO-101、ros2_control、MoveIt。英語）
 - [schemas/README.md](schemas/README.md) — Runtime-owned JSON Schemas
 - [docs/sensor-pdu.md](docs/sensor-pdu.md) — センサ（opt-in）：取り付けられるセンサ種別、MJCF への取り付け方、送信する PDU と欄の対応
 - [docs/sensor-prerequisites.md](docs/sensor-prerequisites.md) — センサ統合の全体像、フェーズ、各フェーズの実証結果
+
+### ROS 2
+
+Runtime の本体は ROS 2 に依存しません。ROS 2 のインストールが必要なものは、すべて [ros2/](ros2/) の下にあります。
+
+- [ros2/hakoniwa_ros2_control/README.md](ros2/hakoniwa_ros2_control/README.md) — SO-101 の ros2_control パッケージ：それぞれの形（ROS 2 Bridge 経由、箱庭アセット、制御プラグイン）の作り方と動かし方
+- [ros2/docs/ros2-control.md](ros2/docs/ros2-control.md) — ros2_control / MoveIt 2 との接続（HakoniwaSystem、箱庭 ROS 2 Bridge、トピック）
+- [ros2/docs/gazebo-comparison/README.md](ros2/docs/gazebo-comparison/README.md) — Gazebo との比較（SO-101、ros2_control、MoveIt。英語）
+- [ros2/tools/transport-bench/README.md](ros2/tools/transport-bench/README.md) — 通信の計測（ROS 2、ゼロコピー、gz-transport、箱庭の PDU）
 
 ## 設計上の重要点
 
