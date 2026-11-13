@@ -7,6 +7,14 @@
 // topics, /clock, sensors) runs on threads of this plugin; nothing here calls the
 // Robot Runtime. No exception crosses the C boundary.
 //
+// Time: once its node clock has started, ros2_control gives the controllers its
+// node clock's now(), not the time passed to update(). That clock normally follows
+// /clock through a subscription, which falls behind when the simulation runs
+// faster than real time (the controllers then see a frozen time and jump). So the
+// node clocks of controller_manager and of every controller do not subscribe to
+// /clock here; update() sets them to the step's simulation time itself, before
+// read/update/write. /clock is still published for the other programs.
+//
 // The plugin's configuration file (YAML, paths relative to it):
 //   robot_description: so101_plugin.urdf     # URDF with <hardware> HakoniwaPluginSystem
 //   params_files: [ros2_controllers.yaml]      # ROS parameters (controller_manager, controllers)
@@ -14,6 +22,8 @@
 //   publish_clock: true                        # /clock from the simulation time
 //   sensor_topic_prefix: /pdu/                 # sensors as in the separate-process form
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -31,6 +41,7 @@
 
 #include "controller_manager/controller_manager.hpp"
 #include "controller_manager_msgs/srv/switch_controller.hpp"
+#include "rcl/time.h"
 #include "rclcpp/rclcpp.hpp"
 #include "rosgraph_msgs/msg/clock.hpp"
 
@@ -200,6 +211,24 @@ struct Ros2ControlPlugin
   bool was_selected{false};
   bool preempted{false};
   bool updated{false};   // an update has run since the controllers were requested
+  // Diagnostics: with HAKO_CONTROLLER_PLUGIN_TRACE=<file>, one line per update:
+  // step_index sim_time_ns selected reset active wall_ns.
+  std::FILE * trace{nullptr};
+  // The clocks set to the simulation time on every update (see the top).
+  std::vector<rclcpp::Clock::SharedPtr> sim_clocks;
+
+  void set_sim_time(std::uint64_t sim_time_ns)
+  {
+    for (const auto & clock : sim_clocks) {
+      std::lock_guard<std::mutex> lock(clock->get_clock_mutex());
+      rcl_clock_t * handle = clock->get_clock_handle();
+      if (rcl_enable_ros_time_override(handle) != RCL_RET_OK ||
+          rcl_set_ros_time_override(handle, static_cast<rcl_time_point_value_t>(sim_time_ns)) != RCL_RET_OK) {
+        rcl_reset_error();
+        throw std::runtime_error("cannot set a node clock to the simulation time");
+      }
+    }
+  }
 
   void request_activation()
   {
@@ -273,6 +302,10 @@ void * create(const HakoControllerCreateV1 * args, char * error, size_t error_si
     // arguments alone do not reach the controllers).
     rclcpp::NodeOptions cm_options = controller_manager::get_cm_node_options();
     std::vector<std::string> cm_arguments(arguments.begin() + 1, arguments.end());
+    // controller_manager and the controllers (ros2_control passes these arguments on
+    // to them) take their time from update(), not from /clock (see the top).
+    cm_arguments.push_back("-r");
+    cm_arguments.push_back("/clock:=/hakoniwa_controller_plugin/unused_clock");
     cm_options.arguments(cm_arguments);
     plugin->cm = std::make_shared<controller_manager::ControllerManager>(
       plugin->executor, plugin->config.robot_description, true, "controller_manager", "", cm_options);
@@ -306,6 +339,13 @@ void * create(const HakoControllerCreateV1 * args, char * error, size_t error_si
       if (plugin->cm->configure_controller(name) != controller_interface::return_type::OK) {
         throw std::runtime_error("cannot configure controller " + name);
       }
+    }
+    plugin->sim_clocks.push_back(plugin->cm->get_clock());
+    for (const auto & controller : plugin->cm->get_loaded_controllers()) {
+      plugin->sim_clocks.push_back(controller.c->get_node()->get_clock());
+    }
+    if (const char * trace_path = std::getenv("HAKO_CONTROLLER_PLUGIN_TRACE")) {
+      plugin->trace = std::fopen(trace_path, "w");
     }
     plugin->spin = std::thread([executor = plugin->executor]() { executor->spin(); });
     plugin->switcher = std::make_unique<SwitchWorker>(*plugin->cm);
@@ -391,12 +431,21 @@ int32_t update(void * p, const HakoTickV1 * tick, const HakoJointStatesV1 * stat
     }
     plugin->was_selected = tick->selected != 0;
     plugin->updated = true;
+    if (plugin->trace != nullptr) {
+      const auto wall = std::chrono::steady_clock::now().time_since_epoch();
+      std::fprintf(plugin->trace, "%llu %llu %d %d %d %lld\n",
+                   static_cast<unsigned long long>(tick->step_index),
+                   static_cast<unsigned long long>(tick->sim_time_ns),
+                   tick->selected, tick->reset, plugin->active->load() ? 1 : 0,
+                   static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(wall).count()));
+    }
 
     bridge.clear_commands();
     // ros2_control refuses time 0 before it has received /clock: the step at time
     // 0 only holds the joints where they are.
     const bool at_time_zero = tick->sim_time_ns == 0;
     if (!at_time_zero) {
+      plugin->set_sim_time(tick->sim_time_ns);
       plugin->cm->read(now, plugin->period);
       plugin->cm->update(now, plugin->period);
       plugin->cm->write(now, plugin->period);
@@ -473,6 +522,9 @@ void destroy(void * p)
     }
   } catch (...) {
     // Nothing may cross the C boundary.
+  }
+  if (plugin->trace != nullptr) {
+    std::fclose(plugin->trace);
   }
   delete plugin;
   PluginBridge::instance().clear();
