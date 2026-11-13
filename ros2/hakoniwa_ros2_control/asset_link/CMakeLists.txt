@@ -1,4 +1,4 @@
-# The Hakoniwa side of HakoniwaSystem, without ROS 2: the core and the PDU Endpoint only (docs/ros2-control.md, chapter 10).
+# The Hakoniwa side of HakoniwaSystem, without ROS 2: the core and the PDU Endpoint only (ros2/docs/ros2-control.md, chapter 10).
 # Builds alone against an installed Hakoniwa core:
 #   cmake -S asset_link -B build -DCMAKE_PREFIX_PATH=<Hakoniwa install prefix>
 cmake_minimum_required(VERSION 3.16)

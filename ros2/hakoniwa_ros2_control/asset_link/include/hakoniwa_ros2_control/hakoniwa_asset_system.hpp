@@ -13,7 +13,7 @@
 // name -> rate [Hz]; published as /pdu/<name>), publish_clock (true: /clock from
 // the Hakoniwa time), realtime_sync (true: pace to the wall clock). Each joint: one command interface, position (velocity,
 // effort) state interfaces.
-// The design is in docs/ros2-control.md, chapter 10.
+// The design is in ros2/docs/ros2-control.md, chapter 10.
 
 #include <cstdint>
 #include <memory>

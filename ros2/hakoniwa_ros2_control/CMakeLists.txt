@@ -35,7 +35,7 @@ install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS scripts/move_to_joints.py scripts/hakoniwa_clock.py scripts/add_grasp_object.py scripts/pick_and_place.py scripts/detect_objects.py DESTINATION lib/${PROJECT_NAME})
 
-# HakoniwaAssetSystem (docs/ros2-control.md, chapter 10): a separate plugin that
+# HakoniwaAssetSystem (ros2/docs/ros2-control.md, chapter 10): a separate plugin that
 # is itself a Hakoniwa asset. Built only with -DHAKONIWA_ROS2_CONTROL_WITH_ASSET=ON
 # and the Hakoniwa core and PDU Endpoint on CMAKE_PREFIX_PATH; without it this
 # package is built as before.

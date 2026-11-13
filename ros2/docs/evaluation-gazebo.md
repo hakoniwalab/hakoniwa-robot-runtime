@@ -148,7 +148,7 @@ MoveIt は、点群のうち自分の体（URDF の形に余白を足したも�
 
 ## 5. 同じ測定をする
 
-Docker だけの構成（[ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md) の「Docker だけで動かす」）の 1〜3 が済んでいることが前提です。センサーは使わないので、SO-101 の Robot Runtime は `--sensors` なしの設定（`asset-manifest-environment.json`）を使います。
+Docker だけの構成（[ros2/hakoniwa_ros2_control/README.md](../hakoniwa_ros2_control/README.md) の「Docker だけで動かす」）の 1〜3 が済んでいることが前提です。センサーは使わないので、SO-101 の Robot Runtime は `--sensors` なしの設定（`asset-manifest-environment.json`）を使います。
 
 ホストで、`hakoniwa-robot-arm` のリポジトリのルートから、比べるためのイメージを作ってコンテナに入ります。
 
@@ -177,7 +177,7 @@ python3 $T/compare/repeat.py /tmp/compare
 
 ### 5.1 掴んで置く（3.4）
 
-上の準備に加えて、センサー付きの Robot Runtime（[ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md) の「Docker だけで動かす」の 2〜3）と、hakoniwa_ros2_control を `HAKONIWA_ROS2_CONTROL_WITH_ASSET=ON` で作ったものが要ります。コンテナの端末で、それぞれ 3 回ずつ流します。
+上の準備に加えて、センサー付きの Robot Runtime（[ros2/hakoniwa_ros2_control/README.md](../hakoniwa_ros2_control/README.md) の「Docker だけで動かす」の 2〜3）と、hakoniwa_ros2_control を `HAKONIWA_ROS2_CONTROL_WITH_ASSET=ON` で作ったものが要ります。コンテナの端末で、それぞれ 3 回ずつ流します。
 
 ```bash
 T=/workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/tools/compare

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Count the LiDAR points MoveIt keeps around the arm (its self filter missed them)
-(docs/evaluation-gazebo.md 3.4).
+(ros2/docs/evaluation-gazebo.md 3.4).
 
 python3 self_filter_leak.py <out.csv>
 

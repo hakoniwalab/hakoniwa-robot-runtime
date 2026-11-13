@@ -144,14 +144,14 @@ usleep ：箱庭の時間を 1 刻み進める（世界の時刻に追いつく�
 - URDF の `<ros2_control>` に、関節名、指令の種類（最初は位置）、トピック名を書きます。
 - controller_manager の周期は、Robot Runtime が指令を受け取る周期（アクチュエータの設定の `update_rate_hz`）以下にします。指令の期限（`command_timeout_sec`）が、その周期と通信の遅れより長いことも確かめます。
 
-実装は [`ros2/hakoniwa_ros2_control`](../ros2/hakoniwa_ros2_control/README.md) にあります。
+実装は [`ros2/hakoniwa_ros2_control`](../hakoniwa_ros2_control/README.md) にあります。
 
 - 有効にするときは、最初の関節の状態を待ち、その値を状態と指令の初めの値にします。有効にする処理は controller_manager の受信の処理の中で呼ばれ、その間は自分の購読が回らないので、待つのは別の一時的なノードです。値なし（NaN）で始めると、TF に NaN が入りました。
 - ROS 2 のドメインは、箱庭 ROS 2 Bridge の環境（`activate.bash`、`ROS_DOMAIN_ID=73`）にそろえます。
 
 ## 7. ROS 2 のイメージ
 
-ホスト ＋ Docker の構成の ROS 2 の側は、[`ros2/docker/Dockerfile.jazzy`](../ros2/docker/Dockerfile.jazzy) のイメージで動かします。
+ホスト ＋ Docker の構成の ROS 2 の側は、[`ros2/docker/Dockerfile.jazzy`](../docker/Dockerfile.jazzy) のイメージで動かします。
 
 - Ubuntu 24.04、ROS 2 Jazzy。amd64 と arm64（Apple Silicon）で作れます。
 - 入っているもの：箱庭 ROS 2 Bridge のビルドに要るもの、ros2_control、ros2_controllers、MoveIt 2。
@@ -164,7 +164,7 @@ usleep ：箱庭の時間を 1 刻み進める（世界の時刻に追いつく�
 1. 箱庭アセットから指令の PDU を書き、関節が動くこと（macOS のホスト、共有メモリ）。済み（4 章）。
 2. Docker の中で箱庭 ROS 2 Bridge をビルドし、ホストの TCP Bridge につないで、`/pdu/joint_states` が届くこと。済み。
 3. Docker から `/actuator/<joint>/command` に出した指令で、関節が動くこと。済み（4.1）。
-4. `HakoniwaSystem` と joint_trajectory_controller で、軌道を送るとアームが位置制御で動くこと。済み（手順は [ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md)）。
+4. `HakoniwaSystem` と joint_trajectory_controller で、軌道を送るとアームが位置制御で動くこと。済み（手順は [ros2/hakoniwa_ros2_control/README.md](../hakoniwa_ros2_control/README.md)）。
 5. MoveIt 2 から動かすこと。関節の目標を渡して計画と実行まで済み（腕とグリッパー、RViz なし）。周りの障害物をセンサで見る（点群・深度画像）ことと、手先の位置・姿勢の目標は、まだ。
 6. Ubuntu（同じマシン、Bridge が共有メモリ）で同じことを確かめること。
 
@@ -365,7 +365,7 @@ macOS のホストで、SO-101 の Robot Runtime と並べて確かめました�
 - 箱庭の時間は実時間の 1.00 倍で進みました（TCP Bridge なし）。
 - controller_manager の `Could not enable FIFO RT scheduling policy` は、コンテナに実時間の優先度の権限がないためです。シミュレーションの動きには関係しません。
 
-5 も Docker だけの構成で確かめました（手順は [ros2/hakoniwa_ros2_control/README.md](../ros2/hakoniwa_ros2_control/README.md) の「Docker だけで動かす」）。
+5 も Docker だけの構成で確かめました（手順は [ros2/hakoniwa_ros2_control/README.md](../hakoniwa_ros2_control/README.md) の「Docker だけで動かす」）。
 
 - `HakoniwaAssetSystem` が出したセンサー：`/pdu/lidar_scan` 2.00 Hz（11,520 点、`overhead_lidar`）、`/pdu/wrist_wrench` 49.97 Hz（`wrist_ft`）、`/clock` 約 500 Hz。
 - MoveIt は `/pdu/lidar_scan` から障害物の地図を作り、掴む前の姿勢への計画と実行ができました。自己フィルタの `Missing transform for shape mesh`（メッシュの数 13 件）は、起動直後の 1 回だけです（joint_state_broadcaster が関節の状態を出す前の最初の点群）。

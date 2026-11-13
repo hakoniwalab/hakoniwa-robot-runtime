@@ -1,6 +1,6 @@
 # hakoniwa_ros2_control
 
-ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です。ROS 2 の標準のコントローラ（joint_trajectory_controller など）と MoveIt 2 で、箱庭のロボットを動かします。設計は [docs/ros2-control.md](../../docs/ros2-control.md) にあります。
+ros2_control のハードウェア `HakoniwaSystem` と、SO-101 の設定です。ROS 2 の標準のコントローラ（joint_trajectory_controller など）と MoveIt 2 で、箱庭のロボットを動かします。設計は [docs/ros2-control.md](../docs/ros2-control.md) にあります。
 
 - `HakoniwaSystem` は ROS 2 のトピックだけを読み書きします。箱庭の PDU との変換は、箱庭 ROS 2 Bridge（hakoniwa_pdu_ros）が行います。
   - `read()`：`/pdu/joint_states` の最新の値を、関節ごとの State Interface（position、velocity）に入れます。
@@ -165,7 +165,7 @@ python tools/recipe/so101.py status
 
 ## センサーを付けて物を掴んで置く
 
-上の手順の SO-101 に、作業台の上から下向きの 3D LiDAR と手首の力覚センサーを付けます。MoveIt が点群から障害物の地図を作り、物を掴んで別の場所に置きます。設計は [docs/ros2-control.md](../../docs/ros2-control.md) の 9 章にあります。
+上の手順の SO-101 に、作業台の上から下向きの 3D LiDAR と手首の力覚センサーを付けます。MoveIt が点群から障害物の地図を作り、物を掴んで別の場所に置きます。設計は [docs/ros2-control.md](../docs/ros2-control.md) の 9 章にあります。
 
 ```text
 ホスト  : Robot Runtime（SO-101、センサー付き）＋ TCP Bridge
@@ -410,7 +410,7 @@ ros2 run hakoniwa_ros2_control pick_and_place.py --config /workspace/work-docker
 
 ## Docker だけで動かす（コントローラプラグイン：ros2_control を Robot Runtime の中で）
 
-ros2_control を Robot Runtime と同じプロセスの中で、シミュレーション時刻で動かします（[設計](../../docs/design-controller-plugin.md)）。Robot Runtime が制御の周期ごとに `ControllerManager` の read / update / write を呼びます。ROS 2 に出るのは、ほかのプログラムが使うもの（`/clock`、関節の状態、センサー、MoveIt が使うコントローラのアクション）だけです。[Gazebo との比較](../../docs/gazebo-comparison/README.md)は、この形で測りました。
+ros2_control を Robot Runtime と同じプロセスの中で、シミュレーション時刻で動かします（[設計](../../docs/design-controller-plugin.md)）。Robot Runtime が制御の周期ごとに `ControllerManager` の read / update / write を呼びます。ROS 2 に出るのは、ほかのプログラムが使うもの（`/clock`、関節の状態、センサー、MoveIt が使うコントローラのアクション）だけです。[Gazebo との比較](../docs/gazebo-comparison/README.md)は、この形で測りました。
 
 ```text
 Docker : Robot Runtime（SO-101、センサー付き、ros2_control をプラグインとして中で動かす）
