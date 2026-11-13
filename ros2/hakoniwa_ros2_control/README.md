@@ -32,7 +32,7 @@ Docker  : 箱庭 ROS 2 Bridge ＋ ros2_control（HakoniwaSystem、arm_controller
 
 前提：
 
-- `hakoniwa-business-pack`、`hakoniwa-robot-arm`、`hakoniwa-robot-runtime`、`hakoniwa-pdu-ros` が同じディレクトリに並んでいること。
+- `hakoniwa-business-pack`、`hakoniwa-robot-arm`、`hakoniwa-robot-runtime`、`hakoniwa-pdu-ros` が同じディレクトリに並んでいること。`hakoniwa-robot-arm` は hakoniwalab 版（`git clone https://github.com/hakoniwalab/hakoniwa-robot-arm.git`）を使います（SO-101 のセンサーとプラグインのスイッチが入っています）。
 - そのディレクトリの `work-host` に、SO-101 の Foundation と Recipe が準備され、SO-101 の forge が済んでいること（hakoniwa-robot-arm の [host-docker のセットアップ](https://github.com/hakoniwalab/hakoniwa-robot-arm/blob/main/docs/procedures/host-docker/setup.md) で、Recipe を SO-101 にしたもの）。
 - Docker Desktop が動いていること。
 
@@ -49,17 +49,18 @@ source profiles/tool-env/enter-host-hako.bash
 
 ```bash
 cd ../hakoniwa-robot-arm
-python tools/recipe/so101.py configure --ros2-control --environment --realtime-sync-cycle-msec 2
+python tools/recipe/so101.py configure --ros2-tcp --no-joint-trajectory --bridge-step-usec 2000 --environment --realtime-sync-cycle-msec 2
 python tools/recipe/so101.py build
 python tools/recipe/so101.py doctor
 python tools/recipe/so101.py start
 python tools/recipe/so101.py status
 ```
 
-`configure` の表示が `ROS 2 TCP       : enabled (ros2_control)` と `Realtime pacing : 2 ms simulation-time cycle` で、`status` が `"state": "RUNNING"` なら OK です。MuJoCo のビューアがホストに開きます。
+`configure` の表示が `ROS 2 TCP       : enabled (no joint trajectory input)` と `Realtime pacing : 2 ms simulation-time cycle` で、`status` が `"state": "RUNNING"` なら OK です。MuJoCo のビューアがホストに開きます。
 
-- `--ros2-control` は、ROS 2 TCP の構成から Robot Runtime の軌道の受け口（JointTrajectory）を外します。軌道は ROS 2 側の joint_trajectory_controller が補間します。
-- `--realtime-sync-cycle-msec 2` は、実時間合わせの周期を Robot Runtime の刻み（2 ms）に合わせます。TCP Bridge の刻みも 2 ms です。これより長いと、指令の一部が捨てられます（設計書の 4.1）。
+- `--no-joint-trajectory` は、ROS 2 TCP の構成から Robot Runtime の軌道の受け口（JointTrajectory）を外します。軌道は ROS 2 側の joint_trajectory_controller が補間します。
+- `--bridge-step-usec 2000` は、TCP Bridge の刻みを Robot Runtime の刻み（2 ms）にします。既定の 20 ms では、ros2_control の 100 Hz の指令の一部が捨てられます。
+- `--realtime-sync-cycle-msec 2` は、実時間合わせの周期を Robot Runtime の刻み（2 ms）に合わせます。TCP Bridge の刻みも、上の指定で 2 ms です。
 
 ### 2. Docker：ROS 2 のイメージを作り、コンテナに入る
 
@@ -179,7 +180,7 @@ Docker  : 箱庭 ROS 2 Bridge ＋ ros2_control ＋ MoveIt 2（点群から障害
 | 時刻 | ROS 2 の全ノードを箱庭の時刻で動かす。`hakoniwa_clock.py` が関節の状態の時刻から `/clock` を出す |
 | `scripts/add_grasp_object.py` | 物を MoveIt に登録する。`--attach` で手に付け、`--detach` で置いた場所に戻す |
 | `scripts/pick_and_place.py` | 掴んで置く流れ。どの段でも失敗したら、その場で止まる |
-| `config/so101/pick_and_place.yaml` | 物・机・4 つの姿勢（掴む前・掴む・置く前・置く）の関節の値。hakoniwa-robot-arm の `tools/recipe/so101_grasp_poses.py` が書く |
+| `config/so101/pick_and_place.yaml` | 物・机・4 つの姿勢（掴む前・掴む・置く前・置く）の関節の値。`tools/so101_grasp_poses.py` が書く |
 
 前提（上の手順の前提に加えて）：
 
@@ -192,7 +193,7 @@ Docker  : 箱庭 ROS 2 Bridge ＋ ros2_control ＋ MoveIt 2（点群から障害
 
 ```bash
 cd ../hakoniwa-robot-arm
-python tools/recipe/so101.py configure --ros2-control --sensors --realtime-sync-cycle-msec 2
+python tools/recipe/so101.py configure --ros2-tcp --no-joint-trajectory --bridge-step-usec 2000 --sensors --realtime-sync-cycle-msec 2
 python tools/recipe/so101.py build --sensors
 python tools/recipe/so101.py start
 python tools/recipe/so101.py status
@@ -205,7 +206,7 @@ python tools/recipe/so101.py status
 物を (0.28, 0) から (0.20, -0.20) に運ぶ設定は、`config/so101/pick_and_place.yaml` に入っています。別の位置にするときは、同じ `host-hako` の端末で次を実行し、出来た設定を手順 4 の `--config` で渡します。
 
 ```bash
-python tools/recipe/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --output ../work-host/so101_pick_and_place.yaml
+python ../hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/tools/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --model ../work-host/model-forge/so101/install/so101.environment.xml --output ../work-host/so101_pick_and_place.yaml
 ```
 
 4 つの姿勢それぞれに `error` と `tilt` が表示され、最後に `written:` が出れば OK です。手が届かない位置では、エラーで止まります。
@@ -283,8 +284,7 @@ ros2 run hakoniwa_ros2_control detect_objects.py
 手順 2 の `centre` の x と y を `--pick` に入れます。次は、物が (0.28, 0.0) に見つかり、(0.20, -0.20) に置く例です。
 
 ```bash
-cd /workspace/hakoniwa-robot-arm
-python3 tools/recipe/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --model /workspace/work-host/model-forge/so101/install/so101.environment.xml --output /workspace/work-host/so101_pick_and_place.yaml
+python3 /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/tools/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --model /workspace/work-host/model-forge/so101/install/so101.environment.xml --output /workspace/work-host/so101_pick_and_place.yaml
 ```
 
 4 つの姿勢の `error` が数 mm 以内で、`written:` が出れば OK です。
@@ -397,8 +397,7 @@ ros2 run hakoniwa_ros2_control detect_objects.py
 `added table: OK`、`MoveIt error code 1 (SUCCESS)` に続いて、`1 objects` と `object_0: ... centre [0.28, 0.0, 0.015]` 程度が出れば OK です。`centre` の x と y を次の `--pick` に入れます（次は (0.28, 0.0) の例）。
 
 ```bash
-cd /workspace/hakoniwa-robot-arm
-python3 tools/recipe/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --model /workspace/work-docker-jazzy/model-forge/so101/install/so101.environment.xml --output /workspace/work-docker-jazzy/so101_pick_and_place.yaml
+python3 /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/tools/so101_grasp_poses.py --pick 0.28 0.0 --place 0.20 -0.20 --model /workspace/work-docker-jazzy/model-forge/so101/install/so101.environment.xml --output /workspace/work-docker-jazzy/so101_pick_and_place.yaml
 ros2 run hakoniwa_ros2_control pick_and_place.py --config /workspace/work-docker-jazzy/so101_pick_and_place.yaml
 ```
 
