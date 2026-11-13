@@ -2,6 +2,8 @@
 
 We ran the same robot, the same ROS 2 controllers, the same trajectories and the same pick-and-place script on Hakoniwa and on Gazebo, in the same container on the same day, and measured transport, physics, control and a full MoveIt task.
 
+The main result is about time, more than speed. Hakoniwa runs ros2_control inside the simulator and steps it in simulation time, so how fast the simulation runs no longer changes what the controllers do: at 75 times real time, the controllers ran every 10 ms of simulated time without missing one, and tracked the trajectory exactly as in real time. Speed then comes on top of that.
+
 ## Summary
 
 | | Hakoniwa | Gazebo |
@@ -11,16 +13,18 @@ We ran the same robot, the same ROS 2 controllers, the same trajectories and the
 | Control in real time: max tracking error | 0.0019 rad | 0.031 rad |
 | Control in real time: CPU per simulated second | 0.54-0.58 | 1.22-1.40 |
 | As fast as possible: real-time factor | 73-77 | 11-14 |
-| As fast as possible: max tracking error / difference between runs | 0.0019 rad / below 0.0001 rad | 0.031 rad / 0.0048 rad |
+| As fast as possible: max tracking error | 0.0019 rad (same as in real time) | 0.031 rad |
+| As fast as possible: difference between runs | 0.0001 rad | 0.0048 rad |
 | Pick and place with a 3D LiDAR and MoveIt: success / CPU | 3/3 (instant LiDAR), 2/3 (rotating LiDAR) / 0.55-0.60 cores | 3/3 / 1.18 cores |
 
 In short:
 
-- **Transport**: Hakoniwa's shared memory has the lowest median latency at every size at 100 Hz. Under overload (4 MB at 1000 Hz) nothing is corrupted and no backlog builds up; ROS 2 zero copy has a lower median there, but corrupts some messages.
+- **Control in simulation time**: the controllers run every control period of simulated time however fast the simulation runs (checked step by step in the Robot Runtime's own log), and the tracking error is the same in real time and at 75 times real time (section 5.1).
+- **Repeatability**: runs of the same trajectory differ by up to 0.0001 rad, and the difference does not grow along the trajectory: it is the difference in the arm's pose at the moment the trajectory started, which depends on when the goal arrived from outside. They are not bit-for-bit identical (section 5.2). Gazebo's runs differ by 0.002-0.005 rad.
 - **Speed**: the physics alone runs about 5 times faster than Gazebo's, and the whole control loop with ros2_control about 6 times faster.
-- **Determinism**: with ros2_control inside the simulator, stepped in simulation time, Hakoniwa repeats the same motion tick for tick, in real time and as fast as possible. Gazebo's runs differ slightly from each other.
+- **Transport**: Hakoniwa's shared memory has the lowest median latency at every size at 100 Hz. Under overload (4 MB at 1000 Hz) nothing is corrupted and no backlog builds up; ROS 2 zero copy has a lower median there, but in our configuration some messages were overwritten while being read (section 4.1).
 - **CPU**: in real time, Hakoniwa uses less than half of Gazebo's CPU, for the control test and for the full task.
-- **The full task**: both pass pick and place. Hakoniwa's rotating LiDAR, like a real one, can make MoveIt mistake its own moving arm for an obstacle (1 run in 3 here); a LiDAR that scans at once, as Gazebo's, does not (section 5.3).
+- **The full task**: both pass pick and place. Hakoniwa's rotating LiDAR, like a real one, can make MoveIt mistake its own moving arm for an obstacle (1 run in 6 over two sets of runs); a LiDAR that scans at once, as Gazebo's, does not (section 5.3).
 
 ## 1. What is compared
 
@@ -78,7 +82,7 @@ Every Hakoniwa program was built fresh (Release) from these commits for this run
 | CPU | CPU time of every process in the container (`/proc`), per simulated second (control tests) or in cores over the task (pick and place) |
 | Control updates per simulated second | timestamps of `/arm_controller/controller_state` |
 | Tracking error | `joint_trajectory_controller`'s own error (desired - actual), the 5 arm joints, max over the trajectory |
-| Difference between runs | the same trajectory run several times; runs aligned on the control tick (10 ms) where the controller's desired positions match, then the largest joint difference at the same tick (section 5.2) |
+| Difference between runs | the same trajectory run several times; runs aligned on the control tick (10 ms) where the controller's desired positions match, then the largest joint difference at the same tick, from the `controller_state` messages received (section 5.2); for Hakoniwa also from the Robot Runtime's log of every control step |
 | Transport latency | one program, only the transport swapped; the sender's and receiver's message types; CLOCK_MONOTONIC from the send call to the receive callback |
 | Pick and place | 13 steps all OK; the LiDAR points left around the arm after MoveIt's self filter, per scan |
 
@@ -124,7 +128,9 @@ Sizes 1 KB to 4 MB, at 10, 100 and 1000 Hz, 3 runs each.
 | Hakoniwa (point cloud) | 4990-4991 / 5000 | 0 | 0.52 ms |
 | Hakoniwa (fixed) | 4972-4994 / 5000 | 0 | 0.27 ms |
 
-Under overload the three fail differently. ROS 2 drops messages, and with zero copy some messages arrive corrupted (their content does not match what was sent). gz-transport delivers almost everything, but a backlog builds up to about half a second. Hakoniwa keeps only the latest value: a message not yet read when the next one arrives is skipped, and nothing is corrupted or late.
+Under overload the three fail differently. ROS 2 drops messages, and with zero copy some messages arrive corrupted. gz-transport delivers almost everything, but a backlog builds up to about half a second. Hakoniwa keeps only the latest value: a message not yet read when the next one arrives is skipped, and nothing is corrupted or late.
+
+The corrupted zero-copy messages were examined afterwards (3 more runs). Each carried the sequence number of one message in its head, but its body (from its first byte) belonged to the message 11 later: the shared-memory sample was reused by the sender while the receiver was still reading it. The publisher kept the default history depth of 10 (KEEP_LAST), so the sender cycles through 11 samples. With a depth of 100, no message was corrupted in 3 runs, and the median latency rose from 0.14 ms to 0.61 ms (messages wait in the history). Fast DDS offers a check that a loaned sample is still valid after reading it (`is_sample_valid`); the ROS 2 layer we used (rmw_fastrtps, Jazzy) does not call it when it hands a loaned message to the subscription. So this is a property of this configuration (zero copy with a short KEEP_LAST history under overload), not a defect of zero copy as such.
 
 All sizes and rates, with p99, max and CPU: [transport-tables.md](transport-tables.md).
 
@@ -143,7 +149,7 @@ The trajectory with ros2_control, the simulators paced to real time:
 
 | | Max tracking error | CPU per simulated second | Control updates per simulated second | Difference between runs |
 |---|---|---|---|---|
-| Hakoniwa | 0.0019 rad | 0.54-0.58 | 100 (every 10 ms) | below 0.0001 rad |
+| Hakoniwa | 0.0019 rad | 0.54-0.58 | 100 (every 10 ms) | 0.0000 rad |
 | Gazebo | 0.031 rad | 1.22-1.40 | 100 (10-14 ms apart) | 0.0017 rad |
 
 Hakoniwa paces itself to real time by sleeping while it cannot advance, so its CPU here is mostly ROS 2 and the controllers.
@@ -152,7 +158,7 @@ Hakoniwa paces itself to real time by sleeping while it cannot advance, so its C
 
 | | Real-time factor (trajectory / 5 s) | Max tracking error | CPU per simulated second | Difference between runs |
 |---|---|---|---|---|
-| Hakoniwa | 73-77 / 76-77 | 0.0019 rad | 0.056-0.059 | below 0.0001 rad |
+| Hakoniwa | 73-77 / 76-77 | 0.0019 rad | 0.056-0.059 | 0.0001 rad |
 | Gazebo | 11-12 / 12-14 | 0.031 rad | 0.35-0.42 | 0.0048 rad |
 
 As fast as possible, Hakoniwa's controllers still ran every 10 ms of simulated time (the Robot Runtime's own record of every control step); the measuring program, a separate ROS 2 subscriber, received 86-92 of the 100 `controller_state` messages per simulated second. The tracking error is the same as in real time: running faster does not change the control.
@@ -168,7 +174,7 @@ As fast as possible, Hakoniwa's controllers still ran every 10 ms of simulated t
 | Points left around the arm while it moves (mean / max per scan) | 19.8 / 235 | 0.3 / 5 | 0 / 0 |
 | Points left around the arm while it is still (mean / max per scan) | 1.1 / 3 | 1.0 / 3 | 0 / 0 |
 
-The failed run stopped at step 8 (carrying the cube to the place pose): MoveIt found its own upper arm in the obstacle map and aborted the motion (section 5.3).
+The failed run stopped at step 8 (carrying the cube to the place pose): MoveIt found a contact between the obstacle map and its own upper arm, and aborted the motion (section 5.3). A second set of runs (3 rotating, 3 instant), made to sort the left points by robot part, passed 3 / 3 with both LiDAR modes.
 
 ## 5. Discussion
 
@@ -176,21 +182,37 @@ The failed run stopped at step 8 (carrying the cube to the place pose): MoveIt f
 
 Running ros2_control inside the simulator showed a problem that only appears when the simulation runs much faster than real time. In ROS 2 Jazzy, once the controller manager's node clock has started, ros2_control gives the controllers that clock's time, not the time passed to `update()`. With `use_sim_time`, the node clock follows `/clock` through a subscription. At about 70 times real time, `/clock` messages fall behind: the controllers saw the same time for several control periods, their trajectory stood still, and then jumped. The tracking error reached 0.05-0.09 rad in some runs and was different in every run.
 
-The plugin now sets the node clocks of the controller manager and of every controller to the step's simulation time itself, before each `read/update/write`; they no longer follow `/clock` (which is still published for MoveIt and the other programs). With this, the tracking error was the same in 10 runs out of 10 (0.0019 rad) in real time and as fast as possible, and the runs were the same tick for tick.
+The plugin now sets the node clocks of the controller manager and of every controller to the step's simulation time itself, before each `read/update/write`; they no longer follow `/clock` (which is still published for MoveIt and the other programs). With this, the tracking error was 0.0019 rad in every run: 10 runs in real time and 10 as fast as possible, then 3 + 3 in the clean run (section 4.3, 4.4). Before the fix, the same measurement as fast as possible gave 0.006-0.047 rad.
 
-The clean runs (section 4.3, 4.4) confirm it: 0.0019 rad in every run, and the runs agree to below 0.0001 rad, in real time and at 73-77 times real time. Before the fix, the same measurement as fast as possible gave 0.006-0.047 rad and runs differing by 0.049 rad.
+The Robot Runtime's own log of every control step (6 more runs, 3 in real time and 3 as fast as possible) shows the controllers ran every 10 ms of simulated time, without a missed or repeated step, at 75 times real time as in real time. The control period is set by simulation time, not by how fast the simulation runs.
 
-This is the point of running control inside the simulator, in simulation time: speeding the simulation up must not change what the controllers do.
+This is the point of running control inside the simulator, in simulation time: speeding the simulation up does not change what the controllers do.
 
-### 5.2 Measuring the difference between runs
+### 5.2 Repeatability: what is and is not the same
 
-The first way of comparing runs aligned them on the first sample where the trajectory had started. When the simulation runs 70 times faster than real time, the measuring program misses some `controller_state` messages, so the start was misread by tens of milliseconds, and that alone showed up as a 0.07 rad "difference". The runs are now aligned on the control tick where the controller's desired positions match. With this, Gazebo's runs still differ by 0.002-0.005 rad.
+Two things are kept apart here: the control period (does the controller run at every period of simulated time?) and the result (does the arm make the same motion in every run?).
+
+- **Control period**: deterministic. In the Robot Runtime's log of every control step, the controllers ran every 10 ms of simulated time in every run, real time or 75 times faster.
+- **Result**: close, but not bit-for-bit. In the same log, the joint positions of three runs differ by up to 0.0001 rad (as fast as possible) and 0.00009 rad (real time). At every step of the trajectory the difference is no larger than the difference in the arm's pose at the step the trajectory started: the control adds none. The start pose differs because the goal comes from a program outside the simulator (here the measuring program; in the pick task, MoveIt), at a wall-clock moment, so the trajectory starts at a different simulated time in each run (4.7-5.7 s in real time, 340-570 s as fast as possible) while the arm, holding its pose, is still settling by tiny amounts. Starting every run's trajectory at the same simulated step would remove this, and would show whether the runs are then bit-for-bit identical; we have not done that yet.
+
+The numbers in sections 4.3 and 4.4 (Hakoniwa 0.0000 and 0.0001 rad, Gazebo 0.0017 and 0.0048 rad) come from the same method for both simulators: the `controller_state` messages a separate ROS 2 program received. When the simulation runs 70 times faster than real time, that program misses 8-14 % of these messages, so the runs cannot be aligned on the first sample that moved (that misread the start by tens of milliseconds and alone showed as a 0.07 rad "difference"). They are aligned instead on the control tick where the controller's desired positions match, and compared only at ticks both runs received. For Hakoniwa, the full log above confirms the bound for every step.
 
 ### 5.3 The rotating LiDAR and MoveIt's self filter
 
 Hakoniwa's rotating LiDAR takes 0.5 s for one scan, and the cloud is stamped with the time the scan started. MoveIt removes the robot from the cloud (its self filter) using the arm's position at that one time. The points the arm left while it moved during the scan are not removed and stay in the obstacle map. When they lie on the path the arm is about to take, MoveIt stops the motion: the obstacle is the arm itself.
 
-While the arm moves, about 20 such points per scan are left on average, up to 235; with the scan taken at once, 0.3 (up to 5). This is what a real spinning LiDAR does (motion distortion), and the failure appears in simulation before it appears on a robot. Gazebo's `gpu_lidar` scans at once, so this does not appear there. Rotating LiDARs are also simulated elsewhere (for example CARLA and Isaac Sim); we do not claim it is unique to Hakoniwa.
+While the arm moves, about 20 such points per scan are left on average, up to 235; with the scan taken at once, 0.3 (up to 5).
+
+Are these points the arm, or the cube it carries? The counter leaves out the cube where it rests (at the pick and place positions), but not while it is carried. In the second set of runs, each left point was also given to the nearest part of the robot when the cloud arrived: the hand (within 6 cm of the gripper frame, where a held 30 mm cube is) or an arm segment between two joints. While the arm moved, over 3 rotating-LiDAR runs:
+
+| Nearest part | Points left (sum over 3 runs) |
+|---|---|
+| Wrist | 852 |
+| Lower arm | 629 |
+| Hand (with the cube, if held) | 213 |
+| Upper arm | 45 |
+
+At most 12 % of the points can be the cube; the rest are the arm itself. With the scan taken at once, 24 points in total (wrist 14, hand 10). The failed run also names the part: MoveIt's own log reports the contact with the upper arm, far from the hand. This is what a real spinning LiDAR does (motion distortion), and the failure appears in simulation before it appears on a robot. Gazebo's `gpu_lidar` scans at once, so this does not appear there. Rotating LiDARs are also simulated elsewhere (for example CARLA and Isaac Sim); we do not claim it is unique to Hakoniwa.
 
 Each point of the Hakoniwa cloud already carries its own measurement time (`time`), as real LiDAR drivers provide. The proper fix is on the receiving side: filter or deskew each point with the arm's position at that point's time. MoveIt's standard self filter does not use per-point time.
 
@@ -199,7 +221,7 @@ Each point of the Hakoniwa cloud already carries its own measurement time (`time
 - **Ecosystem**: Gazebo comes with many sensors, rendering, worlds and plugins out of the box, and is the reference simulator of the ROS community. Here we compared one robot and one task.
 - **Setup**: `gz_ros2_control` is a standard package; Hakoniwa's controller plugin is new.
 - **Tracking error**: Hakoniwa's smaller error partly comes from the position control model (MuJoCo's position actuator against a velocity-driven joint in `gz_ros2_control`, section 1), not only from the simulator.
-- **The rotating LiDAR** is closer to a real sensor, but it also made 1 of 3 Hakoniwa runs fail, as a real one can (section 5.3); a user who wants the ideal sensor sets `scan_mode: instant`.
+- **The rotating LiDAR** is closer to a real sensor, but it also made 1 of 6 Hakoniwa runs fail, as a real one can (section 5.3); a user who wants the ideal sensor sets `scan_mode: instant`.
 
 ## 6. Reproduce
 

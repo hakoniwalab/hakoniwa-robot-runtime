@@ -212,7 +212,8 @@ struct Ros2ControlPlugin
   bool preempted{false};
   bool updated{false};   // an update has run since the controllers were requested
   // Diagnostics: with HAKO_CONTROLLER_PLUGIN_TRACE=<file>, one line per update:
-  // step_index sim_time_ns selected reset active wall_ns.
+  // step_index sim_time_ns selected reset active wall_ns, then a "J" line with the
+  // joints and the commands of the step.
   std::FILE * trace{nullptr};
   // The clocks set to the simulation time on every update (see the top).
   std::vector<rclcpp::Clock::SharedPtr> sim_clocks;
@@ -462,6 +463,21 @@ int32_t update(void * p, const HakoTickV1 * tick, const HakoJointStatesV1 * stat
         commands->command_type[i] = bridge.command_type(i);
         commands->value[i] = bridge.command(i);
       }
+    }
+    if (plugin->trace != nullptr) {
+      // The joints this step and the commands returned, exactly (hexadecimal floats):
+      // "J step_index sim_time_ns position... | command...".
+      std::fprintf(plugin->trace, "J %llu %llu",
+                   static_cast<unsigned long long>(tick->step_index),
+                   static_cast<unsigned long long>(tick->sim_time_ns));
+      for (uint32_t i = 0; i < states->count; ++i) {
+        std::fprintf(plugin->trace, " %a", states->position[i]);
+      }
+      std::fprintf(plugin->trace, " |");
+      for (uint32_t i = 0; i < commands->count; ++i) {
+        std::fprintf(plugin->trace, " %a", commands->has_command[i] ? commands->value[i] : 0.0);
+      }
+      std::fprintf(plugin->trace, "\n");
     }
     return 0;
   } catch (const std::exception & e) {
