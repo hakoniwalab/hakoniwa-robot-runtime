@@ -10,7 +10,7 @@ Robot Runtime にセンサを統合する計画です。全体像を描いてフ
 
 - **sensor 段**は物理を 1 回進めるたびに、MuJoCo から真値を取り出し、センサの実装（アダプタ）に渡して測定値を得ます。
 - **publisher** は、既存の出力と同じ仕組みで測定値を送ります。
-- 実装は `hakoniwa` / `gazebo` / `airsim` から、センサごとに選べます。起動時に、実装一覧（`catalog/sensor-implementations.json`）と照合します。
+- 実装は `hakoniwa` / `gazebo` / `airsim` / `reference`（真の値だけ。hakoniwa-sensor-adapter の参照実装）から、センサごとに選べます。起動時に、実装一覧（`catalog/sensor-implementations.json`）と照合します。
 - センサの定義ファイルは、どの実装でも共通の JSON です。
 - センサを使うアプリケーションだけが、センサ機能を有効にし、実装のライブラリをリンクします。
 

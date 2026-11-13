@@ -7,17 +7,21 @@
 # MoveIt in a separate process (config/so101/hakoniwa-launcher-docker-plugin.json).
 # Each run starts the simulator, ros2_control and MoveIt, runs pick_and_place.py once
 # while self_filter_leak.py counts the arm's points left in MoveIt's map, and stops.
-# "instant" (hakoniwa, hakoniwa-plugin): the overhead LiDAR as an instant scan, in copies of the
-# configuration under /tmp/compare-pick/instant (the recipe's files are unchanged).
+# Hakoniwa sensors: SENSOR_SET=hakoniwa (default, Hakoniwa's sensor models, as the
+# comparison measured; needs the hakoniwa implementation built in) or reference (the
+# true values). "instant": the LiDAR as an instant scan. Copies of the configuration
+# go under /tmp/compare-pick/sensors-<set>-<mode> (the recipe's files are unchanged).
 # Results in /tmp/compare-pick (or $COMPARE_PICK_DIR)/<label>-<n>.{out,leak.csv,ps0,ps1}; pick_summary.py sums them.
 HERE=$(cd "$(dirname "$0")" && pwd)
 SIM=$1 RUNS=$2 MODE=${3:-rotating}
 F=/workspace/work-docker-jazzy/foundation
 RECIPE=/workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control
 O=${COMPARE_PICK_DIR:-/tmp/compare-pick}; mkdir -p $O $RECIPE/logs
+SET=${SENSOR_SET:-hakoniwa}
 LABEL=$SIM
 [ "$SIM" = hakoniwa ] && LABEL=hakoniwa-$MODE
 [ "$SIM" = hakoniwa-plugin ] && LABEL=hakoniwa-plugin-$MODE
+[ "$SIM" != gazebo ] && [ "$SET" != hakoniwa ] && LABEL=$LABEL-$SET
 export HAKO_CONFIG_PATH=$F/config/cpp_core_config.json LD_LIBRARY_PATH=$F/install/lib
 set +u; source /opt/ros/jazzy/setup.bash; source /workspace/ros2-work-jazzy-asset/install/setup.bash; set -u
 
@@ -29,46 +33,37 @@ if [ "$SIM" = hakoniwa-plugin ]; then
   LAUNCHER=$HERE/../../config/so101/hakoniwa-launcher-docker-plugin.json
   ROS_LOG=moveit
 fi
-if [ "$SIM" = hakoniwa-plugin ] && [ "$MODE" = instant ]; then
-  # As the hakoniwa mode: the overhead LiDAR as an instant scan, in copies of the
-  # sensor configuration; the plugin manifest and the launcher point at them.
+if [ "$SIM" != gazebo ]; then
+  # The Hakoniwa sensors in copies of the configuration (the recipe's files are
+  # unchanged): the sensor set of the comparison, SENSOR_SET (default hakoniwa:
+  # so101-sensors-hakoniwa.json, Hakoniwa's sensor models with the rotating LiDAR,
+  # as measured; reference: so101-sensors.json, the true values of an instant scan),
+  # and with "instant" that set's LiDAR as an instant scan.
   C=/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors
-  PM=$HERE/../../config/so101/plugin/asset-manifest-sensors-plugin.json
-  I=$O/instant; rm -rf $I; mkdir -p $I/sensors; cp -r $C/lidar $C/force_torque $C/so101-sensors.json $I/sensors/
-  python3 - "$I" "$(readlink -f $PM)" "$(readlink -f $LAUNCHER)" <<'PY'
+  SETFILE=so101-sensors-$SET.json; [ "$SET" = reference ] && SETFILE=so101-sensors.json
+  MANIFEST=$RECIPE/config/asset-manifest-sensors.json
+  [ "$SIM" = hakoniwa-plugin ] && MANIFEST=$(readlink -f $HERE/../../config/so101/plugin/asset-manifest-sensors-plugin.json)
+  I=$O/sensors-$SET-$MODE; rm -rf $I; mkdir -p $I/sensors; cp -r $C/lidar $C/force_torque $C/$SETFILE $I/sensors/
+  python3 - "$I" "$SETFILE" "$MODE" "$MANIFEST" "$(readlink -f $LAUNCHER)" <<'PY'
 import json, sys
-i, manifest, launcher = sys.argv[1:]
-lidar = f"{i}/sensors/lidar/overhead-lidar3d.json"
-j = json.load(open(lidar)); j["scan_mode"] = "instant"; json.dump(j, open(lidar, "w"), indent=2)
+i, setfile, mode, manifest, launcher = sys.argv[1:]
+sensors = json.load(open(f"{i}/sensors/{setfile}"))
+if mode == "instant":
+    for s in sensors["sensors"]:
+        if s["type"] == "lidar":
+            path = f"{i}/sensors/{s['definition']}"
+            j = json.load(open(path)); j["scan_mode"] = "instant"; json.dump(j, open(path, "w"), indent=2)
 m = json.load(open(manifest))
 n = 0
 for c in m["components"]:
     if c["id"] == "sensors":
-        c["config"] = f"{i}/sensors/so101-sensors.json"; n += 1
+        c["config"] = f"{i}/sensors/{setfile}"; n += 1
 assert n == 1
-json.dump(m, open(f"{i}/asset-manifest-sensors-plugin.json", "w"), indent=2)
+name = manifest.rsplit("/", 1)[1]
+json.dump(m, open(f"{i}/{name}", "w"), indent=2)
 text = open(launcher).read()
 assert manifest in text, (manifest, launcher)
-open(f"{i}/launcher.json", "w").write(text.replace(manifest, f"{i}/asset-manifest-sensors-plugin.json"))
-PY
-  LAUNCHER=$I/launcher.json
-fi
-if [ "$SIM" = hakoniwa ] && [ "$MODE" = instant ]; then
-  C=/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors
-  I=$O/instant; rm -rf $I; mkdir -p $I/sensors; cp -r $C/lidar $C/force_torque $C/so101-sensors.json $I/sensors/
-  python3 - "$I" "$RECIPE/config/asset-manifest-sensors.json" "$LAUNCHER" <<'PY'
-import json, sys
-i, manifest, launcher = sys.argv[1:]
-lidar = f"{i}/sensors/lidar/overhead-lidar3d.json"
-j = json.load(open(lidar)); j["scan_mode"] = "instant"; json.dump(j, open(lidar, "w"), indent=2)
-m = json.load(open(manifest))
-for c in m["components"]:
-    if c["id"] == "sensors":
-        c["config"] = f"{i}/sensors/so101-sensors.json"
-json.dump(m, open(f"{i}/asset-manifest-sensors.json", "w"), indent=2)
-text = open(launcher).read()
-assert manifest in text
-open(f"{i}/launcher.json", "w").write(text.replace(manifest, f"{i}/asset-manifest-sensors.json"))
+open(f"{i}/launcher.json", "w").write(text.replace(manifest, f"{i}/{name}"))
 PY
   LAUNCHER=$I/launcher.json
 fi

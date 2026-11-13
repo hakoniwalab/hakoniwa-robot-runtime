@@ -234,7 +234,7 @@ All runs were made in one container (ROS 2 Jazzy, Gazebo Harmonic, the Hakoniwa 
 | Control, Hakoniwa | `ros2/hakoniwa_ros2_control/tools/compare/run-hakoniwa-plugin.sh rt 3`, `... max 3`, `... max 3 speed` | the Robot Runtime with ros2_control inside it, then the trajectory measured by `measure.py` |
 | Control, Gazebo | `ros2/hakoniwa_ros2_control/tools/compare/run-gazebo.sh rt 3`, `... max 3`, `... max 3 speed` | `gz sim -s` with `gz_ros2_control`, same measurement |
 | Difference between runs | `ros2/hakoniwa_ros2_control/tools/compare/repeat_ticks.py <results dir>` | runs aligned on the control tick (section 5.2) |
-| Pick and place | `ros2/hakoniwa_ros2_control/tools/compare/run-pick.sh hakoniwa-plugin 3`, `... hakoniwa-plugin 3 instant`, `... gazebo 3`; `pick_summary.py` | simulator, ros2_control and MoveIt started, `pick_and_place.py` run once, points left counted by `self_filter_leak.py` |
+| Pick and place | `ros2/hakoniwa_ros2_control/tools/compare/run-pick.sh hakoniwa-plugin 3`, `... hakoniwa-plugin 3 instant`, `... gazebo 3`; `pick_summary.py` | simulator, ros2_control and MoveIt started, `pick_and_place.py` run once, points left counted by `self_filter_leak.py`. The Hakoniwa sensors are Hakoniwa's sensor models, as measured (`SENSOR_SET=hakoniwa`, the default; it needs the `hakoniwa` sensor implementation built in). `SENSOR_SET=reference` runs the same task with the reference implementation (true values, instant LiDAR), which needs no library |
 
 Each case ran alone, one after another, with nothing else running in the container.
 
