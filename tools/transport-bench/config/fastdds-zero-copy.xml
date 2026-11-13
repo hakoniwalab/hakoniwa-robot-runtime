@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fast DDS data sharing (zero copy) for the fixed-size messages (TYPE=fixed):
+     synchronous publishing, data sharing on, preallocated history.
+     Used with FASTRTPS_DEFAULT_PROFILES_FILE and RMW_FASTRTPS_USE_QOS_FROM_XML=1. -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <data_writer profile_name="default publisher profile" is_default_profile="true">
+    <qos>
+      <publishMode><kind>SYNCHRONOUS</kind></publishMode>
+      <data_sharing><kind>AUTOMATIC</kind></data_sharing>
+    </qos>
+    <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+  </data_writer>
+  <data_reader profile_name="default subscription profile" is_default_profile="true">
+    <qos>
+      <data_sharing><kind>AUTOMATIC</kind></data_sharing>
+    </qos>
+    <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+  </data_reader>
+</profiles>
