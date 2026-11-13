@@ -68,7 +68,7 @@
       "id": "ros2_control_plugin",
       "kind": "controller",
       "type": "plugin",
-      "config": "/workspace/hakoniwa-robot-runtime-design/ros2/hakoniwa_ros2_control/config/so101/plugin/so101-plugin-controller-joints.json"
+      "config": "/workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/so101/plugin/so101-plugin-controller-joints.json"
     },
     {
       "id": "joint_states",

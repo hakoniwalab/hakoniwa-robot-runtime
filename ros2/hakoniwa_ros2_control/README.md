@@ -408,6 +408,85 @@ ros2 run hakoniwa_ros2_control pick_and_place.py --config /workspace/work-docker
 
 端末 A のランチャを Ctrl+C で止めます。端末 A で `exit` するとコンテナが消えます。作ったもの（`work-docker-jazzy`、`ros2-work-jazzy-asset`）は、並べたディレクトリに残ります。
 
+## Docker だけで動かす（コントローラプラグイン：ros2_control を Robot Runtime の中で）
+
+ros2_control を Robot Runtime と同じプロセスの中で、シミュレーション時刻で動かします（[設計](../../docs/design-controller-plugin.md)）。Robot Runtime が制御の周期ごとに `ControllerManager` の read / update / write を呼びます。ROS 2 に出るのは、ほかのプログラムが使うもの（`/clock`、関節の状態、センサー、MoveIt が使うコントローラのアクション）だけです。[Gazebo との比較](../../docs/gazebo-comparison/README.md)は、この形で測りました。
+
+```text
+Docker : Robot Runtime（SO-101、センサー付き、ros2_control をプラグインとして中で動かす）
+         MoveIt 2（別プロセス）
+```
+
+前提：[Docker だけで動かす（HakoniwaAssetSystem）](#docker-だけで動かすhakoniwaassetsystem)の 1 と 2 が済んでいること（イメージ、コンテナ、Foundation、SO-101 の Robot Runtime）。以下は端末 A で、その続きから実行します。
+
+### 1. 端末 A：Robot Runtime をコントローラプラグイン付きで作り直す
+
+```bash
+cd /workspace/hakoniwa-business-pack
+export HAKO_ROBOT_ARM_SENSOR_LIBRARIES=/workspace/work-docker-jazzy/sensor-impl/libhakoniwa_mujoco_sensors_adapters.a
+python3.12 tools/workspace.py run -- bash -c "cd /workspace/hakoniwa-robot-arm && python tools/recipe/so101.py build --sensors --controller-plugin && python tools/recipe/so101.py doctor"
+```
+
+doctor の全項目が `[OK]` なら OK です。プラグインを使わない構成（`HakoniwaAssetSystem`）も、この Robot Runtime でそのまま動きます。
+
+### 2. 端末 A：hakoniwa_ros2_control をプラグイン付きで作る
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon --log-base /workspace/ros2-work-jazzy-asset/log build \
+  --base-paths /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control \
+  --build-base /workspace/ros2-work-jazzy-asset/build \
+  --install-base /workspace/ros2-work-jazzy-asset/install \
+  --packages-select hakoniwa_ros2_control \
+  --cmake-args -DHAKONIWA_ROS2_CONTROL_WITH_ASSET=ON -DHAKONIWA_ROS2_CONTROL_WITH_PLUGIN=ON \
+  -DCMAKE_PREFIX_PATH=/workspace/work-docker-jazzy/foundation/install -DCMAKE_BUILD_TYPE=Release
+ls /workspace/ros2-work-jazzy-asset/install/hakoniwa_ros2_control/lib/libhakoniwa_ros2_control_plugin.so
+```
+
+colcon の summary に `1 package finished` が出て、`libhakoniwa_ros2_control_plugin.so` が表示されれば OK です。`1 package had stderr output` も出ますが、中身は ROS 2 Jazzy の controller_manager が使う `tl_expected` の非推奨のお知らせで、動作には関係ありません。
+
+- センサーの PDU の型変換ヘッダは、Foundation に入っているもの（`CMAKE_PREFIX_PATH` の `include/hakoniwa/pdu`）を使います。別の版の hakoniwa-pdu-registry を使うときは、`-DHAKONIWA_PDU_TYPES_INCLUDE_DIR=<registry>/pdu/types` で指定します。`CMAKE_CXX_FLAGS` に `-I` を足しても、こちらが優先されます。
+
+### 3. 端末 A：箱庭のランチャで起動する
+
+```bash
+mkdir -p /workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control/logs
+/workspace/work-docker-jazzy/foundation/install/python/bin/python -m hakoniwa_pdu.apps.launcher.hako_launcher /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/so101/hakoniwa-launcher-docker-plugin.json
+```
+
+終了せずに動き続ければ OK です。Robot Runtime（ros2_control を含む）のログは `/workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control/logs/so101-plant-plugin.err`、MoveIt のログは同じディレクトリの `moveit.out` に出ます。この端末は開いたままにします。
+
+### 4. 端末 B：起動を確かめる
+
+通常のホストの端末で、`hakoniwa-robot-arm` のリポジトリのルートから、コンテナに 2 つ目の端末（端末 B）を開きます。
+
+```bash
+CONTAINER_NAME=hakoniwa-ros2-control-asset-jazzy bash docker/attach.bash jazzy
+```
+
+端末 B で実行します。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /workspace/ros2-work-jazzy-asset/install/setup.bash
+ros2 control list_controllers
+ros2 topic hz /pdu/lidar_scan
+```
+
+3 つのコントローラが `active` で、`/pdu/lidar_scan` が `average rate: 2.0` 前後なら OK です（Ctrl+C で止めます）。ランチャが MoveIt を起動してシミュレーションを始めるまで（起動から 20 秒ほど）は、コントローラは `inactive` と表示されます。そのときは少し待ってから、もう一度確かめます。
+
+### 5. 端末 B：掴んで置く
+
+```bash
+ros2 run hakoniwa_ros2_control pick_and_place.py
+```
+
+1〜13 の全段が `OK` で終われば OK です。持ち上げたときの力の変化が物の重さ（0.294 N）とほぼ同じになります。
+
+### 6. 終了する
+
+端末 A のランチャを Ctrl+C で止めます。`state -> TERMINATED` が出れば OK です。
+
 ## 確認した環境
 
 macOS（Apple Silicon）、Docker Desktop、ROS 2 Jazzy（arm64）、SO-101。

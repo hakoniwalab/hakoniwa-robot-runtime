@@ -67,12 +67,12 @@ Gazebo Harmonic runs as a server (`gz sim -s`), with `gz_ros2_control`: the cont
 | ROS 2 | Jazzy; ros2_control 4.48.1, gz_ros2_control 1.2.20, MoveIt (move_group) 2.12.4, rmw_fastrtps_cpp 8.4.4 |
 | Gazebo | Harmonic, gz sim 8.15.0 |
 | Hakoniwa core | hakoniwa-core-pro 1.4.0 (722ce02), hakoniwa-pdu-endpoint 1.0.0 (3b7b25a), hakoniwa-pdu-python 1.7.0 (5a85ca8) |
-| hakoniwa-robot-runtime | Robot Runtime and controller plugin: `design/in-process-controller-plugin` 3826abf; Gazebo side and comparison tools: `feat/gazebo-comparison` 9556611 |
-| hakoniwa-robot-arm | `feat/controller-plugin` 3e15d54 |
+| hakoniwa-robot-runtime | Robot Runtime and controller plugin 3826abf; Gazebo side and comparison tools 9556611 |
+| hakoniwa-robot-arm | 3e15d54 |
 | hakoniwa-pdu-registry | `main` a8ad04c (PDU types and converters) |
-| Transport bench | hakoniwa-robot-runtime `feat/transport-bench` 3cc055d (`tools/transport-bench`) |
+| Transport bench | hakoniwa-robot-runtime 3cc055d (`tools/transport-bench`) |
 
-Every Hakoniwa program was built fresh (Release) from these commits for this run.
+Every Hakoniwa program was built fresh (Release) from these commits for this run. All of them are on the main branches of these repositories.
 
 ## 3. Method
 
@@ -225,16 +225,16 @@ Each point of the Hakoniwa cloud already carries its own measurement time (`time
 
 ## 6. Reproduce
 
-All runs were made in one container (ROS 2 Jazzy, Gazebo Harmonic, the Hakoniwa core installed), from the commits in section 2, built fresh in Release. The scripts below take their paths from that container's layout; they are written to show what is run and in which order.
+All runs were made in one container (ROS 2 Jazzy, Gazebo Harmonic, the Hakoniwa core installed), from the commits in section 2, built fresh in Release. The scripts below take their paths from that container's layout (the Docker layout of [ros2/hakoniwa_ros2_control](../../ros2/hakoniwa_ros2_control/README.md), section "Docker だけで動かす（コントローラプラグイン）", which builds the Robot Runtime and the controller plugin); they are written to show what is run and in which order.
 
 | Step | Script | What it does |
 |---|---|---|
-| Transport | `tools/transport-bench/sweep.sh` (`feat/transport-bench`), with `TYPE=fixed` for the fixed-size messages and `CASES="gz"` for gz-transport; `summarize.py` | every size and rate, 3 runs, one transport at a time |
-| Physics only | `ros2/hakoniwa_ros2_control/tools/compare/run-physics.sh` (`feat/gazebo-comparison`) | each simulator alone, 3 x 5 s of wall time |
-| Control, Hakoniwa | `ros2/hakoniwa_ros2_control/tools/compare/run-hakoniwa-plugin.sh rt 3`, `... max 3`, `... max 3 speed` (`design/in-process-controller-plugin`) | the Robot Runtime with ros2_control inside it, then the trajectory measured by `measure.py` |
-| Control, Gazebo | `ros2/hakoniwa_ros2_control/tools/compare/run-gazebo.sh rt 3`, `... max 3`, `... max 3 speed` (`feat/gazebo-comparison`) | `gz sim -s` with `gz_ros2_control`, same measurement |
-| Difference between runs | `ros2/hakoniwa_ros2_control/tools/compare/repeat_ticks.py <results dir>` (`design/in-process-controller-plugin`) | runs aligned on the control tick (section 5.2) |
-| Pick and place | `ros2/hakoniwa_ros2_control/tools/compare/run-pick.sh hakoniwa-plugin 3`, `... hakoniwa-plugin 3 instant`, `... gazebo 3`; `pick_summary.py` (`design/in-process-controller-plugin`) | simulator, ros2_control and MoveIt started, `pick_and_place.py` run once, points left counted by `self_filter_leak.py` |
+| Transport | `tools/transport-bench/sweep.sh` ([README](../../tools/transport-bench/README.md)), with `TYPE=fixed` for the fixed-size messages and `CASES="gz"` for gz-transport; `summarize.py` | every size and rate, 3 runs, one transport at a time |
+| Physics only | `ros2/hakoniwa_ros2_control/tools/compare/run-physics.sh` | each simulator alone, 3 x 5 s of wall time |
+| Control, Hakoniwa | `ros2/hakoniwa_ros2_control/tools/compare/run-hakoniwa-plugin.sh rt 3`, `... max 3`, `... max 3 speed` | the Robot Runtime with ros2_control inside it, then the trajectory measured by `measure.py` |
+| Control, Gazebo | `ros2/hakoniwa_ros2_control/tools/compare/run-gazebo.sh rt 3`, `... max 3`, `... max 3 speed` | `gz sim -s` with `gz_ros2_control`, same measurement |
+| Difference between runs | `ros2/hakoniwa_ros2_control/tools/compare/repeat_ticks.py <results dir>` | runs aligned on the control tick (section 5.2) |
+| Pick and place | `ros2/hakoniwa_ros2_control/tools/compare/run-pick.sh hakoniwa-plugin 3`, `... hakoniwa-plugin 3 instant`, `... gazebo 3`; `pick_summary.py` | simulator, ros2_control and MoveIt started, `pick_and_place.py` run once, points left counted by `self_filter_leak.py` |
 
 Each case ran alone, one after another, with nothing else running in the container.
 

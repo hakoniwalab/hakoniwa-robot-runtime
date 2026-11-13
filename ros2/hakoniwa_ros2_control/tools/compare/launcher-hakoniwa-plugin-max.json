@@ -30,7 +30,7 @@
       "command": "bash",
       "args": [
         "-c",
-        "source /opt/ros/jazzy/setup.bash && source /tmp/plugin-install/setup.bash && mkdir -p /tmp/hakoniwa-so101-plugin && xacro /workspace/hakoniwa-robot-runtime-design/ros2/hakoniwa_ros2_control/config/so101/so101_plugin.urdf.xacro so101_urdf:=/workspace/work-docker-jazzy/model-forge/so101/source/Simulation/SO101/so101_new_calib.urdf sensors:=false -o /tmp/hakoniwa-so101-plugin/so101_plugin.urdf && exec /tmp/arm-plugin-release/bin/robot-arm-hakoniwa-asset --manifest /workspace/hakoniwa-robot-runtime-design/ros2/hakoniwa_ros2_control/config/so101/plugin/asset-manifest-environment-plugin.json --no-viewer --realtime-sync-cycle-msec 0"
+        "source /opt/ros/jazzy/setup.bash && source /workspace/ros2-work-jazzy-asset/install/setup.bash && mkdir -p /tmp/hakoniwa-so101-plugin && xacro /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/so101/so101_plugin.urdf.xacro so101_urdf:=/workspace/work-docker-jazzy/model-forge/so101/source/Simulation/SO101/so101_new_calib.urdf sensors:=false -o /tmp/hakoniwa-so101-plugin/so101_plugin.urdf && exec /workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control/build/bin/robot-arm-hakoniwa-asset --manifest /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/so101/plugin/asset-manifest-environment-plugin.json --no-viewer --realtime-sync-cycle-msec 0"
       ],
       "delay_sec": 4
     }
