@@ -1,0 +1,102 @@
+{
+  "$schema": "https://hakoniwa.dev/schemas/hakoniwa-asset-manifest.schema.json",
+  "schema_version": 1,
+  "name": "SO101",
+  "description": "SO-101 collision-workspace variant with an overhead 3D LiDAR and a wrist force-torque sensor. ros2_control runs inside the Robot Runtime (controller plugin).",
+  "model": "/workspace/work-docker-jazzy/model-forge/so101/install/so101.environment.xml",
+  "pdu_def": "/workspace/hakoniwa-robot-arm/recipes/so101/config/pdu/so101-pdudef.json",
+  "endpoint": "/workspace/hakoniwa-robot-arm/recipes/so101/config/endpoint/so101_endpoint.json",
+  "runtime_config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/runtime-sensors.json",
+  "components": [
+    {
+      "id": "shoulder_pan",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/actuator/joint/shoulder_pan.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "shoulder_lift",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/actuator/joint/shoulder_lift.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "elbow_flex",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/actuator/joint/elbow_flex.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "wrist_flex",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/actuator/joint/wrist_flex.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "wrist_roll",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/actuator/joint/wrist_roll.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "gripper",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/actuator/joint/gripper.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "manual_controller",
+      "kind": "controller",
+      "type": "joy_manual_controller",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/controller/manual.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "trajectory_controller",
+      "kind": "controller",
+      "type": "joint_trajectory_controller",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/controller/trajectory.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "ros2_control_plugin",
+      "kind": "controller",
+      "type": "plugin",
+      "config": "/workspace/hakoniwa-robot-runtime-design/ros2/hakoniwa_ros2_control/config/so101/plugin/so101-plugin-controller.json"
+    },
+    {
+      "id": "joint_states",
+      "kind": "state_output",
+      "type": "joint_state",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors/joint_state/so101-joint-states.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "sensors",
+      "kind": "sensor",
+      "type": "sensor_instances",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors/so101-sensors.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "lidar_output",
+      "kind": "state_output",
+      "type": "sensor_output",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors/so101-lidar-output.json",
+      "pdu_robot": "SO101"
+    },
+    {
+      "id": "wrist_wrench_output",
+      "kind": "state_output",
+      "type": "sensor_output",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors/so101-wrist-wrench-output.json",
+      "pdu_robot": "SO101"
+    }
+  ]
+}

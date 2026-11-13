@@ -1,21 +1,38 @@
 #!/bin/bash
 # Pick and place with sensors and MoveIt (docs/evaluation-gazebo.md 3.4), inside the container:
-#   run-pick.sh hakoniwa|gazebo <runs> [instant]
+#   run-pick.sh hakoniwa|hakoniwa-plugin|gazebo <runs> [instant]
+# hakoniwa: ros2_control as a separate Hakoniwa asset (HakoniwaAssetSystem), with the
+# launcher of the comparison (feat/gazebo-comparison checkout).
+# hakoniwa-plugin: ros2_control inside the Robot Runtime (the controller plugin),
+# MoveIt in a separate process (config/so101/hakoniwa-launcher-docker-plugin.json).
 # Each run starts the simulator, ros2_control and MoveIt, runs pick_and_place.py once
 # while self_filter_leak.py counts the arm's points left in MoveIt's map, and stops.
 # "instant" (Hakoniwa): the overhead LiDAR as an instant scan, in copies of the
 # configuration under /tmp/compare-pick/instant (the recipe's files are unchanged).
-# Results in /tmp/compare-pick/<label>-<n>.{out,leak.csv,ps0,ps1}; pick_summary.py sums them.
+# Results in /tmp/compare-pick (or $COMPARE_PICK_DIR)/<label>-<n>.{out,leak.csv,ps0,ps1}; pick_summary.py sums them.
 HERE=$(cd "$(dirname "$0")" && pwd)
 SIM=$1 RUNS=$2 MODE=${3:-rotating}
 F=/workspace/work-docker-jazzy/foundation
 RECIPE=/workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control
-O=/tmp/compare-pick; mkdir -p $O $RECIPE/logs
-LABEL=$SIM; [ "$SIM" = hakoniwa ] && LABEL=hakoniwa-$MODE
+O=${COMPARE_PICK_DIR:-/tmp/compare-pick}; mkdir -p $O $RECIPE/logs
+LABEL=$SIM
+[ "$SIM" = hakoniwa ] && LABEL=hakoniwa-$MODE
+[ "$SIM" = hakoniwa-plugin ] && LABEL=hakoniwa-plugin-$MODE
 export HAKO_CONFIG_PATH=$F/config/cpp_core_config.json LD_LIBRARY_PATH=$F/install/lib
 set +u; source /opt/ros/jazzy/setup.bash; source /workspace/ros2-work-jazzy-asset/install/setup.bash; set -u
 
-LAUNCHER=$HERE/../../config/so101/hakoniwa-launcher-docker-asset.json
+# The separate-process form as measured before (its launcher sets
+# HAKO_CONDUCTOR_IDLE_SLEEP_USEC and uses the recipe's build).
+LAUNCHER=/workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/so101/hakoniwa-launcher-docker-asset.json
+ROS_LOG=ros2-control
+if [ "$SIM" = hakoniwa-plugin ]; then
+  LAUNCHER=$HERE/../../config/so101/hakoniwa-launcher-docker-plugin.json
+  ROS_LOG=moveit
+fi
+if [ "$SIM" = hakoniwa-plugin ] && [ "$MODE" = instant ]; then
+  echo "instant is not prepared for hakoniwa-plugin" >&2
+  exit 1
+fi
 if [ "$SIM" = hakoniwa ] && [ "$MODE" = instant ]; then
   C=/workspace/hakoniwa-robot-arm/recipes/so101/config/sensors
   I=$O/instant; rm -rf $I; mkdir -p $I/sensors; cp -r $C/lidar $C/force_torque $C/so101-sensors.json $I/sensors/
@@ -37,7 +54,7 @@ PY
 fi
 
 start() {
-  if [ "$SIM" = hakoniwa ]; then
+  if [ "$SIM" != gazebo ]; then
     $F/install/python/bin/python -m hakoniwa_pdu.apps.launcher.hako_launcher $LAUNCHER \
       --background $O/session.json > $O/$LABEL-launcher.out 2>&1
   else
@@ -52,8 +69,8 @@ start() {
   sleep 5
 }
 stop() {
-  if [ "$SIM" = hakoniwa ]; then
-    cp $RECIPE/logs/ros2-control.out $O/$LABEL-$1.ros.out
+  if [ "$SIM" != gazebo ]; then
+    cp $RECIPE/logs/$ROS_LOG.out $O/$LABEL-$1.ros.out
     $F/install/python/bin/python -m hakoniwa_pdu.apps.launcher.hako_launcher_ctl terminate $O/session.json > /dev/null 2>&1
   else
     cp $O/$LABEL-launch.out $O/$LABEL-$1.ros.out

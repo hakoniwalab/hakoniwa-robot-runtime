@@ -4,8 +4,7 @@
 
 #include "sensor_msgs/pdu_cpptype_PointCloud2.hpp"
 #include "sensor_msgs/pdu_cpptype_conv_PointCloud2.hpp"
-#include "hakoniwa/pdu/endpoint.hpp"
-#include "hakoniwa/pdu/type_endpoint.hpp"
+#include "adapters/endpoint/encoding_pdu_endpoint.hpp"
 
 #include <cstring>
 #include <utility>
@@ -18,14 +17,16 @@ public:
     Impl(
         ::hakoniwa::pdu::Endpoint& endpoint_value,
         std::string pdu_robot,
-        std::string pdu_name)
+        std::string pdu_name,
+        std::shared_ptr<runtime::IEncodedPduSink> sink)
         : endpoint(endpoint_value,
             ::hakoniwa::pdu::PduKey {
-                std::move(pdu_robot), std::move(pdu_name)})
+                std::move(pdu_robot), std::move(pdu_name)},
+            std::move(sink))
     {
     }
 
-    ::hakoniwa::pdu::TypedEndpoint<
+    EncodingPduEndpoint<
         HakoCpp_PointCloud2,
         ::hako::pdu::msgs::sensor_msgs::PointCloud2> endpoint;
 };
@@ -33,9 +34,10 @@ public:
 PointCloud2PduWriter::PointCloud2PduWriter(
     ::hakoniwa::pdu::Endpoint& endpoint,
     std::string pdu_robot,
-    std::string pdu_name)
+    std::string pdu_name,
+    std::shared_ptr<runtime::IEncodedPduSink> sink)
     : impl_(std::make_unique<Impl>(
-        endpoint, std::move(pdu_robot), std::move(pdu_name)))
+        endpoint, std::move(pdu_robot), std::move(pdu_name), std::move(sink)))
 {
 }
 
@@ -83,7 +85,7 @@ bool PointCloud2PduWriter::send(const runtime::PointCloudOutput& output) noexcep
             put(pdu.data, base + 18, points[i].time_offset);
         }
         pdu.is_dense = true;  // only returned (finite) points
-        return impl_->endpoint.send(pdu) == HAKO_PDU_ERR_OK;
+        return impl_->endpoint.send(pdu, output.simulation_time_usec) == HAKO_PDU_ERR_OK;
     } catch (...) {
         return false;
     }
@@ -91,6 +93,7 @@ bool PointCloud2PduWriter::send(const runtime::PointCloudOutput& output) noexcep
 
 void PointCloud2PduWriter::reset() noexcept
 {
+    impl_->endpoint.reset();
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

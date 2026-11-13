@@ -92,6 +92,27 @@ struct RuntimeTrajectoryControllerConfig {
     std::vector<RuntimeTrajectoryBinding> joints;
 };
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+/**
+ * Controller backed by a controller plugin (kind "controller", type "plugin";
+ * include/hakoniwa/robot_runtime/plugin/controller_plugin.h).
+ */
+struct RuntimePluginControllerConfig {
+    std::string component_id;
+    std::string config_path;           ///< the component config file
+    std::string plugin_path;           ///< resolved shared library path
+    std::string plugin_config_path;    ///< resolved plugin config; empty when not given
+    std::vector<std::string> actuator_ids;  ///< joints passed to the plugin, in this order
+    std::int32_t priority {10};        ///< Arbiter priority (trajectory controllers use 10)
+    std::string joint_state_source {"truth"};  ///< "truth" ("observed" is not implemented yet)
+    /// Sensor output PDUs passed to the plugin ("pdus"), in this order.
+    std::vector<std::string> pdu_names;
+    /// Their message types, filled from the sensor outputs after loading.
+    std::vector<std::string> pdu_types;
+    bool stop_on_error {true};         ///< an Error status ends the run
+};
+#endif
+
 struct RuntimeManualAxisBinding {
     std::size_t axis_index {0};
     std::string joint_name;
@@ -268,6 +289,9 @@ struct RuntimeDefinition {
     std::vector<RuntimeTrajectoryControllerConfig> trajectory_controllers;
     std::vector<RuntimeManualControllerConfig> manual_controllers;
     std::vector<RuntimeAckermannControllerConfig> ackermann_controllers;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    std::vector<RuntimePluginControllerConfig> plugin_controllers;
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<RuntimeMirrorBodyConfig> mirror_bodies;
     std::vector<RuntimeImpulseCollisionOutputConfig> impulse_collision_outputs;

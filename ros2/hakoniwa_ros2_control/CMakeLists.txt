@@ -67,4 +67,52 @@ if(HAKONIWA_ROS2_CONTROL_WITH_ASSET)
   install(TARGETS hakoniwa_asset_link_probe RUNTIME DESTINATION lib/${PROJECT_NAME})
 endif()
 
+# The controller plugin (docs/design-controller-plugin.md): ros2_control inside the
+# Robot Runtime process, stepped in simulation time. Built only with
+# -DHAKONIWA_ROS2_CONTROL_WITH_PLUGIN=ON; it needs the Hakoniwa PDU type headers
+# (header-only converters) on CMAKE_PREFIX_PATH, and links no Hakoniwa library
+# (the Robot Runtime that loads it has its own).
+option(HAKONIWA_ROS2_CONTROL_WITH_PLUGIN "Build the ros2_control controller plugin" OFF)
+if(HAKONIWA_ROS2_CONTROL_WITH_PLUGIN)
+  find_package(controller_manager REQUIRED)
+  find_package(controller_manager_msgs REQUIRED)
+  find_package(geometry_msgs REQUIRED)
+  find_package(rosgraph_msgs REQUIRED)
+  find_package(yaml_cpp_vendor REQUIRED)
+  find_path(HAKONIWA_PDU_TYPES_INCLUDE_DIR pdu_primitive_ctypes.h
+    PATH_SUFFIXES include/hakoniwa/pdu hakoniwa/pdu
+    DOC "Directory of the Hakoniwa PDU type headers (pdu_primitive_ctypes.h)")
+  if(NOT HAKONIWA_PDU_TYPES_INCLUDE_DIR)
+    message(FATAL_ERROR "Hakoniwa PDU type headers not found: set HAKONIWA_PDU_TYPES_INCLUDE_DIR")
+  endif()
+  set(HAKONIWA_ROBOT_RUNTIME_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
+    CACHE PATH "Robot Runtime public headers (the plugin C ABI)")
+  add_library(hakoniwa_ros2_control_plugin SHARED
+    controller_plugin/src/ros2_control_plugin.cpp
+    controller_plugin/src/hakoniwa_plugin_system.cpp
+    controller_plugin/src/plugin_bridge.cpp
+    controller_plugin/src/sensor_relay.cpp)
+  set_target_properties(hakoniwa_ros2_control_plugin PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_VISIBILITY_PRESET hidden)
+  target_include_directories(hakoniwa_ros2_control_plugin PRIVATE
+    ${HAKONIWA_ROBOT_RUNTIME_INCLUDE_DIR}
+    ${HAKONIWA_PDU_TYPES_INCLUDE_DIR})
+  target_link_libraries(hakoniwa_ros2_control_plugin PRIVATE
+    controller_manager::controller_manager
+    hardware_interface::hardware_interface
+    pluginlib::pluginlib
+    rclcpp::rclcpp
+    rclcpp_lifecycle::rclcpp_lifecycle
+    ${controller_manager_msgs_TARGETS}
+    ${sensor_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${rosgraph_msgs_TARGETS}
+    yaml-cpp)
+  pluginlib_export_plugin_description_file(hardware_interface hakoniwa_ros2_control_plugin.xml)
+  install(TARGETS hakoniwa_ros2_control_plugin
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin)
+endif()
+
 ament_package()
