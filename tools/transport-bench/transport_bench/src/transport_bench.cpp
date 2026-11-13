@@ -5,7 +5,7 @@
 //
 //   transport_bench --transport ros|pdu|gz --role send|recv --size <bytes> --rate <Hz>
 //                   --count <n> [--out <json>] [--pdu-config <pdudef>] [--pdu-size <bytes>]
-//                   [--poll-us <us>] [--qos reliable|best_effort] [--trace <file>]
+//                   [--poll-us <us>] [--qos reliable|best_effort] [--depth <n>] [--trace <file>]
 //                   [--type cloud|fixed]
 //
 // --type cloud (default): sensor_msgs/PointCloud2, as a sensor is used; the PDU
@@ -83,6 +83,7 @@ struct Options
   std::size_t pdu_size{0};
   int poll_us{0};
   std::string qos{"reliable"};
+  std::size_t depth{10};  // ROS 2 history depth (KEEP_LAST)
   std::string trace;  // receiver: one line per message, "sequence latency_us"
   std::string type{"cloud"};
 };
@@ -162,6 +163,34 @@ void fill_bytes(std::uint8_t * data, std::uint64_t seq, std::size_t size)
   std::memcpy(data, &seq, 8);
 }
 
+// A corrupted message, in one line: the sequence in its head, the first byte
+// that differs from that sequence's pattern, and the sequence (mod 256) each part
+// of the body belongs to (byte i of message seq is (seq * 31 + i) mod 256, and
+// 223 * 31 = 1 mod 256), at the start, the middle and the end, read twice: a
+// body that changes between the two reads is being written while it is read.
+std::string describe_corrupt(const std::uint8_t * data, std::size_t size, std::uint64_t seq)
+{
+  const std::uint8_t * expected = pattern(seq, size);
+  std::size_t first = kHead;
+  while (first < size && data[first] == expected[first]) {
+    ++first;
+  }
+  // volatile: each read goes to the (shared) memory, the second one too.
+  const volatile std::uint8_t * live = data;
+  auto owner = [&](std::size_t i) { return ((static_cast<unsigned>(live[i]) - i) * 223u) & 0xffu; };
+  const std::size_t at[3] = {kHead, size / 2, size - 1};
+  std::ostringstream line;
+  line << "seq " << seq << " (mod 256 " << (seq & 0xffu) << ") first_diff " << first << " owner";
+  for (std::size_t i : at) {
+    line << " " << owner(i);
+  }
+  line << " reread";
+  for (std::size_t i : at) {
+    line << " " << owner(i);
+  }
+  return line.str();
+}
+
 // ---- receiver bookkeeping (shared by both transports) ----
 struct Record
 {
@@ -172,6 +201,9 @@ struct Record
   std::uint64_t out_of_order{0};
   std::uint64_t last_seq{0};
   bool any{false};
+  // The first corrupted messages: what they carried, to tell an overwritten
+  // message from a damaged one (see describe_corrupt()).
+  std::vector<std::string> corrupt_detail;
 
   void take(const sensor_msgs::msg::PointCloud2 & msg, std::int64_t t_recv, std::size_t size)
   {
@@ -191,6 +223,9 @@ struct Record
     bool ok = shape_ok && std::memcmp(data + kHead, pattern(seq, size) + kHead, size - kHead) == 0;
     if (!ok) {
       ++corrupt;
+      if (corrupt_detail.size() < 50) {
+        corrupt_detail.push_back(describe_corrupt(data, size, seq));
+      }
       return;
     }
     if (any && seq <= last_seq) {
@@ -246,6 +281,12 @@ void write_receiver(const Options & o, const Record & r, double cpu, double wall
     std::ofstream trace(o.trace);
     for (std::size_t i = 0; i < r.seqs.size(); ++i) {
       trace << r.seqs[i] << " " << r.latency_us[i] << "\n";
+    }
+    if (!r.corrupt_detail.empty()) {
+      std::ofstream corrupt(o.trace + ".corrupt");
+      for (const auto & line : r.corrupt_detail) {
+        corrupt << line << "\n";
+      }
     }
   }
   write_result(o, {{"received", static_cast<double>(r.received)},
@@ -329,7 +370,7 @@ constexpr double kIdleSec = 3.0;
 // ---- ROS 2 ----
 rclcpp::QoS make_qos(const Options & o)
 {
-  rclcpp::QoS qos(10);
+  rclcpp::QoS qos(o.depth);
   if (o.qos == "best_effort") {
     qos.best_effort();
   } else {
@@ -705,6 +746,7 @@ bool parse(int argc, char ** argv, Options & o)
     else if (key == "--pdu-size") o.pdu_size = std::stoul(value);
     else if (key == "--poll-us") o.poll_us = std::stoi(value);
     else if (key == "--qos") o.qos = value;
+    else if (key == "--depth") o.depth = std::stoul(value);
     else if (key == "--trace") o.trace = value;
     else if (key == "--type") o.type = value;
     else if (key.rfind("--ros-args", 0) == 0) break;
@@ -724,7 +766,7 @@ int main(int argc, char ** argv)
   if (!parse(argc, argv, o)) {
     std::cerr << "usage: transport_bench --transport ros|pdu|gz --role send|recv --size <bytes >= 24> --rate <Hz> "
                  "--count <n> [--out <json>] [--pdu-config <pdudef>] [--pdu-size <bytes>] [--poll-us <us>] "
-                 "[--qos reliable|best_effort] [--trace <file>] [--type cloud|fixed]"
+                 "[--qos reliable|best_effort] [--depth <n>] [--trace <file>] [--type cloud|fixed]"
               << std::endl;
     return 2;
   }
