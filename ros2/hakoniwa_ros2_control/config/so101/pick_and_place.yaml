@@ -1,4 +1,4 @@
-# SO-101 pick and place (written by hakoniwa-robot-arm tools/recipe/so101_grasp_poses.py).
+# SO-101 pick and place (written by ros2/hakoniwa_ros2_control/tools/so101_grasp_poses.py).
 # Arm joints in the order ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll'].
 object:
   id: grasp_cube

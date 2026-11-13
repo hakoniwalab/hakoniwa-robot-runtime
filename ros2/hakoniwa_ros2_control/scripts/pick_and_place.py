@@ -4,7 +4,7 @@
 ros2 run hakoniwa_ros2_control pick_and_place.py [--config pick_and_place.yaml]
 
 The configuration (config/so101/pick_and_place.yaml, written by
-hakoniwa-robot-arm tools/recipe/so101_grasp_poses.py) gives the object, the
+ros2/hakoniwa_ros2_control/tools/so101_grasp_poses.py) gives the object, the
 table and the arm joints of the four poses. MoveIt moves the arm between
 places, avoiding the obstacle map; the short moves down and up go straight to
 arm_controller. The wrist force-torque sensor checks the grasp (the object's
