@@ -67,6 +67,20 @@
         }
       }
     },
+    "reference": {
+      "description": "hakoniwa-sensor-adapter's reference implementation: the true values, no error of any kind (README, Reference implementation)",
+      "sensors": {
+        "lidar": {
+          "keys": ["update_rate", "scan_mode", "scan", "range", "no_return"]
+        },
+        "force_torque": {
+          "keys": ["update_rate"]
+        },
+        "joint": {
+          "keys": ["update_rate"]
+        }
+      }
+    },
     "airsim": {
       "sensors": {
         "imu": {

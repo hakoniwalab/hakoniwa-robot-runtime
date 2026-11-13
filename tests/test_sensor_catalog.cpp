@@ -30,7 +30,7 @@ bool contains(const std::string& text, const std::string& part)
     return text.find(part) != std::string::npos;
 }
 
-const std::set<std::string> kAllLinked {"hakoniwa", "gazebo", "airsim"};
+const std::set<std::string> kAllLinked {"hakoniwa", "gazebo", "airsim", "reference"};
 
 json sts3215()
 {
@@ -64,7 +64,7 @@ SensorCatalog load_shipped(const std::string& path)
     return catalog;
 }
 
-void test_shipped_catalog_lists_the_three_implementations(const SensorCatalog& catalog)
+void test_shipped_catalog_lists_the_implementations(const SensorCatalog& catalog)
 {
     CHECK(catalog.implementations.count("hakoniwa") == 1);
     CHECK(catalog.implementations.count("gazebo") == 1);
@@ -72,6 +72,30 @@ void test_shipped_catalog_lists_the_three_implementations(const SensorCatalog& c
     CHECK(catalog.implementations.at("hakoniwa").count("joint") == 1);
     CHECK(catalog.implementations.at("hakoniwa").count("force_torque") == 1);
     CHECK(catalog.implementations.at("gazebo").count("joint") == 0);
+    // The reference implementation: lidar, force_torque and joint, true values only.
+    CHECK(catalog.implementations.count("reference") == 1);
+    CHECK(catalog.implementations.at("reference").count("lidar") == 1);
+    CHECK(catalog.implementations.at("reference").count("force_torque") == 1);
+    CHECK(catalog.implementations.at("reference").count("joint") == 1);
+    CHECK(catalog.implementations.at("reference").count("imu") == 0);
+}
+
+void test_reference_takes_only_true_value_keys(const SensorCatalog& catalog)
+{
+    std::string error;
+    const json lidar = {{"type", "lidar"}, {"update_rate", 2}, {"scan_mode", "instant"},
+        {"scan", {{"horizontal", {{"samples", 360}, {"min_angle", -3.14}, {"max_angle", 0.0}}}}},
+        {"range", {{"min", 0.05}, {"max", 2.0}}}, {"no_return", "inf"}};
+    CHECK(validate_sensor_definition(catalog, kAllLinked, "reference", "lidar", lidar, "lidar.json", &error));
+    auto noisy = lidar;
+    noisy["accuracy"] = json::array();
+    CHECK(!validate_sensor_definition(catalog, kAllLinked, "reference", "lidar", noisy, "lidar.json", &error));
+    CHECK(contains(error, "accuracy"));
+    const json ft = {{"type", "force_torque"}, {"update_rate", 500}};
+    CHECK(validate_sensor_definition(catalog, kAllLinked, "reference", "force_torque", ft, "ft.json", &error));
+    auto ranged = ft;
+    ranged["range"] = {{"fxy", 200}, {"fz", 200}, {"txy", 10}, {"tz", 6.5}};
+    CHECK(!validate_sensor_definition(catalog, kAllLinked, "reference", "force_torque", ranged, "ft.json", &error));
 }
 
 void test_supported_definitions_pass(const SensorCatalog& catalog)
@@ -92,7 +116,7 @@ void test_unknown_implementation_fails(const SensorCatalog& catalog)
     CHECK(!validate_sensor_definition(catalog, kAllLinked, "gazebo2", "joint", sts3215(), "sts.json", &error));
     CHECK(contains(error, "sts.json"));
     CHECK(contains(error, "unknown sensor implementation \"gazebo2\""));
-    CHECK(contains(error, "known: airsim, gazebo, hakoniwa"));
+    CHECK(contains(error, "known: airsim, gazebo, hakoniwa, reference"));
 }
 
 void test_unsupported_sensor_type_fails(const SensorCatalog& catalog)
@@ -219,7 +243,8 @@ int main(int argc, char** argv)
         return 2;
     }
     const auto catalog = load_shipped(argv[1]);
-    test_shipped_catalog_lists_the_three_implementations(catalog);
+    test_shipped_catalog_lists_the_implementations(catalog);
+    test_reference_takes_only_true_value_keys(catalog);
     test_supported_definitions_pass(catalog);
     test_unknown_implementation_fails(catalog);
     test_unsupported_sensor_type_fails(catalog);

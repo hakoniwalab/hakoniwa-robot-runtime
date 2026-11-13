@@ -184,7 +184,8 @@ Docker  : 箱庭 ROS 2 Bridge ＋ ros2_control ＋ MoveIt 2（点群から障害
 
 前提（上の手順の前提に加えて）：
 
-- 3D LiDAR と力覚センサーは `hakoniwa` 実装を使います。そのライブラリは箱庭ラボが提供します（[お問い合わせ](https://hakoniwa-lab.net/contact/)）。受け取ったライブラリのパスを、セミコロンで並べて環境変数 `HAKO_ROBOT_ARM_SENSOR_LIBRARIES` に入れておきます。
+- 3D LiDAR と力覚センサーは、既定では hakoniwa-sensor-adapter の参照実装（`reference`。真の値だけを返し、LiDAR は一瞬で撮る方式）を使います。ライブラリは要りません。`hakoniwa-sensor-adapter` を、ほかのリポジトリと同じディレクトリに並べておきます。
+- 実物らしいセンサー（回転する LiDAR、誤差のモデル）を使うときは、箱庭ラボが提供する `hakoniwa` 実装に差し替えます（[お問い合わせ](https://hakoniwa-lab.net/contact/)）。環境変数 `HAKO_ROBOT_ARM_SENSOR_IMPLEMENTATIONS=hakoniwa` と、ライブラリのパスを並べた `HAKO_ROBOT_ARM_SENSOR_LIBRARIES` を設定し、`configure` に `--sensor-implementation hakoniwa` を付けます。
 - ROS 2 のイメージは、手順 2 の `docker build` で作ったものを使います（MoveIt の点群の部品 `moveit_ros_perception` が入っています）。
 
 ### 1. ホスト：センサー付きで起動する
@@ -308,8 +309,8 @@ Docker : Robot Runtime（SO-101、センサー付き）
 
 前提：
 
-- `hakoniwa-business-pack`、`hakoniwa-robot-arm`、`hakoniwa-robot-runtime`、`hakoniwa-mujoco-robots`、`hakoniwa-core-pro` が同じディレクトリに並んでいること。`hakoniwa-core-pro` は main であること（`HakoniwaAssetSystem` は `hako_asset_simulation_state()` を使います）。
-- センサーの実装ライブラリ（hakoniwa 実装。箱庭ラボから提供されます。[問い合わせ](https://hakoniwa-lab.net/contact/)）の `libhakoniwa_mujoco_sensors_adapters.a`（Linux、コンテナと同じ CPU アーキテクチャ）を、並べたディレクトリの `work-docker-jazzy/sensor-impl/` に置いてあること。
+- `hakoniwa-business-pack`、`hakoniwa-robot-arm`、`hakoniwa-robot-runtime`、`hakoniwa-mujoco-robots`、`hakoniwa-core-pro`、`hakoniwa-sensor-adapter` が同じディレクトリに並んでいること。`hakoniwa-core-pro` は main であること（`HakoniwaAssetSystem` は `hako_asset_simulation_state()` を使います）。
+- センサーは、既定では hakoniwa-sensor-adapter の参照実装（真の値だけを返す）を使います。ライブラリは要りません。箱庭ラボが提供する `hakoniwa` 実装（[お問い合わせ](https://hakoniwa-lab.net/contact/)）に差し替えるときは、手順 2 の注意書きを見てください。
 - Docker Desktop が動いていること。
 
 ### 1. ホスト：イメージを作り、コンテナに入る
@@ -330,13 +331,14 @@ IMAGE_NAME=hakoniwa-ros2-control-asset CONTAINER_NAME=hakoniwa-ros2-control-asse
 cd /workspace/hakoniwa-business-pack
 python3.12 tools/workspace.py run -- python tools/recipe.py configure --recipe ../hakoniwa-robot-arm/recipes/so101/so101-joint-trajectory-control.yaml
 python3.12 tools/workspace.py run -- python tools/recipe.py configure --recipe ../hakoniwa-robot-arm/recipes/so101/so101-model-forge.yaml
-export HAKO_ROBOT_ARM_SENSOR_LIBRARIES=/workspace/work-docker-jazzy/sensor-impl/libhakoniwa_mujoco_sensors_adapters.a
 python3.12 tools/workspace.py run -- bash -c "cd /workspace/hakoniwa-robot-arm && python tools/recipe/so101.py forge && python tools/recipe/so101.py configure --environment --sensors --realtime-sync-cycle-msec 2 && python tools/recipe/so101.py build --sensors && python tools/recipe/so101.py doctor"
 ```
 
 doctor の全項目が `[OK]` なら OK です。
 
 - `--headless` は付けません。センサー付きの Robot Runtime はカメラの描画部品（GLFW）を含むため、画面ありの設定で作ります。画面は、ランチャの設定（`--no-viewer`）で出しません。
+- `configure` の表示が `Sensors         : enabled (reference)` なら、参照実装（真の値だけ。LiDAR は一瞬で撮る方式）です。
+- 箱庭ラボが提供する `hakoniwa` 実装（回転する LiDAR、誤差のモデル）を使うときは、その前に `export HAKO_ROBOT_ARM_SENSOR_IMPLEMENTATIONS=hakoniwa` と `export HAKO_ROBOT_ARM_SENSOR_LIBRARIES=/workspace/work-docker-jazzy/sensor-impl/libhakoniwa_mujoco_sensors_adapters.a`（受け取ったライブラリを置いた場所）を実行し、`configure` に `--sensor-implementation hakoniwa` を付けます。
 - `hakoniwa-core-pro` を main に更新したあとで、以前に作った Foundation が残っているときは、作り直します：`python3.12 tools/workspace.py run -- python tools/foundation.py build --recipe ../hakoniwa-robot-arm/recipes/so101/so101-joint-trajectory-control.yaml --force hakoniwa-core-pro`
 
 ### 3. 端末 A：hakoniwa_ros2_control を HakoniwaAssetSystem 付きで作る
@@ -422,7 +424,6 @@ Docker : Robot Runtime（SO-101、センサー付き、ros2_control をプラグ
 
 ```bash
 cd /workspace/hakoniwa-business-pack
-export HAKO_ROBOT_ARM_SENSOR_LIBRARIES=/workspace/work-docker-jazzy/sensor-impl/libhakoniwa_mujoco_sensors_adapters.a
 python3.12 tools/workspace.py run -- bash -c "cd /workspace/hakoniwa-robot-arm && python tools/recipe/so101.py build --sensors --controller-plugin && python tools/recipe/so101.py doctor"
 ```
 
