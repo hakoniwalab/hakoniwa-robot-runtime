@@ -1,6 +1,6 @@
 {
   "plugin": {
-    "path": "/tmp/plugin-install/hakoniwa_ros2_control/lib/libhakoniwa_ros2_control_plugin.so",
+    "path": "/workspace/ros2-work-jazzy-asset/install/hakoniwa_ros2_control/lib/libhakoniwa_ros2_control_plugin.so",
     "config": "plugin.yaml"
   },
   "joints": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],

@@ -79,6 +79,10 @@ if(HAKONIWA_ROS2_CONTROL_WITH_PLUGIN)
   find_package(geometry_msgs REQUIRED)
   find_package(rosgraph_msgs REQUIRED)
   find_package(yaml_cpp_vendor REQUIRED)
+  # The converter headers come from this one directory: it is added as an include
+  # directory of the target, ahead of any -I in CMAKE_CXX_FLAGS. To build with
+  # another hakoniwa-pdu-registry than the installed one, set this variable to
+  # its pdu/types.
   find_path(HAKONIWA_PDU_TYPES_INCLUDE_DIR pdu_primitive_ctypes.h
     PATH_SUFFIXES include/hakoniwa/pdu hakoniwa/pdu
     DOC "Directory of the Hakoniwa PDU type headers (pdu_primitive_ctypes.h)")
