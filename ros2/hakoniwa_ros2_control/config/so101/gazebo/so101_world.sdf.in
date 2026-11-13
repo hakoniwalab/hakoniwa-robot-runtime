@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- The world for the SO-101 comparison: the physics step of the Hakoniwa
+     Robot Runtime (2 ms) and a real-time factor set by the launch file
+     (1: real time, 0: as fast as possible). -->
+<sdf version="1.9">
+  <world name="so101">
+    <physics name="2ms" type="ignored">
+      <max_step_size>0.002</max_step_size>
+      <real_time_factor>@REAL_TIME_FACTOR@</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <gravity>0 0 -9.81</gravity>
+    <model name="ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>2.4 2.4</size></plane></geometry>
+        </collision>
+      </link>
+    </model>
+  </world>
+</sdf>

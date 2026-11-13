@@ -10,7 +10,8 @@
       "set": {
         "HAKO_CONFIG_PATH": "/workspace/work-docker-jazzy/foundation/config/cpp_core_config.json",
         "HAKO_PDU_ENDPOINT_SHARED_LIB": "/workspace/work-docker-jazzy/foundation/install/lib/libhakoniwa_pdu_endpoint_core_callback.so",
-        "PYTHONUNBUFFERED": "1"
+        "PYTHONUNBUFFERED": "1",
+        "HAKO_CONDUCTOR_IDLE_SLEEP_USEC": "200"
       },
       "prepend": {
         "lib_path": [

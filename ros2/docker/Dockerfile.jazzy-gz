@@ -1,0 +1,15 @@
+# Comparison with Gazebo: the asset image (Hakoniwa, ros2_control, MoveIt 2)
+# plus Gazebo (Harmonic, the Jazzy pairing) with gz_ros2_control and ros_gz, so
+# that the same SO-101, controllers and trajectories run on both in one image.
+ARG BASE_IMAGE=hakoniwa-ros2-control-asset:jazzy
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-gz-ros2-control ros-${ROS_DISTRO}-ros-gz-sim ros-${ROS_DISTRO}-ros-gz-bridge \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash"]

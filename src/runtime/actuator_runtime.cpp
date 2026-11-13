@@ -18,6 +18,20 @@ void require_non_null(const std::shared_ptr<T>& value, const char* name)
     }
 }
 
+/** Message of a Controller error that ends the run. */
+std::string run_stopping_error(const ComponentStatus& status, const char* event)
+{
+    std::string message = "controller ";
+    message += status.component_id;
+    message += " failed at ";
+    message += event;
+    if (!status.detail.empty()) {
+        message += ": ";
+        message += status.detail;
+    }
+    return message;
+}
+
 bool input_is_active(
     const ControllerInputMetadata& metadata,
     const RuntimeStepContext& context) noexcept
@@ -183,6 +197,11 @@ std::vector<ControllerOutput> ActuatorRuntime::update_controllers(
                     "controller produced a command for a different source ID");
             }
         }
+        if (controller->error_stops_run()
+            && output.status.state == ComponentState::Error) {
+            // Before arbitration: physics does not advance with a failed controller.
+            throw std::runtime_error(run_stopping_error(output.status, "update"));
+        }
         statuses.push_back(output.status);
         outputs.push_back(std::move(output));
     }
@@ -341,6 +360,40 @@ void ActuatorRuntime::attach_sensors(
     }
 }
 #endif
+
+std::vector<ComponentStatus> ActuatorRuntime::start()
+{
+    std::vector<ComponentStatus> statuses;
+    statuses.reserve(controllers_.size());
+    for (const auto& controller : controllers_) {
+        auto status = controller->on_start();
+        if (controller->error_stops_run() && status.state == ComponentState::Error) {
+            throw std::runtime_error(run_stopping_error(status, "start"));
+        }
+        statuses.push_back(std::move(status));
+    }
+    return statuses;
+}
+
+std::vector<ComponentStatus> ActuatorRuntime::stop()
+{
+    std::vector<ComponentStatus> statuses;
+    statuses.reserve(controllers_.size());
+    std::string first_error;
+    for (const auto& controller : controllers_) {
+        auto status = controller->on_stop();
+        if (first_error.empty()
+            && controller->error_stops_run()
+            && status.state == ComponentState::Error) {
+            first_error = run_stopping_error(status, "stop");
+        }
+        statuses.push_back(std::move(status));
+    }
+    if (!first_error.empty()) {
+        throw std::runtime_error(first_error);
+    }
+    return statuses;
+}
 
 RobotState ActuatorRuntime::reset(const std::uint64_t simulation_time_usec)
 {

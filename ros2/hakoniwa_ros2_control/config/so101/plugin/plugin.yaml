@@ -1,0 +1,9 @@
+# The ros2_control plugin inside the Robot Runtime (SO-101 pick and place).
+# robot_description: the URDF from so101_plugin.urdf.xacro (sensors:=true); the
+# launcher (hakoniwa-launcher-docker-plugin.json) writes it before the Robot
+# Runtime starts.
+robot_description: /tmp/hakoniwa-so101-plugin/so101_plugin.urdf
+params_files: [../ros2_controllers.yaml]
+activate: [joint_state_broadcaster, arm_controller, gripper_controller]
+publish_clock: true
+sensor_topic_prefix: /pdu/

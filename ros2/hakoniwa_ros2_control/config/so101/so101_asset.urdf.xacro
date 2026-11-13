@@ -14,6 +14,8 @@
        name -> Hz), e.g. config/so101/sensor_publish.json; empty: none. -->
   <xacro:arg name="sensor_publish_config" default=""/>
   <xacro:arg name="publish_clock" default="true"/>
+  <!-- false: no wall-clock pacing in HakoniwaAssetSystem (the world time is still waited for). -->
+  <xacro:arg name="realtime_sync" default="true"/>
   <xacro:include filename="$(arg so101_urdf)"/>
 
   <xacro:macro name="hakoniwa_joint" params="name">
@@ -54,6 +56,7 @@
       <param name="first_state_timeout_sec">60</param>
       <param name="sensor_publish_config">$(arg sensor_publish_config)</param>
       <param name="publish_clock">$(arg publish_clock)</param>
+      <param name="realtime_sync">$(arg realtime_sync)</param>
     </hardware>
     <xacro:hakoniwa_joint name="shoulder_pan"/>
     <xacro:hakoniwa_joint name="shoulder_lift"/>

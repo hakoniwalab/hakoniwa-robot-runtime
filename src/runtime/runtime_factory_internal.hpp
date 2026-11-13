@@ -76,6 +76,22 @@ struct RuntimeParseContext {
     RuntimeDefinition& definition,
     std::string* error);
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+/** Controller plugin components (runtime_factory_plugin.cpp). */
+[[nodiscard]] bool load_plugin_controller_definitions(
+    RuntimeParseContext& context,
+    RuntimeDefinition& definition,
+    std::string* error);
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
+/**
+ * Matches each plugin's "pdus" with the sensor outputs (after both are
+ * loaded) and fills pdu_types from their message types.
+ */
+[[nodiscard]] bool resolve_plugin_controller_pdus(
+    RuntimeDefinition& definition,
+    std::string* error);
+#endif
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 [[nodiscard]] bool load_mirror_definitions(
     RuntimeParseContext& context,

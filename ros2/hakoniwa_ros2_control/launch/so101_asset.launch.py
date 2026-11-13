@@ -27,7 +27,8 @@ import xacro
 import yaml
 
 PACKAGE = "hakoniwa_ros2_control"
-ARGUMENTS = ["so101_urdf", "pdu_definition_path", "endpoint_config_path", "robot_name", "asset_name", "delta_usec"]
+ARGUMENTS = ["so101_urdf", "pdu_definition_path", "endpoint_config_path", "robot_name", "asset_name", "delta_usec",
+             "realtime_sync"]
 
 
 def resolved_urdf(so101_urdf):
@@ -126,6 +127,8 @@ def generate_launch_description():
         DeclareLaunchArgument("robot_name", default_value="SO101"),
         DeclareLaunchArgument("asset_name", default_value="HakoniwaSystem"),
         DeclareLaunchArgument("delta_usec", default_value="2000"),
+        DeclareLaunchArgument("realtime_sync", default_value="true",
+                              description="HakoniwaAssetSystem paces to the wall clock (false: only waits for the world time)"),
         DeclareLaunchArgument("sensors", default_value="false",
                               description="Publish the sensors (/pdu/...) and add their frames to the URDF"),
         DeclareLaunchArgument("moveit", default_value="false", description="Also start MoveIt's move_group"),

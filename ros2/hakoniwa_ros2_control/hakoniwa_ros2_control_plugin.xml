@@ -1,0 +1,7 @@
+<library path="hakoniwa_ros2_control_plugin">
+  <class name="hakoniwa_ros2_control/HakoniwaPluginSystem"
+         type="hakoniwa_ros2_control::HakoniwaPluginSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>Hakoniwa robot with ros2_control inside the Robot Runtime (the controller plugin): joint states and commands go through the plugin, in the Robot Runtime's simulation time; no PDU, no Hakoniwa asset.</description>
+  </class>
+</library>

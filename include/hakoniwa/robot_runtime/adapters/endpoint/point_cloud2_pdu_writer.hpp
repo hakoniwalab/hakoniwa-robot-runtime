@@ -4,6 +4,8 @@
 
 #include "runtime/publisher/sensor_point_cloud_publisher.hpp"
 
+#include "runtime/publisher/encoded_pdu_sink.hpp"
+
 #include <memory>
 #include <string>
 
@@ -21,10 +23,15 @@ namespace hakoniwa::robot_runtime::adapters::hakoniwa {
  */
 class PointCloud2PduWriter final : public runtime::IPointCloudWriter {
 public:
+    /**
+     * sink (optional) receives the encoded bytes of every sample sent and is
+     * cleared on reset (a controller plugin's PDU channel).
+     */
     PointCloud2PduWriter(
         ::hakoniwa::pdu::Endpoint& endpoint,
         std::string pdu_robot,
-        std::string pdu_name);
+        std::string pdu_name,
+        std::shared_ptr<runtime::IEncodedPduSink> sink = nullptr);
     ~PointCloud2PduWriter() override;
 
     [[nodiscard]] bool send(const runtime::PointCloudOutput& output) noexcept override;

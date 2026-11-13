@@ -1,0 +1,54 @@
+{
+  "version": "0.1",
+  "defaults": {
+    "cwd": "/workspace/hakoniwa-robot-arm",
+    "stdout": "/tmp/compare/hakoniwa-rt-${asset}.out",
+    "stderr": "/tmp/compare/hakoniwa-rt-${asset}.err",
+    "start_grace_sec": 2,
+    "delay_sec": 1,
+    "env": {
+      "set": {
+        "HAKO_CONFIG_PATH": "/workspace/work-docker-jazzy/foundation/config/cpp_core_config.json",
+        "HAKO_PDU_ENDPOINT_SHARED_LIB": "/workspace/work-docker-jazzy/foundation/install/lib/libhakoniwa_pdu_endpoint_core_callback.so",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "prepend": {
+        "lib_path": [
+          "/workspace/work-docker-jazzy/foundation/install/lib"
+        ],
+        "PATH": [
+          "/workspace/work-docker-jazzy/foundation/install/python/bin",
+          "/workspace/work-docker-jazzy/foundation/install/bin"
+        ]
+      }
+    }
+  },
+  "assets": [
+    {
+      "name": "so101-plant",
+      "activation_timing": "before_start",
+      "command": "/workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control/build/bin/robot-arm-hakoniwa-asset",
+      "args": [
+        "--manifest",
+        "/workspace/work-docker-jazzy/recipes/so101-joint-trajectory-control/config/asset-manifest-environment.json",
+        "--no-viewer",
+        "--realtime-sync-cycle-msec",
+        "2"
+      ],
+      "delay_sec": 2
+    },
+    {
+      "name": "ros2-control",
+      "activation_timing": "before_start",
+      "command": "bash",
+      "args": [
+        "-c",
+        "source /opt/ros/jazzy/setup.bash && source /workspace/ros2-work-jazzy-asset/install/setup.bash && exec ros2 launch hakoniwa_ros2_control so101_asset.launch.py so101_urdf:=/workspace/work-docker-jazzy/model-forge/so101/source/Simulation/SO101/so101_new_calib.urdf pdu_definition_path:=/workspace/hakoniwa-robot-arm/recipes/so101/config/pdu/so101-pdudef.json endpoint_config_path:=/workspace/hakoniwa-robot-arm/recipes/so101/config/endpoint/so101_endpoint.json sensors:=false moveit:=false realtime_sync:=true"
+      ],
+      "depends_on": [
+        "so101-plant"
+      ],
+      "delay_sec": 6
+    }
+  ]
+}
