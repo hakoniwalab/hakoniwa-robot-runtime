@@ -256,6 +256,29 @@ Robot Runtime の 1 刻み（`ActuatorRuntime::step()`）は、次の段で動�
   "config": "config/controller/ros2_control_plugin.json" }
 ```
 
+部品の設定ファイルの中身（SO-101 の例：`ros2/hakoniwa_ros2_control/config/so101/plugin/so101-plugin-controller.json`）：
+
+```json
+{
+  "plugin": { "path": "libhakoniwa_ros2_control_plugin.so", "config": "plugin.yaml" },
+  "joints": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+  "priority": 15,
+  "joint_state_source": "truth",
+  "pdus": ["lidar_scan", "wrist_wrench"],
+  "stop_on_error": true
+}
+```
+
+| 項目 | 必須 | 意味 |
+|---|---|---|
+| `plugin.path` | はい | プラグインの共有ライブラリ。相対パスは、この設定ファイルのディレクトリから |
+| `plugin.config` | いいえ | プラグイン自身の設定ファイル。`create` にそのまま渡す（中身はプラグインが決める）。相対パスは同じく |
+| `joints` | はい | プラグインが状態を受け取り、指令を返す関節（アクチュエータの id）。この順で渡す |
+| `priority` | いいえ（既定 10） | 指令を選ぶときの優先度（Arbiter）。大きいほうが勝つ |
+| `joint_state_source` | いいえ（既定 `"truth"`） | 関節の状態の出どころ。`"truth"` は物理の真値。`"observed"`（関節センサーの測定値）は未実装で、書くと読み込み時に失敗する |
+| `pdus` | いいえ | `update` に渡すセンサーの PDU の名前（センサー付きのビルドのみ）。型はセンサーの出力の設定から決まる。新しくなったときだけ、種類ごとに最新の 1 つを渡す |
+| `stop_on_error` | いいえ（既定 `true`） | `true`：プラグインがエラーを返したら（`on_start`、`update`、`on_stop`）、実行を止める。`update` のエラーでは、その刻みの物理を進めない。`false`：エラーは状態として報告し、ほかの制御（Hold Controller など）で続ける |
+
 ### 5.3 ros2_control プラグイン
 
 `ros2/hakoniwa_ros2_control/controller_plugin/`（新規）。
