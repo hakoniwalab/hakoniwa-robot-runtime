@@ -58,6 +58,17 @@ Gazebo Harmonic runs as a server (`gz sim -s`), with `gz_ros2_control`: the cont
 - Collision shapes in Gazebo were set to what MuJoCo uses (convex hulls of the URDF meshes, no collision for the base fixed to the world); with the URDF meshes as they are, Gazebo did not reach real time on this machine.
 - The Hakoniwa LiDAR rotates (one scan over 0.5 s, like a real spinning LiDAR); Gazebo's `gpu_lidar` captures the whole scan at once. Hakoniwa can also scan at once (`scan_mode: instant`); both are measured.
 
+### Sensors on the Hakoniwa side
+
+The Hakoniwa runs mounted two sensors, with Hakoniwa's sensor implementation (`hakoniwa`). The sensor set is [so101-sensors-hakoniwa.json](https://github.com/hakoniwalab/hakoniwa-robot-arm/blob/11bcd0c2c721ef3881ea3f903ac0dd7b09a8d521/recipes/so101/config/sensors/so101-sensors-hakoniwa.json).
+
+| Sensor | Mounted on | Definition | Error effects in these runs |
+|---|---|---|---|
+| 3D LiDAR | overhead housing (`lidar_overhead_housing`) | [overhead-lidar3d.json](https://github.com/hakoniwalab/hakoniwa-robot-arm/blob/11bcd0c2c721ef3881ea3f903ac0dd7b09a8d521/recipes/so101/config/sensors/lidar/overhead-lidar3d.json): rotating, 2 Hz, 360 x 32 rays, 0.05-2 m | rotating scan (motion during the scan), range limits; no noise |
+| Wrist force-torque | gripper (`gripper`) | [wrist-ft.json](https://github.com/hakoniwalab/hakoniwa-robot-arm/blob/11bcd0c2c721ef3881ea3f903ac0dd7b09a8d521/recipes/so101/config/sensors/force_torque/wrist-ft.json): 500 Hz, range ±200 N, ±10 N·m (z ±6.5 N·m); published at 50 Hz | range limits; no noise |
+
+No joint sensor (encoder) was mounted: ros2_control read the true joint positions. The sensor models themselves (all sensor types and error effects, with their requirement traceability) are tested against their specification in [hakoniwa-sensor-pro](https://github.com/hakoniwalab/hakoniwa-sensor-pro), which distributes the `hakoniwa` implementation as binaries. With `SENSOR_SET=reference` (section 6) the same two sensors use the reference implementation instead (true values, instant scan).
+
 ## 2. Environment and versions
 
 | | |
