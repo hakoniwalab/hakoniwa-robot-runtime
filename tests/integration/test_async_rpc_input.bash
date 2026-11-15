@@ -103,6 +103,10 @@ JSON
         "${CASE_DIR}/steps.jsonl" > "${CASE_DIR}/server.log" 2>&1 &
     SERVER_PID=$!
     PIDS+=("${SERVER_PID}")
+    # Clients start only after the server is registered: registering at the
+    # same time races for Core's master lock and the server could fail with
+    # "Can not register asset".
+    wait_log "${CASE_DIR}/server.log" "SERVER registered" 5
 }
 
 launch_client() {
