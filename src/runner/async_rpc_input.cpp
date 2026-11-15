@@ -205,6 +205,10 @@ bool AsyncRpcInput::lockstep_ready() noexcept
             impl_->fail("async RPC channel " + channel->name() + " poll failed: " + error);
             return false;
         }
+        if (result == AsyncRpcPollResult::cancel) {
+            impl_->fail("async RPC channel " + channel->name() + " request was canceled");
+            return false;
+        }
         if (result == AsyncRpcPollResult::none) {
             continue;
         }

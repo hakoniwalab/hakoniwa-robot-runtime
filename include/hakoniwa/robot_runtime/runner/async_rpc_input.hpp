@@ -19,14 +19,25 @@ struct AsyncRpcRequest {
     std::vector<std::byte> payload;
 };
 
+enum class AsyncRpcResultCode {
+    ok,
+    error,
+    canceled,
+    invalid,
+};
+
 struct AsyncRpcResponse {
     std::uint64_t step {0};
     std::vector<std::byte> payload;
+    AsyncRpcResultCode result_code {AsyncRpcResultCode::ok};
 };
 
 enum class AsyncRpcPollResult {
     none,
+    /** A new request is available; only its channel name is pre-populated. */
     request,
+    /** The client canceled the request in progress on this channel. */
+    cancel,
     error,
 };
 
