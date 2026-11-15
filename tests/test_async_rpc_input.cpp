@@ -40,6 +40,11 @@ public:
 
     AsyncRpcPollResult poll(AsyncRpcRequest& request, std::string&) noexcept override
     {
+        if (cancel_next) {
+            cancel_next = false;
+            request.channel = name_;
+            return AsyncRpcPollResult::cancel;
+        }
         if (requests.empty()) return AsyncRpcPollResult::none;
         request = std::move(requests.front());
         requests.pop_front();
@@ -60,6 +65,8 @@ public:
     std::string name_;
     std::deque<AsyncRpcRequest> requests;
     std::vector<AsyncRpcResponse> responses;
+    /** The next poll reports a cancel (Core: HAKO_SERVICE_SERVER_API_REQUEST_CANCEL). */
+    bool cancel_next {false};
 };
 
 class FakeApi final : public IHakoniwaAssetApi {
@@ -217,6 +224,32 @@ int main()
         assert(core_activity_from_simulation_state(
                    static_cast<int>(HAKO_ASSET_SIM_STATE_TERMINATED) + 1)
             == CoreActivity::unknown);
+    }
+    {
+        // [stage A] A response is OK unless the producer says otherwise.
+        const AsyncRpcResponse response;
+        assert(response.result_code == AsyncRpcResultCode::ok);
+    }
+    {
+        // [stage A] A cancel is an event of the channel, not a poll error. The
+        // lockstep input cannot drop a step, so it still stops, with a reason
+        // that names the channel and the cancel, and replies to nobody.
+        auto a = std::make_shared<FakeChannel>("A");
+        auto b = std::make_shared<FakeChannel>("B");
+        a->cancel_next = true;
+        int apply_count = 0;
+        auto input = make_input(
+            a, b, limits(std::chrono::seconds(10)), AsyncRpcInput::Clock::now, &apply_count);
+        BatchCallbacks callbacks(input);
+        auto api = std::make_shared<FakeApi>();
+        assert(run_driver(callbacks, api) != 0);
+        assert(callbacks.steps == 0);
+        assert(apply_count == 0);
+        assert(api->sleeps == 0);
+        assert(a->responses.empty() && b->responses.empty());
+        assert(callbacks.error.find("channel A") != std::string::npos);
+        assert(callbacks.error.find("canceled") != std::string::npos);
+        assert(callbacks.error.find("poll failed") == std::string::npos);
     }
     {
         const AsyncRpcInputConfig defaults;

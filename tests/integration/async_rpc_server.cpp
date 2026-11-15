@@ -210,6 +210,7 @@ int main(int argc, char** argv)
         std::cerr << "ERROR: server registration/service initialization failed" << std::endl;
         return 1;
     }
+    std::cout << "SERVER registered" << std::endl;
     const int result = driver.start();
     std::cout << "SERVER exit=" << result << " steps=" << callbacks.steps_ << std::endl;
     return result == 0 ? 0 : 1;

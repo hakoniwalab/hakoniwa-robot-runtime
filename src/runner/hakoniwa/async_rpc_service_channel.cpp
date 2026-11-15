@@ -7,6 +7,24 @@
 #include <utility>
 
 namespace hakoniwa::robot_runtime::runner::hakoniwa {
+namespace {
+
+int result_code_for(const AsyncRpcResultCode result_code) noexcept
+{
+    switch (result_code) {
+    case AsyncRpcResultCode::ok:
+        return HAKO_SERVICE_API_RESULT_CODE_OK;
+    case AsyncRpcResultCode::error:
+        return HAKO_SERVICE_API_RESULT_CODE_ERROR;
+    case AsyncRpcResultCode::canceled:
+        return HAKO_SERVICE_API_RESULT_CODE_CANCELED;
+    case AsyncRpcResultCode::invalid:
+        return HAKO_SERVICE_API_RESULT_CODE_INVALID;
+    }
+    return HAKO_SERVICE_API_RESULT_CODE_INVALID;
+}
+
+} // namespace
 
 CoreAsyncRpcServiceChannel::CoreAsyncRpcServiceChannel(
     std::string channel_name,
@@ -61,9 +79,12 @@ AsyncRpcPollResult CoreAsyncRpcServiceChannel::poll(
         if (event == HAKO_SERVICE_SERVER_API_EVENT_NONE) {
             return AsyncRpcPollResult::none;
         }
+        if (event == HAKO_SERVICE_SERVER_API_REQUEST_CANCEL) {
+            request.channel = channel_name_;
+            return AsyncRpcPollResult::cancel;
+        }
         if (event != HAKO_SERVICE_SERVER_API_REQUEST_IN) {
-            error = event == HAKO_SERVICE_SERVER_API_REQUEST_CANCEL
-                ? "request was canceled" : "hako_asset_service_server_poll failed";
+            error = "hako_asset_service_server_poll failed";
             return AsyncRpcPollResult::error;
         }
         char* packet = nullptr;
@@ -104,7 +125,7 @@ bool CoreAsyncRpcServiceChannel::reply(
         if (hako_asset_service_server_get_response_buffer(
                 service_id_, &packet, &packet_len,
                 HAKO_SERVICE_API_STATUS_DONE,
-                HAKO_SERVICE_API_RESULT_CODE_OK) != 0
+                result_code_for(response.result_code)) != 0
             || packet == nullptr) {
             error = "hako_asset_service_server_get_response_buffer failed";
             return false;
