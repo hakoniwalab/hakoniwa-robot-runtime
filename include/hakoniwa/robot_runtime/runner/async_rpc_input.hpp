@@ -19,25 +19,32 @@ struct AsyncRpcRequest {
     std::vector<std::byte> payload;
 };
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+// Async service (docs/design-async-rpc.md, stage A): replies carry a result code.
 enum class AsyncRpcResultCode {
     ok,
     error,
     canceled,
     invalid,
 };
+#endif
 
 struct AsyncRpcResponse {
     std::uint64_t step {0};
     std::vector<std::byte> payload;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     AsyncRpcResultCode result_code {AsyncRpcResultCode::ok};
+#endif
 };
 
 enum class AsyncRpcPollResult {
     none,
     /** A new request is available; only its channel name is pre-populated. */
     request,
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     /** The client canceled the request in progress on this channel. */
     cancel,
+#endif
     error,
 };
 
