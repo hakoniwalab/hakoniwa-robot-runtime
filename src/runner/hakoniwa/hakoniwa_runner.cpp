@@ -237,13 +237,21 @@ public:
                     }
                 }
 #endif
+                const auto substeps = std::max<std::uint32_t>(1, config.physics_substeps);
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+                // Two rates: inputs are polled once, at the first physics step of
+                // this Hakoniwa step, and the state goes out after the last one;
+                // control and physics run in every physics step.
+                simulation_time_usec = resources.runtime->step_hakoniwa(substeps)
+                    .next_step.simulation_time_usec;
+#else
                 // Inputs are taken at the first substep (none are new later: the
                 // controllers hold them); the state goes out after the last.
-                const auto substeps = std::max<std::uint32_t>(1, config.physics_substeps);
                 for (std::uint32_t substep = 0; substep < substeps; ++substep) {
                     simulation_time_usec = resources.runtime->step(substep + 1 == substeps)
                         .next_step.simulation_time_usec;
                 }
+#endif
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
                 for (const auto& input : resources.async_rpc_inputs) {
                     if (!input->complete_step()) {
