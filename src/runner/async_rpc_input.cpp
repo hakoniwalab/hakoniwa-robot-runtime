@@ -205,10 +205,12 @@ bool AsyncRpcInput::lockstep_ready() noexcept
             impl_->fail("async RPC channel " + channel->name() + " poll failed: " + error);
             return false;
         }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         if (result == AsyncRpcPollResult::cancel) {
             impl_->fail("async RPC channel " + channel->name() + " request was canceled");
             return false;
         }
+#endif
         if (result == AsyncRpcPollResult::none) {
             continue;
         }

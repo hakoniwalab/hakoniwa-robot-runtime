@@ -40,11 +40,13 @@ public:
 
     AsyncRpcPollResult poll(AsyncRpcRequest& request, std::string&) noexcept override
     {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         if (cancel_next) {
             cancel_next = false;
             request.channel = name_;
             return AsyncRpcPollResult::cancel;
         }
+#endif
         if (requests.empty()) return AsyncRpcPollResult::none;
         request = std::move(requests.front());
         requests.pop_front();
@@ -225,6 +227,7 @@ int main()
                    static_cast<int>(HAKO_ASSET_SIM_STATE_TERMINATED) + 1)
             == CoreActivity::unknown);
     }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     {
         // [stage A] A response is OK unless the producer says otherwise.
         const AsyncRpcResponse response;
@@ -251,6 +254,7 @@ int main()
         assert(callbacks.error.find("canceled") != std::string::npos);
         assert(callbacks.error.find("poll failed") == std::string::npos);
     }
+#endif
     {
         const AsyncRpcInputConfig defaults;
         assert(defaults.timeout == std::chrono::seconds(10));

@@ -7,6 +7,7 @@
 #include <utility>
 
 namespace hakoniwa::robot_runtime::runner::hakoniwa {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 namespace {
 
 int result_code_for(const AsyncRpcResultCode result_code) noexcept
@@ -25,6 +26,7 @@ int result_code_for(const AsyncRpcResultCode result_code) noexcept
 }
 
 } // namespace
+#endif
 
 CoreAsyncRpcServiceChannel::CoreAsyncRpcServiceChannel(
     std::string channel_name,
@@ -79,6 +81,7 @@ AsyncRpcPollResult CoreAsyncRpcServiceChannel::poll(
         if (event == HAKO_SERVICE_SERVER_API_EVENT_NONE) {
             return AsyncRpcPollResult::none;
         }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         if (event == HAKO_SERVICE_SERVER_API_REQUEST_CANCEL) {
             request.channel = channel_name_;
             return AsyncRpcPollResult::cancel;
@@ -87,6 +90,13 @@ AsyncRpcPollResult CoreAsyncRpcServiceChannel::poll(
             error = "hako_asset_service_server_poll failed";
             return AsyncRpcPollResult::error;
         }
+#else
+        if (event != HAKO_SERVICE_SERVER_API_REQUEST_IN) {
+            error = event == HAKO_SERVICE_SERVER_API_REQUEST_CANCEL
+                ? "request was canceled" : "hako_asset_service_server_poll failed";
+            return AsyncRpcPollResult::error;
+        }
+#endif
         char* packet = nullptr;
         std::size_t packet_len = 0;
         if (hako_asset_service_server_get_request(service_id_, &packet, &packet_len) != 0
@@ -125,7 +135,11 @@ bool CoreAsyncRpcServiceChannel::reply(
         if (hako_asset_service_server_get_response_buffer(
                 service_id_, &packet, &packet_len,
                 HAKO_SERVICE_API_STATUS_DONE,
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
                 result_code_for(response.result_code)) != 0
+#else
+                HAKO_SERVICE_API_RESULT_CODE_OK) != 0
+#endif
             || packet == nullptr) {
             error = "hako_asset_service_server_get_response_buffer failed";
             return false;
