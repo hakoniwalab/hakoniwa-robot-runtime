@@ -383,6 +383,45 @@ void configuration_errors()
         != std::string::npos);
 }
 
+void real_model_world_mode_follows_the_sensor()
+{
+    // A mode in world axes (FTV-250): along world x, 0.3 N while moving. The tool turned by 60 degrees about the
+    // world y axis sees it on its x axis with cos 60 and on its z axis with sin 60: the stage passes the sensor
+    // orientation of each step to the model.
+    World world;
+    auto with = ft_sensor("with");
+    with.vibration_definition_path = write_file("vib_world.json",
+        R"({"type": "force_torque_vibration", "joints": [{"name": "a", "gear_ratio": 10}],
+            "modes": [{"frequency_hz": 20, "damping": 0.1, "frame": "world", "per_motion": {"fx": 0.3}}]})");
+    with.vibration_joints = {{"a", "j1"}};
+    const auto registry = registry_with(HAKO_SENSOR_HOST_MODEL_ENTRY(hakoniwa)());
+    MujocoSensorStage stage(world.model, world.data, {ft_sensor("plain"), with}, 1, kStepUsec, registry);
+    const int joint = mj_name2id(world.model, mjOBJ_JOINT, "j1");
+    const int dof = world.model->jnt_dofadr[joint];
+    const double theta = kPi / 3.0;
+    rt::RobotState state;
+    double s[3] = {0, 0, 0}, s2[3] = {0, 0, 0};
+    const int steps = 20000;
+    for (int k = 0; k < steps; ++k) {
+        world.data->qpos[world.model->jnt_qposadr[joint]] = theta;  // the pose stays, the joint "moves"
+        world.data->qvel[dof] = 1.0;
+        state.sample_time_usec = static_cast<std::uint64_t>(k) * kStepUsec;
+        stage.step(state);
+        for (int i = 0; i < 3; ++i) {
+            const double d = state.sensor_readings[1].force[i] - state.sensor_readings[0].force[i];
+            s[i] += d;
+            s2[i] += d * d;
+        }
+    }
+    double sd[3];
+    for (int i = 0; i < 3; ++i) {
+        sd[i] = std::sqrt(s2[i] / steps - (s[i] / steps) * (s[i] / steps));
+    }
+    CHECK(std::fabs(sd[0] - 0.3 * std::cos(theta)) < 0.015);
+    CHECK(std::fabs(sd[2] - 0.3 * std::sin(theta)) < 0.015);
+    CHECK(sd[1] < 1e-9);
+}
+
 void host_model_registry()
 {
     rt::sensor::SensorImplementationRegistry registry;
@@ -407,6 +446,7 @@ int main()
     configuration_errors();
     loads_are_the_transmitted_torque();
     real_model_with_load_gain();
+    real_model_world_mode_follows_the_sensor();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed" << std::endl;
         return 1;

@@ -611,6 +611,10 @@ void MujocoSensorStage::step_force_torque(Sensor& sensor, std::uint64_t local_ti
     truth.sim_time_ns = local_time_ns;
     truth.wrench.torque = {-spatial[0], -spatial[1], -spatial[2]};
     truth.wrench.force = {-spatial[3], -spatial[4], -spatial[5]};
+    mjtNum q[4];
+    mju_mat2Quat(q, rotation);  // sensor -> world
+    truth.orientation_world_to_sensor = {q[0], -q[1], -q[2], -q[3]};
+    truth.gravity_world = {model_->opt.gravity[0], model_->opt.gravity[1], model_->opt.gravity[2]};
     if (sensor.vibration) {
         // The vibration of the moving arm, from the joint velocities at the
         // same state, added to the physics wrench before the sensor model.
@@ -631,12 +635,14 @@ void MujocoSensorStage::step_force_torque(Sensor& sensor, std::uint64_t local_ti
                 sensor.vibration_load[index] = mju_dot3(spatial, data_->xaxis + 3 * joint_id);
             }
         }
+        // Every model gets the sensor orientation of this step (the same as the
+        // truth's); a model with a mode in world axes rotates it into the
+        // sensor axes, the others ignore it. The loads are zeros for a model
+        // without a load gain, which ignores them.
         sa::Wrench vibration;
         std::string vibration_error;
-        const bool stepped = sensor.vibration_needs_load
-            ? sensor.vibration->step(local_time_ns, sensor.vibration_velocity, sensor.vibration_load, vibration,
-                vibration_error)
-            : sensor.vibration->step(local_time_ns, sensor.vibration_velocity, vibration, vibration_error);
+        const bool stepped = sensor.vibration->step(local_time_ns, sensor.vibration_velocity, sensor.vibration_load,
+            truth.orientation_world_to_sensor, vibration, vibration_error);
         if (!stepped) {
             throw std::runtime_error("sensor " + sensor.name + " vibration failed: " + vibration_error);
         }
@@ -647,10 +653,6 @@ void MujocoSensorStage::step_force_torque(Sensor& sensor, std::uint64_t local_ti
         truth.wrench.torque.y += vibration.torque.y;
         truth.wrench.torque.z += vibration.torque.z;
     }
-    mjtNum q[4];
-    mju_mat2Quat(q, rotation);  // sensor -> world
-    truth.orientation_world_to_sensor = {q[0], -q[1], -q[2], -q[3]};
-    truth.gravity_world = {model_->opt.gravity[0], model_->opt.gravity[1], model_->opt.gravity[2]};
 
     sa::ForceTorqueSample sample;
     std::string error;
