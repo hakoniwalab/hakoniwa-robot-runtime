@@ -36,6 +36,9 @@ struct MujocoSensorStage::Sensor {
     std::unique_ptr<sa::IForceTorqueVibration> vibration;
     std::vector<int> vibration_dofs;
     std::vector<double> vibration_velocity;
+    // Joint loads for a model with a load gain: the actuator torque of each joint.
+    bool vibration_needs_load {false};
+    std::vector<double> vibration_load;
     // IMUs (mounted like force-torque sensors)
     bool imu {false};
     bool gyro_sampled {false};
@@ -315,6 +318,8 @@ MujocoSensorStage::MujocoSensorStage(
                     }
                 }
                 sensor->vibration_velocity.assign(sensor->vibration_dofs.size(), 0.0);
+                sensor->vibration_needs_load = sensor->vibration->needs_joint_load();
+                sensor->vibration_load.assign(sensor->vibration_dofs.size(), 0.0);
             }
         } else if (config.type == "imu") {
             const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
@@ -606,12 +611,20 @@ void MujocoSensorStage::step_force_torque(Sensor& sensor, std::uint64_t local_ti
     if (sensor.vibration) {
         // The vibration of the moving arm, from the joint velocities at the
         // same state, added to the physics wrench before the sensor model.
+        // A model with a load gain also gets the torque each joint transmits:
+        // the actuator torque on its DOF at the same state (the motor drives
+        // the gear; qfrc_actuator after mj_forward).
         for (std::size_t index = 0; index < sensor.vibration_dofs.size(); ++index) {
             sensor.vibration_velocity[index] = data_->qvel[sensor.vibration_dofs[index]];
+            sensor.vibration_load[index] = data_->qfrc_actuator[sensor.vibration_dofs[index]];
         }
         sa::Wrench vibration;
         std::string vibration_error;
-        if (!sensor.vibration->step(local_time_ns, sensor.vibration_velocity, vibration, vibration_error)) {
+        const bool stepped = sensor.vibration_needs_load
+            ? sensor.vibration->step(local_time_ns, sensor.vibration_velocity, sensor.vibration_load, vibration,
+                vibration_error)
+            : sensor.vibration->step(local_time_ns, sensor.vibration_velocity, vibration, vibration_error);
+        if (!stepped) {
             throw std::runtime_error("sensor " + sensor.name + " vibration failed: " + vibration_error);
         }
         truth.wrench.force.x += vibration.force.x;

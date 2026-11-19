@@ -55,6 +55,9 @@ const char* kModel = R"(<mujoco>
       <geom type="sphere" size="0.01" mass="0.1"/>
     </body>
   </worldbody>
+  <actuator>
+    <motor name="m1" joint="j1"/>
+  </actuator>
 </mujoco>)";
 
 std::string write_file(const std::string& name, const std::string& text)
@@ -105,6 +108,47 @@ public:
 std::unique_ptr<sa::IForceTorqueVibration> create_fake(const sa::ForceTorqueVibrationSetup&, std::string&)
 {
     return std::make_unique<FakeVibration>();
+}
+
+// A fake model with a load gain: refuses the step without loads, records the loads.
+std::vector<double> fake_loads;
+class FakeLoadVibration final : public sa::IForceTorqueVibration {
+public:
+    bool step(std::uint64_t, const std::vector<double>&, sa::Wrench&, std::string& error) override
+    {
+        error = "needs loads";
+        return false;
+    }
+    bool step(std::uint64_t, const std::vector<double>& v, const std::vector<double>& load, sa::Wrench& out,
+        std::string& error) override
+    {
+        if (v.size() != 1 || load.size() != 1) {
+            error = "expected one velocity and one load";
+            return false;
+        }
+        fake_loads.push_back(load[0]);
+        out = {};
+        return true;
+    }
+    bool needs_joint_load() const override { return true; }
+    bool reset(std::string&) override { return true; }
+    std::vector<std::string> joint_names() const override { return {"model_joint"}; }
+};
+
+std::unique_ptr<sa::IForceTorqueVibration> create_fake_load(const sa::ForceTorqueVibrationSetup&, std::string&)
+{
+    return std::make_unique<FakeLoadVibration>();
+}
+
+const sa::HostModelImplementation* fake_load_models()
+{
+    static const sa::HostModelImplementation models = [] {
+        sa::HostModelImplementation value;
+        value.name = "hakoniwa";
+        value.create_force_torque_vibration = &create_fake_load;
+        return value;
+    }();
+    return &models;
 }
 
 const sa::HostModelImplementation* fake_models()
@@ -241,6 +285,56 @@ void real_model_adds_an_order_line()
     CHECK(crossings >= 19 && crossings <= 21);  // 10 Hz for 1 s
 }
 
+void loads_are_the_actuator_torque()
+{
+    // A model with a load gain gets the actuator torque of the mapped joint (qfrc_actuator).
+    fake_loads.clear();
+    World world;
+    auto with = ft_sensor("with");
+    with.vibration_definition_path = ideal_definition();
+    with.vibration_joints = {{"model_joint", "j1"}};
+    const auto registry = registry_with(fake_load_models());
+    MujocoSensorStage stage(world.model, world.data, {with}, 1, kStepUsec, registry);
+    rt::RobotState state;
+    const double torques[] = {2.5, -1.25};
+    for (int k = 0; k < 2; ++k) {
+        world.data->ctrl[0] = torques[k];
+        state.sample_time_usec = static_cast<std::uint64_t>(k) * kStepUsec;
+        stage.step(state);
+    }
+    CHECK(fake_loads.size() == 2);
+    for (std::size_t k = 0; k < fake_loads.size() && k < 2; ++k) {
+        CHECK(std::fabs(fake_loads[k] - torques[k]) < 1e-12);
+    }
+}
+
+void real_model_with_load_gain()
+{
+    // The hakoniwa model with load_gain: positive power (motor torque along the motion) gives the positive gain.
+    World world;
+    auto with = ft_sensor("with");
+    with.vibration_definition_path = write_file("vib_load.json",
+        R"({"type": "force_torque_vibration", "joints": [{"name": "a", "gear_ratio": 10,
+            "load_gain": {"positive": 0.5, "negative": 2},
+            "orders": [{"order": 1, "amplitude": {"fx": 1}}]}]})");
+    with.vibration_joints = {{"a", "j1"}};
+    const auto registry = registry_with(HAKO_SENSOR_HOST_MODEL_ENTRY(hakoniwa)());
+    MujocoSensorStage stage(world.model, world.data, {ft_sensor("plain"), with}, 1, kStepUsec, registry);
+    rt::RobotState state;
+    const int dof = world.model->jnt_dofadr[mj_name2id(world.model, mjOBJ_JOINT, "j1")];
+    double peak_positive = 0.0, peak_negative = 0.0;
+    for (int k = 0; k < 600; ++k) {
+        world.data->qvel[dof] = 2.0 * kPi;
+        world.data->ctrl[0] = k < 300 ? 1.0 : -1.0;
+        state.sample_time_usec = static_cast<std::uint64_t>(k) * kStepUsec;
+        stage.step(state);
+        const double d = std::fabs(state.sensor_readings[1].force[0] - state.sensor_readings[0].force[0]);
+        (k < 300 ? peak_positive : peak_negative) = std::max(k < 300 ? peak_positive : peak_negative, d);
+    }
+    CHECK(std::fabs(peak_positive - 0.5) < 5e-3);
+    CHECK(std::fabs(peak_negative - 2.0) < 1e-2);
+}
+
 void configuration_errors()
 {
     const auto registry = registry_with(fake_models());
@@ -289,6 +383,8 @@ int main()
     vibration_is_added_with_the_joint_velocity();
     real_model_adds_an_order_line();
     configuration_errors();
+    loads_are_the_actuator_torque();
+    real_model_with_load_gain();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed" << std::endl;
         return 1;

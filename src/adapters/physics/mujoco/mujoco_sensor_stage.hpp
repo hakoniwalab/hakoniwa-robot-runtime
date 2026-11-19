@@ -45,7 +45,9 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * origin, at the state after the step.
  * With a vibration model (the implementation's force-torque vibration, a host
  * model), the stage passes it the velocities of the mapped MJCF joints at that
- * state and adds its output to the truth before the adapter.
+ * state and adds its output to the truth before the adapter When
+ * the model has a load gain, the stage also passes the actuator torque of those
+ * joints (qfrc_actuator) as the joint loads.
  *
  * IMUs: mounted like force-torque sensors. The truth is the angular velocity
  * and the specific force (acceleration including -gravity, as an ideal
