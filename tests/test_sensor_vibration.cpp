@@ -41,12 +41,14 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr std::uint64_t kStepUsec = 1000;
 
 const char* kModel = R"(<mujoco>
-  <option timestep="0.001"/>
+  <option timestep="0.001">
+    <flag contact="disable"/>
+  </option>
   <worldbody>
     <body name="arm">
-      <joint name="j1" type="hinge" axis="0 0 1"/>
+      <joint name="j1" type="hinge" axis="0 1 0"/>
       <geom type="box" size="0.05 0.05 0.05" mass="1"/>
-      <body name="tool" pos="0 0 -0.2">
+      <body name="tool" pos="0.2 0 0">
         <geom type="box" size="0.02 0.02 0.02" mass="0.5"/>
       </body>
     </body>
@@ -285,9 +287,11 @@ void real_model_adds_an_order_line()
     CHECK(crossings >= 19 && crossings <= 21);  // 10 Hz for 1 s
 }
 
-void loads_are_the_actuator_torque()
+void loads_are_the_transmitted_torque()
 {
-    // A model with a load gain gets the actuator torque of the mapped joint (qfrc_actuator).
+    // A model with a load gain gets the torque the joint transmits (parent side on child side about the axis):
+    // here the gravity torque of the arm and tool about the horizontal hinge, at constant speed. Expected value:
+    // the generalized force mj_inverse needs at the same state with zero acceleration.
     fake_loads.clear();
     World world;
     auto with = ft_sensor("with");
@@ -295,16 +299,29 @@ void loads_are_the_actuator_torque()
     with.vibration_joints = {{"model_joint", "j1"}};
     const auto registry = registry_with(fake_load_models());
     MujocoSensorStage stage(world.model, world.data, {with}, 1, kStepUsec, registry);
+    const int dof = world.model->jnt_dofadr[mj_name2id(world.model, mjOBJ_JOINT, "j1")];
     rt::RobotState state;
-    const double torques[] = {2.5, -1.25};
-    for (int k = 0; k < 2; ++k) {
-        world.data->ctrl[0] = torques[k];
+    std::vector<double> expected;
+    mjData* copy = mj_makeData(world.model);
+    for (int k = 0; k < 3; ++k) {
+        world.data->qpos[0] = 0.3 * k;   // turned, at constant speed (no step in between: the applied acceleration is 0)
+        world.data->qvel[dof] = 0.7;
+        world.data->ctrl[0] = 5.0;       // the motor torque is not the load
         state.sample_time_usec = static_cast<std::uint64_t>(k) * kStepUsec;
         stage.step(state);
+        mj_copyData(copy, world.model, world.data);
+        mju_zero(copy->qacc, world.model->nv);
+        copy->qvel[dof] = 0.0;           // the gravity part only (no Coriolis on a single hinge)
+        mj_inverse(world.model, copy);
+        expected.push_back(copy->qfrc_inverse[dof]);
     }
-    CHECK(fake_loads.size() == 2);
-    for (std::size_t k = 0; k < fake_loads.size() && k < 2; ++k) {
-        CHECK(std::fabs(fake_loads[k] - torques[k]) < 1e-12);
+    mj_deleteData(copy);
+    CHECK(fake_loads.size() == 3);
+    // from the second step on the stage uses the applied acceleration (velocity change 0)
+    for (std::size_t k = 1; k < fake_loads.size() && k < 3; ++k) {
+        CHECK(std::fabs(fake_loads[k] - expected[k]) < 1e-9);
+        CHECK(std::fabs(fake_loads[k]) > 0.5);  // the gravity torque is there (0.98 N m at k = 0)
+        CHECK(std::fabs(fake_loads[k] - 5.0) > 1.0);
     }
 }
 
@@ -324,15 +341,20 @@ void real_model_with_load_gain()
     const int dof = world.model->jnt_dofadr[mj_name2id(world.model, mjOBJ_JOINT, "j1")];
     double peak_positive = 0.0, peak_negative = 0.0;
     for (int k = 0; k < 600; ++k) {
-        world.data->qvel[dof] = 2.0 * kPi;
-        world.data->ctrl[0] = k < 300 ? 1.0 : -1.0;
+        world.data->qvel[dof] = k < 300 ? 2.0 * kPi : -2.0 * kPi;  // the transmitted (gravity) torque keeps its sign,
+        world.data->qpos[0] = 0.0;                                // so reversing the motion flips tau * qdot
         state.sample_time_usec = static_cast<std::uint64_t>(k) * kStepUsec;
         stage.step(state);
         const double d = std::fabs(state.sensor_readings[1].force[0] - state.sensor_readings[0].force[0]);
         (k < 300 ? peak_positive : peak_negative) = std::max(k < 300 ? peak_positive : peak_negative, d);
     }
-    CHECK(std::fabs(peak_positive - 0.5) < 5e-3);
-    CHECK(std::fabs(peak_negative - 2.0) < 1e-2);
+    // The sign of the transmitted torque at qpos 0 decides which half has positive power.
+    mjData* copy = mj_makeData(world.model);
+    mj_inverse(world.model, copy);
+    const bool first_half_positive = copy->qfrc_inverse[dof] > 0;  // tau * (+qdot) > 0
+    mj_deleteData(copy);
+    CHECK(std::fabs(peak_positive - (first_half_positive ? 0.5 : 2.0)) < 1e-2);
+    CHECK(std::fabs(peak_negative - (first_half_positive ? 2.0 : 0.5)) < 1e-2);
 }
 
 void configuration_errors()
@@ -383,7 +405,7 @@ int main()
     vibration_is_added_with_the_joint_velocity();
     real_model_adds_an_order_line();
     configuration_errors();
-    loads_are_the_actuator_torque();
+    loads_are_the_transmitted_torque();
     real_model_with_load_gain();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed" << std::endl;

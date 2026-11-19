@@ -36,8 +36,10 @@ struct MujocoSensorStage::Sensor {
     std::unique_ptr<sa::IForceTorqueVibration> vibration;
     std::vector<int> vibration_dofs;
     std::vector<double> vibration_velocity;
-    // Joint loads for a model with a load gain: the actuator torque of each joint.
+    // Joint loads for a model with a load gain: the torque each joint transmits
+    // (the parent side on the child side about the axis, as for joint torque).
     bool vibration_needs_load {false};
+    std::vector<int> vibration_joint_ids;
     std::vector<double> vibration_load;
     // IMUs (mounted like force-torque sensors)
     bool imu {false};
@@ -309,6 +311,7 @@ MujocoSensorStage::MujocoSensorStage(
                             + " is not a hinge or slide joint");
                     }
                     sensor->vibration_dofs.push_back(model_->jnt_dofadr[joint_id]);
+                    sensor->vibration_joint_ids.push_back(joint_id);
                 }
                 for (const auto& entry : config.vibration_joints) {
                     const auto names = sensor->vibration->joint_names();
@@ -611,12 +614,22 @@ void MujocoSensorStage::step_force_torque(Sensor& sensor, std::uint64_t local_ti
     if (sensor.vibration) {
         // The vibration of the moving arm, from the joint velocities at the
         // same state, added to the physics wrench before the sensor model.
-        // A model with a load gain also gets the torque each joint transmits:
-        // the actuator torque on its DOF at the same state (the motor drives
-        // the gear; qfrc_actuator after mj_forward).
+        // A model with a load gain also gets the torque each joint transmits
+        // (what its gear carries): the parent side on the child side about the
+        // joint axis, from cfrc_int at the same state, as for the joint torque
+        // truth. Not qfrc_actuator: a position servo recomputed after the step
+        // with the next target differs from the torque that acted by kp times
+        // one step of the target, and it misses the motor-side inertia split.
         for (std::size_t index = 0; index < sensor.vibration_dofs.size(); ++index) {
             sensor.vibration_velocity[index] = data_->qvel[sensor.vibration_dofs[index]];
-            sensor.vibration_load[index] = data_->qfrc_actuator[sensor.vibration_dofs[index]];
+            if (sensor.vibration_needs_load) {
+                const int joint_id = sensor.vibration_joint_ids[index];
+                const int body_id = model_->jnt_bodyid[joint_id];
+                mjtNum spatial[6];
+                mju_transformSpatial(spatial, data_->cfrc_int + 6 * body_id, 1, data_->xanchor + 3 * joint_id,
+                    data_->subtree_com + 3 * model_->body_rootid[body_id], nullptr);
+                sensor.vibration_load[index] = mju_dot3(spatial, data_->xaxis + 3 * joint_id);
+            }
         }
         sa::Wrench vibration;
         std::string vibration_error;
