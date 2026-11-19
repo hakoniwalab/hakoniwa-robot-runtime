@@ -150,6 +150,53 @@ bool load_mount(
     return true;
 }
 
+// Optional vibration of a force-torque sensor:
+// {"definition": "<vibration model file>", "joints": {"<model joint>": "<MJCF joint>"}}.
+// The model itself (keys, joint names) is checked when the sensor stage creates it.
+bool load_vibration(
+    const json& vibration,
+    const fs::path& config_directory,
+    RuntimeSensorConfig& output,
+    const std::string& named,
+    std::string* error)
+{
+    const std::string owner = named + ".vibration";
+    if (output.type != "force_torque") {
+        return fail(error, named + ": vibration is only for force_torque sensors");
+    }
+    if (!vibration.is_object() || !only_keys(vibration, {"definition", "joints"}, owner, error)) {
+        return vibration.is_object() ? false : fail(error, owner + " must be an object");
+    }
+    std::string definition_value;
+    if (!required_string(vibration, "definition", definition_value, error, owner)) {
+        return false;
+    }
+    const fs::path path = resolve(config_directory, definition_value);
+    if (!regular_file(path, error)) {
+        return false;
+    }
+    output.vibration_definition_path = path.string();
+    output.vibration_joints.clear();
+    if (vibration.contains("joints")) {
+        const auto& joints = vibration.at("joints");
+        if (!joints.is_object()) {
+            return fail(error, owner + ".joints must be an object of model joint -> MJCF joint");
+        }
+        for (const auto& [model_joint, mjcf_joint] : joints.items()) {
+            if (!mjcf_joint.is_string() || mjcf_joint.get<std::string>().empty()) {
+                return fail(error, owner + ".joints." + model_joint + " must name an MJCF joint");
+            }
+            output.vibration_joints.emplace_back(model_joint, mjcf_joint.get<std::string>());
+        }
+    }
+    const auto* models = sensor::sensor_implementation_registry().find_host_models(output.implementation);
+    if (models == nullptr || models->create_force_torque_vibration == nullptr) {
+        return fail(error, named + ": the linked " + output.implementation
+            + " implementation has no force-torque vibration model");
+    }
+    return true;
+}
+
 bool load_sensor(
     const json& sensor,
     const fs::path& config_directory,
@@ -168,7 +215,8 @@ bool load_sensor(
         return fail(error, owner + " must be an object");
     }
     std::string definition_value;
-    if (!only_keys(sensor, {"name", "type", "implementation", "mount", "definition"}, owner, error)
+    if (!only_keys(sensor, {"name", "type", "implementation", "mount", "definition", "vibration"},
+            owner, error)
         || !required_string(sensor, "name", output.name, error, owner)
         || !required_string(sensor, "type", output.type, error, owner)
         || !required_string(sensor, "implementation", output.implementation, error, owner)
@@ -241,7 +289,8 @@ bool load_sensor(
             + " library does not provide sensor type \"" + output.type
             + "\" although the catalog lists it");
     }
-    return true;
+    return !sensor.contains("vibration")
+        || load_vibration(sensor.at("vibration"), config_directory, output, named, error);
 }
 
 bool number_field(const json& object, const char* key, double& value, const std::string& owner,

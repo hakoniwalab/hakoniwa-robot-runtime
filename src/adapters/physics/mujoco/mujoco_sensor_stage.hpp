@@ -43,6 +43,9 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * body frame. The truth is the wrench the tool side (that body's subtree)
  * exerts on the robot side, in the sensor axes, torque about the sensor
  * origin, at the state after the step.
+ * With a vibration model (the implementation's force-torque vibration, a host
+ * model), the stage passes it the velocities of the mapped MJCF joints at that
+ * state and adds its output to the truth before the adapter.
  *
  * IMUs: mounted like force-torque sensors. The truth is the angular velocity
  * and the specific force (acceleration including -gravity, as an ideal

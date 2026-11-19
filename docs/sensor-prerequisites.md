@@ -214,6 +214,29 @@ SO-101 の 6 関節にエンコーダを付け、Hakoniwa の上で標準デモ�
 - HEX-E の分解能では、30 g のキューブはほぼ見えない。キューブを持つと、鉛直方向の力はセンサの z 軸に乗り（約 −1.27 N）、z の分解能 0.8 N で −1.6 N に丸まる。そのため世界座標での増加は −0.58 N と、実際（−0.29 N）の約 2 倍に見える。誤差なしの測定値を HEX-E の分解能で丸めると −0.63 N になり、この説明と合う。実機の HEX-E でも同じことが起きるはずで、Sim2Real で確かめたい性質の例になる。
 - 実時間の実行は、指令の届くステップの違いで軌跡が 2〜3 通りに分かれる。乱数の再現性は、指令を送らない静止状態で確かめるのが確実。
 
+### 2.5b 力覚センサ：動いている腕の振動（2026-11-19、実装中）
+
+力覚センサの定義に、任意で `vibration` を書くと、振動モデル（hakoniwa-sensor-adapter の force-torque vibration、同じ実装のホストモデル）の出力を、真値に足してからセンサの実装に渡します。
+
+```json
+{
+  "name": "wrist_ft",
+  "type": "force_torque",
+  "implementation": "hakoniwa",
+  "mount": {"mjcf_body": "tool"},
+  "definition": "ft-ati-gamma.json",
+  "vibration": {
+    "definition": "ft-vibration.json",
+    "joints": {"joint_a": "joint5"}
+  }
+}
+```
+
+- `vibration.definition`：振動モデルの設定ファイル（`"type": "force_torque_vibration"`）。
+- `vibration.joints`：振動モデルの関節 → 速度を読む MJCF の関節（hinge か slide）。モデルの関節はすべて対応が要る。
+- 毎ステップ、真値と同じ時点の関節速度（`qvel`）でモデルを 1 ステップ進め、出力（6 軸）を真値に足す。`reset` でモデルも作成時の状態に戻る。
+- アプリケーションは、センサの実装と同じように、振動モデルの記述子（`HAKO_SENSOR_HOST_MODEL_ENTRY(<name>)`）を登録する。登録が無い実装で `vibration` を書くと、起動しない。
+
 ### 2.6 フェーズ 4：IMU（2026-11-11）
 
 仮説：

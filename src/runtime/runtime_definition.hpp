@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace hakoniwa::robot_runtime::runtime {
@@ -239,6 +240,12 @@ struct RuntimeSensorConfig {
     /// Range sensors: the root body whose subtree the rays never hit. Empty
     /// means the mount body (the sensor housing).
     std::string exclude_mjcf_body;
+    /// Force-torque sensors: optional vibration of the moving arm added to the
+    /// truth before the adapter (hakoniwa-sensor-adapter force-torque vibration
+    /// model of the same implementation). Empty path: none.
+    std::string vibration_definition_path;
+    /// Model joint name -> MJCF joint whose velocity drives it.
+    std::vector<std::pair<std::string, std::string>> vibration_joints;
 };
 
 /**

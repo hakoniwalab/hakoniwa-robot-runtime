@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hakoniwa/sensor_adapter/force_torque_vibration.hpp"
 #include "hakoniwa/sensor_adapter/sensor_adapter_implementation.hpp"
 
 #include <map>
@@ -28,11 +29,26 @@ public:
     [[nodiscard]] const ::hakoniwa::sensor_adapter::SensorAdapterImplementation* find(
         const std::string& name) const;
     [[nodiscard]] std::set<std::string> names() const;
+
+    /**
+     * Host-side models of an implementation (hakoniwa-sensor-adapter
+     * HostModelImplementation, for example the force-torque vibration model).
+     * Optional: an implementation without host models registers none. Fails on
+     * a null descriptor, another descriptor version, an empty name, or a name
+     * registered twice.
+     */
+    [[nodiscard]] bool add_host_models(
+        const ::hakoniwa::sensor_adapter::HostModelImplementation* models,
+        std::string* error = nullptr);
+    [[nodiscard]] const ::hakoniwa::sensor_adapter::HostModelImplementation* find_host_models(
+        const std::string& name) const;
     void clear();
 
 private:
     std::map<std::string, const ::hakoniwa::sensor_adapter::SensorAdapterImplementation*>
         implementations_;
+    std::map<std::string, const ::hakoniwa::sensor_adapter::HostModelImplementation*>
+        host_models_;
 };
 
 /** The process-wide registry that the application fills at start-up. */
