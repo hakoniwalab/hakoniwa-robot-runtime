@@ -31,6 +31,16 @@ struct MujocoSensorStage::Sensor {
     mjtNum mount_position[3] {0.0, 0.0, 0.0};
     mjtNum mount_rotation[9] {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     std::unique_ptr<sa::IForceTorqueSensorAdapter> force_torque_adapter;
+    // Optional vibration of the moving arm, added to the truth before the
+    // adapter; driven by the velocities of MJCF joints (dof addresses).
+    std::unique_ptr<sa::IForceTorqueVibration> vibration;
+    std::vector<int> vibration_dofs;
+    std::vector<double> vibration_velocity;
+    // Joint loads for a model with a load gain: the torque each joint transmits
+    // (the parent side on the child side about the axis, as for joint torque).
+    bool vibration_needs_load {false};
+    std::vector<int> vibration_joint_ids;
+    std::vector<double> vibration_load;
     // IMUs (mounted like force-torque sensors)
     bool imu {false};
     bool gyro_sampled {false};
@@ -264,6 +274,56 @@ MujocoSensorStage::MujocoSensorStage(
             rotation_from_rpy_deg(config.orientation_deg, sensor->mount_rotation);
             sensor->reading.mount_name = config.mjcf_body;
             needs_dynamics_ = true;
+            if (!config.vibration_definition_path.empty()) {
+                const auto* models = registry.find_host_models(config.implementation);
+                if (models == nullptr || models->create_force_torque_vibration == nullptr) {
+                    throw std::invalid_argument(owner + ": implementation " + config.implementation
+                        + " has no force-torque vibration model");
+                }
+                sa::ForceTorqueVibrationSetup vibration_setup;
+                vibration_setup.config_path = config.vibration_definition_path;
+                vibration_setup.vehicle_name = config.pdu_robot;
+                vibration_setup.sensor_name = config.name;
+                vibration_setup.physics_step_ns = physics_step_usec * 1000;
+                vibration_setup.has_random_seed = true;
+                vibration_setup.random_seed = seed;
+                sensor->vibration = models->create_force_torque_vibration(vibration_setup, error);
+                if (sensor->vibration == nullptr) {
+                    throw std::invalid_argument(owner + ": cannot create the "
+                        + config.implementation + " force-torque vibration model: " + error);
+                }
+                // Every joint of the model needs an MJCF joint (1 DOF) for its velocity.
+                for (const auto& model_joint : sensor->vibration->joint_names()) {
+                    const auto mapped = std::find_if(config.vibration_joints.begin(),
+                        config.vibration_joints.end(),
+                        [&](const auto& entry) { return entry.first == model_joint; });
+                    if (mapped == config.vibration_joints.end()) {
+                        throw std::invalid_argument(owner + ": vibration joint " + model_joint
+                            + " has no MJCF joint in vibration.joints");
+                    }
+                    const int joint_id = mj_name2id(model_, mjOBJ_JOINT, mapped->second.c_str());
+                    if (joint_id < 0) {
+                        throw std::invalid_argument(owner + ": vibration MJCF joint not found: "
+                            + mapped->second);
+                    }
+                    if (model_->jnt_type[joint_id] != mjJNT_HINGE && model_->jnt_type[joint_id] != mjJNT_SLIDE) {
+                        throw std::invalid_argument(owner + ": vibration MJCF joint " + mapped->second
+                            + " is not a hinge or slide joint");
+                    }
+                    sensor->vibration_dofs.push_back(model_->jnt_dofadr[joint_id]);
+                    sensor->vibration_joint_ids.push_back(joint_id);
+                }
+                for (const auto& entry : config.vibration_joints) {
+                    const auto names = sensor->vibration->joint_names();
+                    if (std::find(names.begin(), names.end(), entry.first) == names.end()) {
+                        throw std::invalid_argument(owner + ": vibration.joints names "
+                            + entry.first + ", which is not a joint of the vibration model");
+                    }
+                }
+                sensor->vibration_velocity.assign(sensor->vibration_dofs.size(), 0.0);
+                sensor->vibration_needs_load = sensor->vibration->needs_joint_load();
+                sensor->vibration_load.assign(sensor->vibration_dofs.size(), 0.0);
+            }
         } else if (config.type == "imu") {
             const int body_id = mj_name2id(model_, mjOBJ_BODY, config.mjcf_body.c_str());
             if (body_id < 0) {
@@ -551,6 +611,42 @@ void MujocoSensorStage::step_force_torque(Sensor& sensor, std::uint64_t local_ti
     truth.sim_time_ns = local_time_ns;
     truth.wrench.torque = {-spatial[0], -spatial[1], -spatial[2]};
     truth.wrench.force = {-spatial[3], -spatial[4], -spatial[5]};
+    if (sensor.vibration) {
+        // The vibration of the moving arm, from the joint velocities at the
+        // same state, added to the physics wrench before the sensor model.
+        // A model with a load gain also gets the torque each joint transmits
+        // (what its gear carries): the parent side on the child side about the
+        // joint axis, from cfrc_int at the same state, as for the joint torque
+        // truth. Not qfrc_actuator: a position servo recomputed after the step
+        // with the next target differs from the torque that acted by kp times
+        // one step of the target, and it misses the motor-side inertia split.
+        for (std::size_t index = 0; index < sensor.vibration_dofs.size(); ++index) {
+            sensor.vibration_velocity[index] = data_->qvel[sensor.vibration_dofs[index]];
+            if (sensor.vibration_needs_load) {
+                const int joint_id = sensor.vibration_joint_ids[index];
+                const int body_id = model_->jnt_bodyid[joint_id];
+                mjtNum spatial[6];
+                mju_transformSpatial(spatial, data_->cfrc_int + 6 * body_id, 1, data_->xanchor + 3 * joint_id,
+                    data_->subtree_com + 3 * model_->body_rootid[body_id], nullptr);
+                sensor.vibration_load[index] = mju_dot3(spatial, data_->xaxis + 3 * joint_id);
+            }
+        }
+        sa::Wrench vibration;
+        std::string vibration_error;
+        const bool stepped = sensor.vibration_needs_load
+            ? sensor.vibration->step(local_time_ns, sensor.vibration_velocity, sensor.vibration_load, vibration,
+                vibration_error)
+            : sensor.vibration->step(local_time_ns, sensor.vibration_velocity, vibration, vibration_error);
+        if (!stepped) {
+            throw std::runtime_error("sensor " + sensor.name + " vibration failed: " + vibration_error);
+        }
+        truth.wrench.force.x += vibration.force.x;
+        truth.wrench.force.y += vibration.force.y;
+        truth.wrench.force.z += vibration.force.z;
+        truth.wrench.torque.x += vibration.torque.x;
+        truth.wrench.torque.y += vibration.torque.y;
+        truth.wrench.torque.z += vibration.torque.z;
+    }
     mjtNum q[4];
     mju_mat2Quat(q, rotation);  // sensor -> world
     truth.orientation_world_to_sensor = {q[0], -q[1], -q[2], -q[3]};
@@ -978,7 +1074,8 @@ void MujocoSensorStage::reset()
         std::string error;
         bool reset = false;
         if (sensor->force_torque) {
-            reset = sensor->force_torque_adapter->reset(error);
+            reset = sensor->force_torque_adapter->reset(error)
+                && (!sensor->vibration || sensor->vibration->reset(error));
         } else if (sensor->imu) {
             reset = sensor->imu_adapter->reset(error);
         } else if (sensor->lidar) {

@@ -16,6 +16,24 @@
     }
   },
   "$defs": {
+    "vibration": {
+      "description": "Force-torque sensors only: vibration of the moving arm, added to the true wrench before the sensor model (hakoniwa-sensor-adapter force-torque vibration model of the same implementation). The model is driven by the velocities of the mapped MJCF joints.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition", "joints"],
+      "properties": {
+        "definition": {
+          "description": "Path to the vibration model file (\"type\": \"force_torque_vibration\"). Relative to this file.",
+          "type": "string",
+          "minLength": 1
+        },
+        "joints": {
+          "description": "Every joint of the vibration model -> the MJCF hinge or slide joint whose velocity drives it.",
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     "sensor": {
       "type": "object",
       "additionalProperties": false,
@@ -46,9 +64,14 @@
           "description": "Path to the common sensor definition file (error model). Relative to this file.",
           "type": "string",
           "minLength": 1
-        }
+        },
+        "vibration": {"$ref": "#/$defs/vibration"}
       },
       "allOf": [
+        {
+          "if": {"not": {"properties": {"type": {"const": "force_torque"}}}},
+          "then": {"not": {"required": ["vibration"]}}
+        },
         {
           "if": {"properties": {"type": {"const": "joint"}}},
           "then": {"properties": {"mount": {"$ref": "#/$defs/joint_mount"}}}

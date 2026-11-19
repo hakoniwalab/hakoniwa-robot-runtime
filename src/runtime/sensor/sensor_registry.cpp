@@ -49,9 +49,43 @@ std::set<std::string> SensorImplementationRegistry::names() const
     return result;
 }
 
+bool SensorImplementationRegistry::add_host_models(
+    const sa::HostModelImplementation* models,
+    std::string* error)
+{
+    const auto fail = [error](std::string message) {
+        if (error != nullptr) {
+            *error = std::move(message);
+        }
+        return false;
+    };
+    if (models == nullptr) {
+        return fail("host model descriptor is null");
+    }
+    if (models->version != sa::kHostModelImplementationVersion) {
+        return fail("host model descriptor has version " + std::to_string(models->version)
+            + ", expected " + std::to_string(sa::kHostModelImplementationVersion));
+    }
+    if (models->name == nullptr || models->name[0] == '\0') {
+        return fail("host model descriptor has no name");
+    }
+    if (!host_models_.emplace(models->name, models).second) {
+        return fail(std::string("host models registered twice: ") + models->name);
+    }
+    return true;
+}
+
+const sa::HostModelImplementation* SensorImplementationRegistry::find_host_models(
+    const std::string& name) const
+{
+    const auto found = host_models_.find(name);
+    return found == host_models_.end() ? nullptr : found->second;
+}
+
 void SensorImplementationRegistry::clear()
 {
     implementations_.clear();
+    host_models_.clear();
 }
 
 SensorImplementationRegistry& sensor_implementation_registry()
