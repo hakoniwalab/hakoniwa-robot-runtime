@@ -33,7 +33,10 @@ namespace hakoniwa::robot_runtime::adapters::mujoco {
  * transmitted through the joint are taken at that same state: mj_step leaves
  * forces computed for the state before the step, so the stage runs mj_forward
  * and mj_rnePostConstraint once after the step. These recompute derived
- * quantities only; they change neither the state nor the next step.
+ * quantities only; they change neither the state nor the next step. The
+ * accelerations used for the truth are the change of velocity over the step
+ * (the acceleration the integrator applied), not mj_forward's explicit one,
+ * which differs under implicit integration with strong damping (issue #56).
  *
  * Force-torque sensors: mounted on an MJCF body with a position and a
  * roll/pitch/yaw orientation (degrees, R = Rz(yaw) Ry(pitch) Rx(roll)) in the
@@ -127,6 +130,10 @@ private:
     // keeps that count and the Runtime time of its first step since reset.
     std::uint64_t steps_ {0};
     std::uint64_t first_step_time_usec_ {0};
+    // qvel at the end of the previous step, for the applied acceleration
+    // (step(): the first step after reset uses mj_forward's acceleration).
+    std::vector<double> previous_qvel_;
+    bool has_previous_qvel_ {false};
     std::vector<std::unique_ptr<Sensor>> sensors_;
 };
 
