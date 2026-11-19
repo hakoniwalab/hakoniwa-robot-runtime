@@ -919,6 +919,19 @@ void MujocoSensorStage::step(runtime::RobotState& state)
         // Forces at the state after the step: mj_step computed them for the
         // state before it. Both calls only recompute derived quantities.
         mj_forward(model_, data_);
+        // mj_forward gives the explicit acceleration. With the implicit
+        // integrators, the step applied an acceleration in which damping and
+        // other velocity-dependent forces are treated implicitly, and the two
+        // differ a lot under strong velocity feedback (issue #56). The
+        // accelerations of the truth (cacc, cfrc_int) must be those that moved
+        // the state: the change of velocity over the step. The stage runs
+        // after every physics step, so the previous velocity is one step old.
+        if (has_previous_qvel_) {
+            const mjtNum h = model_->opt.timestep;
+            for (int dof = 0; dof < model_->nv; ++dof) {
+                data_->qacc[dof] = (data_->qvel[dof] - previous_qvel_[static_cast<std::size_t>(dof)]) / h;
+            }
+        }
         mj_rnePostConstraint(model_, data_);
     } else if (needs_kinematics_) {
         // Geom poses at the state after the step, for the rays.
@@ -951,12 +964,16 @@ void MujocoSensorStage::step(runtime::RobotState& state)
         }
         state.sensor_readings.push_back(sensor->reading);
     }
+    previous_qvel_.assign(data_->qvel, data_->qvel + model_->nv);
+    has_previous_qvel_ = true;
 }
 
 void MujocoSensorStage::reset()
 {
     steps_ = 0;
     first_step_time_usec_ = 0;
+    previous_qvel_.clear();
+    has_previous_qvel_ = false;
     for (auto& sensor : sensors_) {
         std::string error;
         bool reset = false;
