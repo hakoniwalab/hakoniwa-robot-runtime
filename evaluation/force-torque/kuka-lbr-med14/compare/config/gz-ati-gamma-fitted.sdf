@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- The fitted ATI Gamma noise of wrist-ft-ati-gamma-fitted.json, written as Gazebo SDF.
+     Hakoniwa applies these sigmas as they are at this sample rate (checked: output - input = configured sigma,
+     ratio 0.99-1.02), so the same numbers go to Gazebo's per-sample stddev. -->
+<sdf version="1.11">
+  <model name="arm">
+    <link name="flange">
+      <sensor name="ft" type="force_torque">
+        <update_rate>1000</update_rate>
+        <force_torque>
+          <frame>sensor</frame>
+          <measure_direction>child_to_parent</measure_direction>
+          <force><x><noise type="gaussian"><mean>0</mean><stddev>0.0185205</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev></noise></x><y><noise type="gaussian"><mean>0</mean><stddev>0.013248</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev></noise></y><z><noise type="gaussian"><mean>0</mean><stddev>0.0151932</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev></noise></z></force>
+          <torque><x><noise type="gaussian"><mean>0</mean><stddev>0.0006214</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev></noise></x><y><noise type="gaussian"><mean>0</mean><stddev>0.0008728</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev></noise></y><z><noise type="gaussian"><mean>0</mean><stddev>0.0002338</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev></noise></z></torque>
+        </force_torque>
+      </sensor>
+    </link>
+  </model>
+</sdf>

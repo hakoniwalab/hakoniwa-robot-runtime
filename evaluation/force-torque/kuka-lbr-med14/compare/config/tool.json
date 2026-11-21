@@ -1,0 +1,29 @@
+{
+ "samples": 24,
+ "mass_kg": 0.9323,
+ "com_m_sensor_frame": [
+  0.0003,
+  0.0001,
+  0.0439
+ ],
+ "force_bias_N": [
+  9.077,
+  -1.018,
+  9.985
+ ],
+ "torque_bias_Nm": [
+  0.4325,
+  -0.6916,
+  -0.157
+ ],
+ "rms_residual_force_N": [
+  0.131,
+  0.047,
+  0.057
+ ],
+ "rms_residual_torque_Nm": [
+  0.0024,
+  0.0044,
+  0.0014
+ ]
+}
