@@ -1,0 +1,31 @@
+{
+  "$schema": "https://hakoniwa.dev/schemas/sensor-instances.schema.json",
+  "schema_version": 1,
+  "sensors": [
+    {
+      "name": "wrist_ft",
+      "type": "force_torque",
+      "implementation": "hakoniwa",
+      "mount": {
+        "mjcf_body": "tool",
+        "position_m": [
+          0,
+          0,
+          0
+        ],
+        "orientation_deg": {
+          "roll": 0,
+          "pitch": 0,
+          "yaw": 209.31329382626507
+        }
+      },
+      "definition": "force_torque/wrist-ft-ati-gamma-fitted.json",
+      "vibration": {
+        "definition": "vibration/kuka-lbr-med14-t14.json",
+        "joints": {
+          "joint_a": "joint6"
+        }
+      }
+    }
+  ]
+}

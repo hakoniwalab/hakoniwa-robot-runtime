@@ -1,0 +1,191 @@
+{
+  "type": "force_torque_vibration",
+  "f_ref_hz": 50.0,
+  "joints": [
+    {
+      "name": "joint_a",
+      "gear_ratio": 160,
+      "deadband_hz": 1.0,
+      "orders": [
+        {
+          "order": 2,
+          "amplitude": {
+            "fx": 1.8222639,
+            "fy": 1.201863,
+            "fz": 0.328329,
+            "tx": 0.0600589,
+            "ty": 0.090041,
+            "tz": 0.000763
+          },
+          "exponent": 0.8
+        },
+        {
+          "order": 4,
+          "amplitude": {
+            "fx": 0.6820313,
+            "fy": 0.0506962,
+            "fz": 0.1699903,
+            "tx": 0.0016786,
+            "ty": 0.0374089,
+            "tz": 0.0006159
+          },
+          "exponent": 0.8
+        },
+        {
+          "order": 6,
+          "amplitude": {
+            "fx": 0.9166334,
+            "fy": 0.9240402,
+            "fz": 0.2950995,
+            "tx": 0.0548374,
+            "ty": 0.0550301,
+            "tz": 0.0042904
+          },
+          "exponent": 0.8
+        },
+        {
+          "order": 8,
+          "amplitude": {
+            "fx": 0.2308335,
+            "fy": 0.0,
+            "fz": 0.0,
+            "tx": 0.0,
+            "ty": 0.0156532,
+            "tz": 0.0018025
+          },
+          "exponent": 0.8
+        },
+        {
+          "order": 10,
+          "amplitude": {
+            "fx": 0.1292614,
+            "fy": 0.4042676,
+            "fz": 0.198054,
+            "tx": 0.0277881,
+            "ty": 0.0102269,
+            "tz": 0.0022668
+          },
+          "exponent": 0.8
+        },
+        {
+          "order": 12,
+          "amplitude": {
+            "fx": 0.1255486,
+            "fy": 0.2720168,
+            "fz": 0.0817671,
+            "tx": 0.0216768,
+            "ty": 0.0119118,
+            "tz": 0.0017713
+          },
+          "exponent": 0.8
+        },
+        {
+          "order": 14,
+          "amplitude": {
+            "fx": 0.2163192,
+            "fy": 0.0193658,
+            "fz": 0.0328163,
+            "tx": 0.0019055,
+            "ty": 0.0234666,
+            "tz": 0.0024617
+          },
+          "exponent": 0.8
+        }
+      ],
+      "run_log_sigma": 0.0,
+      "load_gain": {
+        "positive": 0.871,
+        "negative": 1.698,
+        "lag_s": 0.7
+      }
+    }
+  ],
+  "modes": [
+    {
+      "frequency_hz": 9.33,
+      "damping": 0.023,
+      "at_rest": {
+        "fx": 0.0160365,
+        "fz": 0.0620644,
+        "ty": 0.0010426
+      }
+    },
+    {
+      "frequency_hz": 7.5,
+      "damping": 0.3,
+      "run_log_sigma": 0.0,
+      "per_motion": {
+        "fx": 0.1841567,
+        "fz": 0.0373117,
+        "ty": 0.0085707
+      }
+    },
+    {
+      "frequency_hz": 12.9,
+      "damping": 0.033,
+      "at_rest": {
+        "fy": 0.0060704,
+        "tx": 0.0002856,
+        "tz": 0.0
+      },
+      "run_log_sigma": 0.0,
+      "per_motion": {
+        "fy": 0.0124516,
+        "tx": 0.0,
+        "tz": 0.0
+      }
+    },
+    {
+      "frequency_hz": 100.86,
+      "damping": 0.0047,
+      "per_activity": {
+        "fx": 0.837716,
+        "fy": 0.1919271,
+        "fz": 0.2857104,
+        "tx": 0.0108623,
+        "ty": 0.0480857,
+        "tz": 0.000888
+      },
+      "run_log_sigma": 0.0,
+      "run_group": "drive_line"
+    },
+    {
+      "frequency_hz": 299.85,
+      "damping": 0.0017,
+      "per_activity": {
+        "fx": 0.1950757,
+        "fy": 0.0423734,
+        "fz": 0.059423,
+        "tx": 0.0040372,
+        "ty": 0.0217029,
+        "tz": 0.0022339
+      },
+      "run_log_sigma": 0.0,
+      "run_group": "drive_line"
+    },
+    {
+      "frequency_hz": 33.14,
+      "damping": 0.032,
+      "per_activity": {
+        "fx": 0.411652,
+        "fy": 0.0,
+        "fz": 0.118149,
+        "tx": 0.0,
+        "ty": 0.020132,
+        "tz": 0.000406
+      }
+    }
+  ],
+  "broadband": {
+    "exponent": 1.0,
+    "density_per_activity": {
+      "fx": 0.00017858,
+      "fy": 9.3902e-05,
+      "fz": 7.6051e-05,
+      "tx": 4.884e-07,
+      "ty": 8.7409e-07,
+      "tz": 2.398e-08
+    },
+    "run_log_sigma": 0.0
+  }
+}
