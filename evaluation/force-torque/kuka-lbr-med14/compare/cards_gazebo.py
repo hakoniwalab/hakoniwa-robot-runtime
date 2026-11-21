@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kukadata as K  # noqa: E402
 import cards_common as cc  # noqa: E402
 from cards_common import L, INK, MUTED, BODY, C1, C2, arrow, sketch_axes, notes, card, result_title, plt  # noqa: E402
-from matplotlib.patches import FancyBboxPatch  # noqa: E402
+from matplotlib.patches import Arc, Circle, FancyBboxPatch, Rectangle  # noqa: E402
 
 cc.LANG[0] = sys.argv[1] if len(sys.argv) > 1 else "ja"
 OUT = K.OUT / "cards"
@@ -65,6 +65,47 @@ def corr(t, x):
     cw, e = env(t, x, 2, 0.3, 0.3)
     m = (cw > 0.5) & (cw < 5.3)
     return np.corrcoef(e[m], np.abs(np.cos(np.interp(cw, tq, q)))[m])[0, 1]
+
+
+def arm(ax, theta_deg, alpha=1.0, z_axis=True, label=None):
+    """The turning link seen along the joint axis, sensor (red) and tool at its end (as cards_kuka.py)."""
+    th = np.radians(theta_deg)
+    d = np.array([np.cos(th), np.sin(th)])
+    n = np.array([-d[1], d[0]])
+    tip = 0.30 * d
+    ax.plot([0, tip[0]], [0, tip[1]], color=BODY, lw=9, solid_capstyle="round", alpha=alpha, zorder=2)
+    s = tip + 0.03 * d
+    ax.add_patch(Rectangle(s - 0.035 * n, 0.025, 0.07, angle=theta_deg, fc=C2, ec="none", alpha=alpha, zorder=3))
+    ax.add_patch(Rectangle(s + 0.025 * d - 0.03 * n, 0.07, 0.06, angle=theta_deg, fc="#7c8aa3", ec="none", alpha=alpha, zorder=3))
+    if z_axis:
+        a0 = s + 0.12 * d
+        arrow(ax, tuple(a0), tuple(a0 + 0.12 * d), color=C1, lw=1.6, scale=12)
+        ax.text(*(a0 + 0.06 * d + 0.11 * n), L("センサー z", "sensor z"), color=C1, fontsize=8, ha="center", va="center")
+    if label:
+        ax.text(*(tip + 0.18 * d - 0.12 * n), label, fontsize=8, color=INK, ha="center")
+
+
+def turn_sketch(left, rest=False):
+    """The KUKA wrist joint in the upper part of a card's left panel: turning 180 degrees, or held still."""
+    ax = left.inset_axes([0.0, 0.55, 0.95, 0.45])
+    ax.set_xlim(-0.55, 0.75)
+    ax.set_ylim(-0.2, 0.52)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.add_patch(Circle((0, 0), 0.035, fc="white", ec=INK, lw=1.5, zorder=4))
+    ax.add_patch(Circle((0, 0), 0.008, fc=INK, ec="none", zorder=5))
+    ax.add_patch(Rectangle((-0.09, -0.16), 0.18, 0.12, fc=BODY, ec="none", zorder=1))
+    arm(ax, 0)
+    if rest:
+        ax.text(-0.53, 0.50, L("関節を保持して\n止めたまま", "joint held\nstill"), fontsize=8.5, color=INK, ha="left", va="top")
+    else:
+        arm(ax, 90, alpha=0.35, z_axis=False)
+        ax.add_patch(Arc((0, 0), 0.24, 0.24, theta1=5, theta2=175, color=INK, lw=1.4))
+        arrow(ax, (-0.115, 0.04), (-0.12, 0.01), color=INK, scale=12)
+        ax.text(-0.30, 0.17, L("180° 回す\n（約 5 秒）", "turn 180°\n(about 5 s)"), ha="center", va="bottom", fontsize=8.3, color=INK, linespacing=1.3)
+    ax.text(0.74, 0.50, L("KUKA の手首\n関節の軸は紙面に垂直\n赤＝力覚センサー\n灰＝道具（0.93 kg）",
+                          "KUKA wrist\njoint axis into the page\nred = F/T sensor\ngrey = tool (0.93 kg)"),
+            fontsize=7.6 if cc.LANG[0] == "ja" else 7.0, color=MUTED, ha="right", va="top", linespacing=1.45)
 
 
 def save(fig, name):
@@ -132,6 +173,7 @@ save(fig, "card-ftv-gz-setup")
 # ------------------------------------------------------------------ 2. band ratios
 fig, left, r1, r2 = card(L("動いている間の揺れ：6 軸の大きさを実機と比べる", "Vibration while moving: six axes against the real arm"), right=2)
 sketch_axes(left, xlim=(0, 1), ylim=(-0.62, 0.55), title=L("測ったこと", "What was measured"))
+turn_sketch(left)
 notes(left, L(["動いている間（0.5–5.5 s）の揺れの大きさを、",
                "周波数の帯ごとに、実機に対する比で示す（1 ＝ 一致）",
                "",
@@ -155,7 +197,7 @@ notes(left, L(["動いている間（0.5–5.5 s）の揺れの大きさを、",
                "Black lines: min–max of the 20 runs",
                "",
                "Gazebo's noise is fitted to the real arm at rest (the same",
-               "values as Hakoniwa). What is missing is the vibration itself"]), y=0.5, size=8.6, color=INK)
+               "values as Hakoniwa). What is missing is the vibration itself"]), y=0.03, size=7.5, color=INK)
 for ax, (lo, hi) in ((r1, (5, 20)), (r2, (20, 150))):
     br = band(tw, real, lo, hi)
     xs = np.arange(6)
@@ -180,6 +222,7 @@ save(fig, "card-ftv-gz-bands")
 # ------------------------------------------------------------------ 3. spectrograms
 fig, left, r1 = card(L("揺れを時間と周波数で見る（Fx）", "The vibration in time and frequency (Fx)"), right=1)
 sketch_axes(left, xlim=(0, 1), ylim=(-0.62, 0.55), title=L("グラフの見方", "How to read it"))
+turn_sketch(left)
 notes(left, L(["横軸は時間、縦軸は周波数。色が明るいほど強い揺れ",
                "3 枚とも同じ色の目盛り",
                "",
@@ -201,7 +244,7 @@ notes(left, L(["横軸は時間、縦軸は周波数。色が明るいほど強�
                "closest to the median",
                "",
                "Gazebo: the same noise settings. The same flat noise",
-               "whether the arm moves or not"]), y=0.5, size=8.6, color=INK)
+               "whether the arm moves or not"]), y=0.03, size=7.5, color=INK)
 pos = r1.get_position()
 r1.remove()
 br = band(tw, real, 5, 20)[0]
@@ -243,6 +286,7 @@ print(p, "pick seed", pick + 1)
 # ------------------------------------------------------------------ 4. direction
 fig, left, r1 = card(L("揺れの向き：腕の角度とともに変わる揺れを、Gazebo は出せない", "Direction: the vibration changes with the arm's angle; Gazebo cannot show it"), right=1)
 sketch_axes(left, xlim=(0, 1), ylim=(-0.62, 0.55), title=L("測ったこと", "What was measured"))
+turn_sketch(left)
 notes(left, L(["Fz の 5–20 Hz の揺れの大きさを 0.3 秒ごとに測り、",
                "関節の角度 θ（青い点線は |cos θ|）と並べた",
                "",
@@ -258,7 +302,7 @@ notes(left, L(["Fz の 5–20 Hz の揺れの大きさを 0.3 秒ごとに測り
                "world; as the sensor turns, its share in Fz follows |cos θ|",
                "",
                "Bands: min–max of 20 runs; lines: the median",
-               "③ Gazebo + Hakoniwa vibration lies on top of ①"]), y=0.5, size=8.6, color=INK)
+               "③ Gazebo + Hakoniwa vibration lies on top of ①"]), y=0.03, size=7.5, color=INK)
 c, e = env(tw, real, 2)
 for runs, col, name in ((hk, HK_C, L("① 箱庭", "① Hakoniwa")), (gz, GZ_C, L("② Gazebo", "② Gazebo"))):
     n = np.array([env(t, x, 2)[1] for t, x in runs])
@@ -296,6 +340,7 @@ def peak_over_floor(f, p):
 
 fig, left, r1, r2 = card(L("止まっているとき：保持中の腕の揺れ（9–16 Hz）と雑音", "At rest: the held arm's vibration (9–16 Hz) and the noise"), right=2)
 sketch_axes(left, xlim=(0, 1), ylim=(-0.62, 0.55), title=L("測ったこと", "What was measured"))
+turn_sketch(left, rest=True)
 notes(left, L(["腕を止めたまま（関節を保持）の手首の値",
                "実機：静止時の記録（約 1 秒）",
                "箱庭・Gazebo：同じ姿勢で 10 秒（最初の 1 秒は除く）、",
@@ -319,7 +364,7 @@ notes(left, L(["腕を止めたまま（関節を保持）の手首の値",
                "",
                "The real arm vibrates at about 9.5 Hz even when held.",
                "Hakoniwa: the vibration model's level at rest.",
-               "Gazebo has white noise only, so no peak"]), y=0.5, size=8.6, color=INK)
+               "Gazebo has white noise only, so no peak"]), y=0.03, size=7.5, color=INK)
 f, p = rest_spec(tr_rest, real_rest)
 r1.semilogy(f, np.sqrt(p[:, 2]), color=REAL_C, lw=2.2, label=L("実機", "real"))
 for runs_, col, name, ls in ((hk_rest, HK_C, L("① 箱庭", "① Hakoniwa"), "-"), (gz_rest, GZ_C, L("② Gazebo", "② Gazebo"), "-"),
