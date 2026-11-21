@@ -36,6 +36,16 @@ def real():
     return (w["t"] - w["t"][0]) * 1e-6, np.stack([w[a] for a in AX], 1) - bias
 
 
+def real_rest():
+    """The rest recording (about 1 s, no time stamps; the baseline's rate). Raw values: a constant bias does not change
+    the spectra."""
+    if not (DATA / "0-steady-state_wrench.csv").exists():
+        sys.exit("real recording missing: run python3 data/fetch.py first")
+    w = np.genfromtxt(DATA / "0-steady-state_wrench.csv", delimiter=",", names=True)
+    x = np.stack([w[a] for a in AX], 1)
+    return np.arange(len(x)) / FS_REAL, x
+
+
 def runs(name):
     """[(t, x[:, 6], q or None)] of one run set, in seed or run order."""
     z = np.load(RUNS / f"{name}.npz")
