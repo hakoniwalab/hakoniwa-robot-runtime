@@ -31,6 +31,10 @@ hk = [(t, x) for t, x, _ in K.runs("harness-t14")]
 gz = [(t, x) for t, x, _ in K.gazebo("gazebo")]
 gzv = [(t, x) for t, x, _ in K.gazebo("gazebo-vibration")]
 tq, q = K.joint_angle()
+tr_rest, real_rest = K.real_rest()
+hk_rest = [(t, x) for t, x, _ in K.runs("rest-harness-t14")]
+gz_rest = [(t, x) for t, x, _ in K.gazebo("gazebo-rest")]
+gzv_rest = [(t, x) for t, x, _ in K.gazebo("gazebo-vibration-rest")]
 
 
 def lp(x, fs, fc, order=2, kind="low"):
@@ -79,14 +83,14 @@ def box(ax, xy, w, h, text, fc, ec=INK, size=8.3, color=INK):
 def pipeline(ax):
     """How the four columns are made: one truth, swapped sensor implementations."""
     sketch_axes(ax, xlim=(0, 1), ylim=(-0.62, 0.55), title=L("比べ方", "How it is compared"))
-    box(ax, (0.03, 0.34), 0.94, 0.15, L("MuJoCo：KUKA iiwa 14 が実機と同じ角度で回る\n→ 手首の真の力（雑音なし）を 1 回だけ計算", "MuJoCo: KUKA iiwa 14 follows the recorded angle\n→ the wrist's true wrench, computed once"), "#eef1f6", size=7.8)
+    box(ax, (0.03, 0.33), 0.94, 0.16, L("MuJoCo：KUKA iiwa 14 が実機と同じ角度で回る\n→ 手首の真の力（雑音なし）を 1 回だけ計算", "MuJoCo: iiwa 14 follows the recorded angle\n→ the true wrench, computed once"), "#eef1f6", size=7.8)
     rows = [(0.13, L("① 箱庭", "① Hakoniwa"), HK_C, L("振動モデル", "vibration model"), L("センサーPRO", "Sensor PRO")),
             (-0.07, L("② Gazebo", "② Gazebo"), GZ_C, None, "gz-sensors"),
             (-0.27, L("③ Gazebo＋箱庭の振動", "③ Gazebo + Hakoniwa vibration"), GZ_C, L("振動モデル", "vibration model"), "gz-sensors")]
     for y, name, col, vib, sensor in rows:
         ax.text(0.03, y + 0.115, name, fontsize=8.6, color=col, fontweight="bold", va="bottom")
         if vib:
-            box(ax, (0.30, y), 0.30, 0.09, vib, "#e7effd", ec=HK_C, size=7.8)
+            box(ax, (0.30, y), 0.30, 0.09, vib, "#e7effd", ec=HK_C, size=7.8 if cc.LANG[0] == "ja" else 6.9)
         else:
             ax.text(0.45, y + 0.045, L("（振動なし）", "(no vibration)"), fontsize=7.8, color=MUTED, ha="center", va="center")
         arrow(ax, (0.20, y + 0.045), (0.29, y + 0.045), color=MUTED, scale=9)
@@ -277,3 +281,67 @@ r1.legend(fontsize=8, loc="upper left", bbox_to_anchor=(0, 0.9))
 result_title(r1, L("Fz の揺れの大きさ（0.3 秒ごと）と、関節の角度", "Fz vibration (0.3 s windows) against the joint angle"))
 save(fig, "card-ftv-gz-direction")
 print("corr", round(cr, 3), round(ch, 3), round(cg, 3), round(cv, 3))
+
+# ------------------------------------------------------------------ 5. at rest
+def rest_spec(t, x, settle=1.0):
+    m = t >= settle if t[-1] > 2 * settle else np.ones(len(t), bool)
+    y = x[m] - x[m].mean(0)
+    return welch(y, fs=fs_of(t), nperseg=128, detrend="linear", axis=0)
+
+
+def peak_over_floor(f, p):
+    floor = np.median(p[(f >= 40) & (f <= 300)], 0)
+    return np.median(p[(f >= 9) & (f < 16)], 0) / floor, floor
+
+
+fig, left, r1, r2 = card(L("止まっているとき：保持中の腕の揺れ（9–16 Hz）と雑音", "At rest: the held arm's vibration (9–16 Hz) and the noise"), right=2)
+sketch_axes(left, xlim=(0, 1), ylim=(-0.62, 0.55), title=L("測ったこと", "What was measured"))
+notes(left, L(["腕を止めたまま（関節を保持）の手首の値",
+               "実機：静止時の記録（約 1 秒）",
+               "箱庭・Gazebo：同じ姿勢で 10 秒（最初の 1 秒は除く）、",
+               "乱数の種 1–6",
+               "",
+               "左：Fz の周波数ごとの強さ（実機は太線、他は 6 回の中央値）",
+               "右：9–16 Hz の強さを、40–300 Hz の雑音の床で割った値",
+               "（1 ＝ 山なし。対数目盛り）",
+               "",
+               "実機は止まっていても約 9.5 Hz で揺れる（保持中の腕）。",
+               "箱庭は振動モデルの「止まっているときの揺れ」で再現。",
+               "Gazebo は白い雑音だけなので、山が出ない"],
+              ["The wrist with the arm held still (joints holding)",
+               "Real: the rest recording (about 1 s)",
+               "Hakoniwa, Gazebo: the same pose for 10 s (first 1 s left out),",
+               "seeds 1–6",
+               "",
+               "Left: Fz by frequency (real thick, others the median of 6)",
+               "Right: the 9–16 Hz level over the 40–300 Hz noise floor",
+               "(1 = no peak; log scale)",
+               "",
+               "The real arm vibrates at about 9.5 Hz even when held.",
+               "Hakoniwa: the vibration model's level at rest.",
+               "Gazebo has white noise only, so no peak"]), y=0.5, size=8.6, color=INK)
+f, p = rest_spec(tr_rest, real_rest)
+r1.semilogy(f, np.sqrt(p[:, 2]), color=REAL_C, lw=2.2, label=L("実機", "real"))
+for runs_, col, name, ls in ((hk_rest, HK_C, L("① 箱庭", "① Hakoniwa"), "-"), (gz_rest, GZ_C, L("② Gazebo", "② Gazebo"), "-"),
+                            (gzv_rest, GZ_C, L("③ Gazebo＋箱庭の振動", "③ Gazebo + Hakoniwa vibration"), ":")):
+    P = np.array([rest_spec(t, x)[1][:, 2] for t, x in runs_])
+    fr = rest_spec(*runs_[0])[0]
+    r1.semilogy(fr, np.sqrt(np.median(P, 0)), color=col, lw=1.5, ls=ls, label=name)
+r1.set_xlim(0, 120); r1.grid(alpha=0.3, which="both")
+r1.set_xlabel(L("周波数 [Hz]", "frequency [Hz]")); r1.set_ylabel(L("Fz の強さ [N/√Hz]", "Fz amplitude density [N/√Hz]"))
+r1.legend(fontsize=7.8, loc="upper right")
+result_title(r1, L("Fz の周波数ごとの強さ（止まっているとき）", "Fz by frequency, at rest"))
+qr, _ = peak_over_floor(f, p)
+xs = np.arange(6)
+r2.bar(xs - 0.3, qr, 0.2, color=REAL_C, label=L("実機", "real"))
+for i, (runs_, fc, ec, hatch, name) in enumerate(((hk_rest, HK_C, HK_C, None, "①"), (gz_rest, GZ_C, GZ_C, None, "②"),
+                                                   (gzv_rest, "white", GZ_C, "////", "③"))):
+    v = np.median([peak_over_floor(*rest_spec(t, x))[0] for t, x in runs_], 0)
+    r2.bar(xs - 0.1 + 0.2 * i, v, 0.2, color=fc, ec=ec, hatch=hatch, lw=1.0)
+    print("rest 9-16/floor", name, np.round(v, 1))
+print("rest 9-16/floor real", np.round(qr, 1))
+r2.set_yscale("log"); r2.axhline(1, color=MUTED, lw=1, ls="--")
+r2.set_xticks(xs, NAMES); r2.set_ylabel(L("9–16 Hz ÷ 雑音の床（1 ＝ 山なし）", "9–16 Hz over the noise floor (1 = no peak)"))
+r2.legend(handles=[__import__("matplotlib.patches").patches.Patch(color=REAL_C, label=L("実機", "real"))] + legend_handles(), fontsize=7.4, loc="upper right")
+result_title(r2, L("9–16 Hz の山の高さ（6 軸）", "The 9–16 Hz peak, six axes"))
+save(fig, "card-ftv-gz-rest")

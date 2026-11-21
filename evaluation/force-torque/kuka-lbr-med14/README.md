@@ -20,7 +20,7 @@ Zenodo record 11096791 ([doi:10.5281/zenodo.11096791](https://doi.org/10.5281/ze
 | `fitting/fit_noise.py` | The force-torque noise from the real arm at rest: reproduces `sensors/force_torque/wrist-ft-ati-gamma-fitted.json` exactly |
 | `fitting/tool_fit.py` | The tool mass, centre of mass and sensor bias from the 24-pose calibration: reproduces `compare/config/tool.json` exactly |
 | `compare/` | The comparison and card scripts, the Gazebo configuration with the same noise (`config/gz-ati-gamma-fitted.sdf`) and the bias of the real sensor (`config/tool.json`) |
-| `runs/` | The simulated runs the cards are drawn from (float32): `harness-t12.npz`, `harness-t14.npz` (20 seeds each, the sensor stage driven alone on the KUKA model), `robot-t14.npz` (6 runs of the iiwa 14 through the robot runtime), `truth.npz` (the true wrench, no noise) and `truth-vibration-t14.npz` (the true wrench plus the vibration model, seeds 1–20) |
+| `runs/` | The simulated runs the cards are drawn from (float32): `harness-t12.npz`, `harness-t14.npz` (20 seeds each, the sensor stage driven alone on the KUKA model), `robot-t14.npz` (6 runs of the iiwa 14 through the robot runtime), `truth.npz` (the true wrench, no noise) and `truth-vibration-t14.npz` (the true wrench plus the vibration model, seeds 1–20); at rest (10 s in the same pose, seeds 1–6): `rest-harness-t14.npz`, `rest-truth.npz`, `rest-truth-vibration-t14.npz` |
 | `data/fetch.py` | Downloads the real recording |
 
 The vibration settings (`vibration/*.json`) were fitted with Hakoniwa Lab's own procedure; the fitting of the noise and of the tool is public here. The vibration model's specification is public: [force-torque-vibration.md](https://github.com/hakoniwalab/hakoniwa-sensor-adapter/blob/main/docs/spec/force-torque-vibration.md).
@@ -38,22 +38,22 @@ python3 compare/hero.py en
 
 The cards go to `compare/out/cards/` (not committed); `ja` gives the Japanese ones.
 
-For the Gazebo comparison, first run the Gazebo sensor on the same truth. This needs `ft-series` from hakoniwa-sensor-adapter's `tools/compare`, built with pixi as its README describes; it reads the truth from a file with `--motion file`:
+For the Gazebo comparison ([gazebo-comparison.md](gazebo-comparison.md)), first run the Gazebo sensor on the same truth. This needs `ft-series` from hakoniwa-sensor-adapter's `tools/compare`, built with pixi in the checkout beside this repository as its README describes; it reads the truth from a file with `--motion file`:
 
 ```bash
-python3 compare/run_gazebo.py <path to ft-series>
+python3 compare/run_gazebo.py ../../../../hakoniwa-sensor-adapter/tools/compare/build/ft-series
 python3 compare/cards_gazebo.py en
 ```
 
-`run_gazebo.py` writes 20 runs each to `compare/out/gazebo/` and `compare/out/gazebo-vibration/`.
+`run_gazebo.py` writes 20 runs each to `compare/out/gazebo/` and `compare/out/gazebo-vibration/`, and 6 runs each at rest to `compare/out/gazebo-rest/` and `compare/out/gazebo-vibration-rest/`. The drawn cards are also kept in `cards/` for the comparison page.
 
 ## Using the sensor set in the iiwa14 recipe
 
 ```bash
-python3 install_sensors.py <path to hakoniwa-robot-arm>
+python3 install_sensors.py ../../../../hakoniwa-robot-arm
 ```
 
-copies the files into `recipes/iiwa14/config/sensors/` of that checkout without committing them. The recipe then uses them when it runs with `--sensors --sensor-implementation hakoniwa`, built with Sensor PRO as hakoniwa-robot-arm's build procedure describes (`HAKO_ROBOT_ARM_SENSOR_IMPLEMENTATIONS`, `HAKO_ROBOT_ARM_SENSOR_LIBRARIES`, and `HAKO_ROBOT_ARM_SENSOR_HOST_MODELS` for the vibration model). Without the option the recipe keeps its default sensor, which reports the true wrench.
+(hakoniwa-robot-arm checked out beside this repository) copies the files into `recipes/iiwa14/config/sensors/` of that checkout without committing them. The recipe then uses them when it runs with `--sensors --sensor-implementation hakoniwa`, built with Sensor PRO as hakoniwa-robot-arm's build procedure describes (`HAKO_ROBOT_ARM_SENSOR_IMPLEMENTATIONS`, `HAKO_ROBOT_ARM_SENSOR_LIBRARIES`, and `HAKO_ROBOT_ARM_SENSOR_HOST_MODELS` for the vibration model). Without the option the recipe keeps its default sensor, which reports the true wrench.
 
 ## Results in short
 
@@ -63,5 +63,8 @@ copies the files into `recipes/iiwa14/config/sensors/` of that checkout without 
 | Vibration while moving, 5–20 Hz, ratio to real (six axes, median of 20) | 0.77–1.30 | 0.03–0.14 | 0.77–1.29 |
 | Vibration while moving, 20–150 Hz | 0.78–1.12 | 0.01–0.07 | 0.78–1.12 |
 | Correlation of the Fz vibration with \|cos θ\| (real 0.80) | 0.86 | −0.05 | 0.86 |
+| 9.5 Hz vibration of the held arm at rest | yes (Fy, Tx lower than real) | none | yes |
+
+The full comparison with its measurement cards: [gazebo-comparison.md](gazebo-comparison.md) ([日本語](gazebo-comparison.ja.md)).
 
 The noise of all three is the same fitted per-axis sigma. Gazebo has no model of the vibration of a moving arm; the vibration model sits in front of the sensor, so it works with Gazebo's sensor too.
