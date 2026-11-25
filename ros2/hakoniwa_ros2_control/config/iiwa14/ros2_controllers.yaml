@@ -1,0 +1,33 @@
+# KUKA LBR iiwa 14 controllers (controller plugin: the Robot Runtime calls the
+# controller manager every control period, in simulation time).
+controller_manager:
+  ros__parameters:
+    update_rate: 1000  # Hz: every physics step, the rate of the wrist force-torque sensor
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    position_controller:
+      type: forward_command_controller/ForwardCommandController
+    wrist_ft_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+arm_controller:
+  ros__parameters:
+    joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+
+wrist_ft_broadcaster:
+  ros__parameters:
+    sensor_name: wrist_ft
+    frame_id: wrist_ft
+
+# Streaming joint positions (the tracing demo sends them at its own rate).
+position_controller:
+  ros__parameters:
+    joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+    interface_name: position

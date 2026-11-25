@@ -1,0 +1,7 @@
+{
+  "type": "buffer",
+  "name": "iiwa14_ball_latest",
+  "store": {
+    "mode": "latest"
+  }
+}

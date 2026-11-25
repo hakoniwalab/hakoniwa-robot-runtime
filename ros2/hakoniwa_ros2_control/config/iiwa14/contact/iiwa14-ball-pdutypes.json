@@ -1,0 +1,68 @@
+[
+  {
+    "channel_id": 0,
+    "pdu_size": 2048,
+    "name": "joint_states",
+    "type": "sensor_msgs/JointState"
+  },
+  {
+    "channel_id": 1,
+    "pdu_size": 262144,
+    "name": "joint_trajectory",
+    "type": "trajectory_msgs/JointTrajectory"
+  },
+  {
+    "channel_id": 2,
+    "pdu_size": 32,
+    "name": "actuator/joint1/command",
+    "type": "std_msgs/Float64"
+  },
+  {
+    "channel_id": 3,
+    "pdu_size": 32,
+    "name": "actuator/joint2/command",
+    "type": "std_msgs/Float64"
+  },
+  {
+    "channel_id": 4,
+    "pdu_size": 32,
+    "name": "actuator/joint3/command",
+    "type": "std_msgs/Float64"
+  },
+  {
+    "channel_id": 5,
+    "pdu_size": 32,
+    "name": "actuator/joint4/command",
+    "type": "std_msgs/Float64"
+  },
+  {
+    "channel_id": 6,
+    "pdu_size": 32,
+    "name": "actuator/joint5/command",
+    "type": "std_msgs/Float64"
+  },
+  {
+    "channel_id": 7,
+    "pdu_size": 32,
+    "name": "actuator/joint6/command",
+    "type": "std_msgs/Float64"
+  },
+  {
+    "channel_id": 8,
+    "pdu_size": 32,
+    "name": "actuator/joint7/command",
+    "type": "std_msgs/Float64"
+  },
+  {
+    "channel_id": 9,
+    "pdu_size": 512,
+    "name": "wrist_wrench",
+    "type": "geometry_msgs/WrenchStamped"
+  },
+  {
+    "channel_id": 10,
+    "pdu_size": 4096,
+    "name": "ball_state",
+    "type": "sensor_msgs/MultiDOFJointState"
+  }
+]

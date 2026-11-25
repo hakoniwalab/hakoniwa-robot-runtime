@@ -1,0 +1,45 @@
+{
+  "version": "2.0.0",
+  "transferPolicies": {
+    "ticker_10ms": {
+      "type": "ticker",
+      "intervalMs": 10
+    }
+  },
+  "nodes": [
+    {
+      "id": "iiwa14_ball_bridge_node"
+    }
+  ],
+  "endpoints_config_path": "../endpoint/endpoint_container.json",
+  "wireLinks": [],
+  "pduKeyGroups": {
+    "states": [
+      {
+        "id": "IIWA14.ball_state",
+        "robot_name": "IIWA14",
+        "pdu_name": "ball_state"
+      }
+    ]
+  },
+  "connections": [
+    {
+      "id": "shm_to_tcp",
+      "nodeId": "iiwa14_ball_bridge_node",
+      "source": {
+        "endpointId": "host-shm"
+      },
+      "destinations": [
+        {
+          "endpointId": "host-tcp"
+        }
+      ],
+      "transferPdus": [
+        {
+          "pduKeyGroupId": "states",
+          "policyId": "ticker_10ms"
+        }
+      ]
+    }
+  ]
+}

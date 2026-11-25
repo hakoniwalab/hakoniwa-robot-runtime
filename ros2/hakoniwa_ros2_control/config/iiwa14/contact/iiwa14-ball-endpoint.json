@@ -1,0 +1,6 @@
+{
+  "name": "iiwa14_endpoint",
+  "pdu_def_path": "iiwa14-ball-pdudef.json",
+  "cache": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/endpoint/cache_buffer.json",
+  "comm": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/endpoint/comm_shm.json"
+}

@@ -1,0 +1,16 @@
+{
+  "protocol": "tcp",
+  "name": "iiwa14_ball_tcp_client",
+  "direction": "inout",
+  "comm_raw_version": "v1",
+  "role": "client",
+  "remote": {
+    "address": "127.0.0.1",
+    "port": 54111
+  },
+  "options": {
+    "connect_timeout_ms": 5000,
+    "read_timeout_ms": 0,
+    "write_timeout_ms": 0
+  }
+}

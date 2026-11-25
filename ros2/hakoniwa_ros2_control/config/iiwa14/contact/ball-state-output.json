@@ -1,0 +1,24 @@
+{
+  "$schema": "https://hakoniwa.dev/schemas/multi-dof-joint-state-output.schema.json",
+  "spec": {
+    "frame_id": "world",
+    "bodies": [
+      {
+        "name": "ball"
+      }
+    ]
+  },
+  "mjcf_binding": {
+    "bodies": [
+      {
+        "name": "ball",
+        "mjcf_freejoint": "ball_freejoint"
+      }
+    ]
+  },
+  "pdu_config": {
+    "pdu_name": "ball_state",
+    "update_rate_hz": 100.0,
+    "message_type": "sensor_msgs/MultiDOFJointState"
+  }
+}

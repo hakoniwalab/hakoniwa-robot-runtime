@@ -1,0 +1,11 @@
+{
+  "plugin": {
+    "path": "/workspace/ros2-work-jazzy-asset/install/hakoniwa_ros2_control/lib/libhakoniwa_ros2_control_plugin.so",
+    "config": "plugin.yaml"
+  },
+  "joints": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
+  "priority": 15,
+  "joint_state_source": "truth",
+  "pdus": ["wrist_wrench"],
+  "stop_on_error": true
+}

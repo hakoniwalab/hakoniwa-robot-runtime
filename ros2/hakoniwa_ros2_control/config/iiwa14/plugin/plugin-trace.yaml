@@ -1,0 +1,9 @@
+# The ros2_control plugin inside the Robot Runtime (KUKA LBR iiwa 14), streaming joint positions
+# (position_controller) instead of the trajectory controller: the tracing demo.
+# robot_description: the URDF from iiwa14_plugin.urdf.xacro; the launcher
+# (hakoniwa-launcher-docker-plugin.json) writes it before the Robot Runtime starts.
+robot_description: /tmp/hakoniwa-iiwa14-plugin/iiwa14_plugin.urdf
+params_files: [../ros2_controllers.yaml]
+activate: [joint_state_broadcaster, wrist_ft_broadcaster, position_controller]
+publish_clock: true
+sensor_topic_prefix: /pdu/

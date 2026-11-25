@@ -1,0 +1,19 @@
+{
+  "protocol": "shm",
+  "impl_type": "callback",
+  "name": "iiwa14_ball_shm",
+  "direction": "inout",
+  "io": {
+    "robots": [
+      {
+        "name": "IIWA14",
+        "pdu": [
+          {
+            "name": "ball_state",
+            "notify_on_recv": false
+          }
+        ]
+      }
+    ]
+  }
+}

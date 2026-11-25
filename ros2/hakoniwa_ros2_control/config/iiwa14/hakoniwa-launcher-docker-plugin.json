@@ -1,0 +1,39 @@
+{
+  "version": "0.1",
+  "defaults": {
+    "cwd": "/workspace/hakoniwa-robot-arm",
+    "stdout": "/workspace/work-docker-jazzy/recipes/iiwa14-joint-trajectory-control/logs/${asset}.out",
+    "stderr": "/workspace/work-docker-jazzy/recipes/iiwa14-joint-trajectory-control/logs/${asset}.err",
+    "start_grace_sec": 2,
+    "delay_sec": 1,
+    "env": {
+      "set": {
+        "HAKO_CONFIG_PATH": "/workspace/work-docker-jazzy/foundation/config/cpp_core_config.json",
+        "HAKO_PDU_ENDPOINT_SHARED_LIB": "/workspace/work-docker-jazzy/foundation/install/lib/libhakoniwa_pdu_endpoint_core_callback.so",
+        "PYTHONUNBUFFERED": "1",
+        "HAKO_CONDUCTOR_IDLE_SLEEP_USEC": "200"
+      },
+      "prepend": {
+        "lib_path": [
+          "/workspace/work-docker-jazzy/foundation/install/lib"
+        ],
+        "PATH": [
+          "/workspace/work-docker-jazzy/foundation/install/python/bin",
+          "/workspace/work-docker-jazzy/foundation/install/bin"
+        ]
+      }
+    }
+  },
+  "assets": [
+    {
+      "name": "iiwa14-plant-plugin",
+      "activation_timing": "before_start",
+      "command": "bash",
+      "args": [
+        "-c",
+        "source /opt/ros/jazzy/setup.bash && source /workspace/ros2-work-jazzy-asset/install/setup.bash && mkdir -p /tmp/hakoniwa-iiwa14-plugin && python3 /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/tools/mjcf_to_urdf.py /workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.environment.xml base /tmp/hakoniwa-iiwa14-plugin/iiwa14.urdf --robot iiwa14 && xacro /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/iiwa14/iiwa14_plugin.urdf.xacro iiwa14_urdf:=/tmp/hakoniwa-iiwa14-plugin/iiwa14.urdf -o /tmp/hakoniwa-iiwa14-plugin/iiwa14_plugin.urdf && python3 /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/iiwa14/contact/make_contact_cell.py /workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.environment.xml /workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.contact.xml && python3 /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/iiwa14/contact/make_ball_cell.py /workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.environment.xml /workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.ball.xml && python3 /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/iiwa14/contact/make_ball_cell.py /workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.environment.xml /workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.dome.xml --fixed && C=sensors && if [ -n \"$IIWA14_CELL\" ]; then C=$IIWA14_CELL; fi && M=asset-manifest-$C && if [ -n \"$IIWA14_SENSORS\" ]; then M=$M-$IIWA14_SENSORS; fi && exec /workspace/work-docker-jazzy/recipes/iiwa14-joint-trajectory-control/build/bin/robot-arm-hakoniwa-asset --manifest /workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/iiwa14/plugin/$M-plugin.json --no-viewer --realtime-sync-cycle-msec 2"
+      ],
+      "delay_sec": 4
+    }
+  ]
+}

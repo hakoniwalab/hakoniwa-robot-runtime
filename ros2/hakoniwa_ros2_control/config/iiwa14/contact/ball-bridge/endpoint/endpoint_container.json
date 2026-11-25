@@ -1,0 +1,19 @@
+[
+  {
+    "nodeId": "iiwa14_ball_bridge_node",
+    "endpoints": [
+      {
+        "id": "host-shm",
+        "mode": "local",
+        "config_path": "host-shm.json",
+        "direction": "inout"
+      },
+      {
+        "id": "host-tcp",
+        "mode": "local",
+        "config_path": "host-tcp.json",
+        "direction": "inout"
+      }
+    ]
+  }
+]
