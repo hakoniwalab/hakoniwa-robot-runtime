@@ -1,0 +1,6 @@
+{
+  "name": "iiwa14_ball_ros_tcp",
+  "pdu_def_path": "../pdu/pdudef.json",
+  "cache": "../cache/latest.json",
+  "comm": "../comm/tcp-client.json"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "iiwa14_ball_shm",
+  "pdu_def_path": "../pdu/pdudef.json",
+  "cache": "../cache/latest.json",
+  "comm": "../comm/shm.json"
+}

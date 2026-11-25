@@ -117,6 +117,14 @@ if(HAKONIWA_ROS2_CONTROL_WITH_PLUGIN)
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin)
+
+  if(BUILD_TESTING)
+    find_package(ament_cmake_gtest REQUIRED)
+    ament_add_gtest(test_plugin_bridge_wrench
+      controller_plugin/test/test_plugin_bridge_wrench.cpp
+      controller_plugin/src/plugin_bridge.cpp)
+    target_include_directories(test_plugin_bridge_wrench PRIVATE controller_plugin/src)
+  endif()
 endif()
 
 ament_package()

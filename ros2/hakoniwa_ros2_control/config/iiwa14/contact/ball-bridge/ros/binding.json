@@ -1,0 +1,19 @@
+{
+  "endpoint_config": "../endpoint/ros-tcp.json",
+  "bindings": [
+    {
+      "pdu_key": {
+        "robot_name": "IIWA14",
+        "pdu_name": "ball_state"
+      },
+      "direction": "pdu_to_ros",
+      "topic": "/ball_state",
+      "qos": {
+        "history": "keep_last",
+        "depth": 10,
+        "reliability": "best_effort",
+        "durability": "volatile"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "protocol": "tcp",
+  "name": "iiwa14_ball_tcp_server",
+  "direction": "inout",
+  "comm_raw_version": "v1",
+  "role": "server",
+  "local": {
+    "address": "127.0.0.1",
+    "port": 54111
+  },
+  "options": {
+    "read_timeout_ms": 0,
+    "write_timeout_ms": 0
+  }
+}

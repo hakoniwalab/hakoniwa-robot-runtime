@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!-- KUKA LBR iiwa 14 with ros2_control inside the Robot Runtime (the controller
+     plugin, docs/design-controller-plugin.md), as config/so101/so101_plugin.urdf.xacro.
+     The arm's URDF (argument iiwa14_urdf) is the kinematic chain written from the
+     Robot Runtime's MJCF by tools/mjcf_to_urdf.py; the joint names are the Robot
+     Runtime's actuator IDs. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="iiwa14">
+  <xacro:arg name="iiwa14_urdf" default=""/>
+  <xacro:include filename="$(arg iiwa14_urdf)"/>
+
+  <!-- The wrist force-torque sensor frame (its frame_id), where the Robot
+       Runtime mounts it: the origin of the tool body. -->
+  <link name="wrist_ft"/>
+  <joint name="wrist_ft_mount" type="fixed">
+    <parent link="tool"/>
+    <child link="wrist_ft"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:macro name="plugin_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="iiwa14_plugin" type="system">
+    <hardware>
+      <plugin>hakoniwa_ros2_control/HakoniwaPluginSystem</plugin>
+    </hardware>
+    <xacro:plugin_joint name="joint1"/>
+    <xacro:plugin_joint name="joint2"/>
+    <xacro:plugin_joint name="joint3"/>
+    <xacro:plugin_joint name="joint4"/>
+    <xacro:plugin_joint name="joint5"/>
+    <xacro:plugin_joint name="joint6"/>
+    <xacro:plugin_joint name="joint7"/>
+    <!-- The wrist force-torque sensor, read in the control loop: the latest
+         wrist_wrench PDU of each control step. -->
+    <sensor name="wrist_ft">
+      <state_interface name="force.x"/>
+      <state_interface name="force.y"/>
+      <state_interface name="force.z"/>
+      <state_interface name="torque.x"/>
+      <state_interface name="torque.y"/>
+      <state_interface name="torque.z"/>
+      <param name="pdu">wrist_wrench</param>
+      <param name="frame_id">wrist_ft</param>
+    </sensor>
+  </ros2_control>
+</robot>

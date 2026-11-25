@@ -1,0 +1,21 @@
+controller_manager:
+  ros__parameters:
+    use_sim_time: true
+    update_rate: 1000
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    wrist_ft_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+arm_controller:
+  ros__parameters:
+    joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+
+wrist_ft_broadcaster:
+  ros__parameters:
+    sensor_name: wrist_ft
+    frame_id: wrist_ft

@@ -1,0 +1,14 @@
+{
+  "paths": [
+    {
+      "id": "iiwa14-ball-pdutypes",
+      "path": "iiwa14-ball-pdutypes.json"
+    }
+  ],
+  "robots": [
+    {
+      "name": "IIWA14",
+      "pdutypes_id": "iiwa14-ball-pdutypes"
+    }
+  ]
+}

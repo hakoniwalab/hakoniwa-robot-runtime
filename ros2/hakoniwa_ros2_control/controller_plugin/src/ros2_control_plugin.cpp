@@ -46,6 +46,7 @@
 #include "rosgraph_msgs/msg/clock.hpp"
 
 #include "hakoniwa/robot_runtime/plugin/controller_plugin.h"
+#include "geometry_msgs/pdu_ctype_WrenchStamped.h"
 
 #include "plugin_bridge.hpp"
 #include "sensor_relay.hpp"
@@ -200,6 +201,7 @@ struct Ros2ControlPlugin
   rclcpp::Node::SharedPtr node;                  // /clock and sensors
   rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock;
   std::unique_ptr<SensorRelay> sensors;
+  std::vector<int> wrench_slot;                  // by PDU channel: index in the bridge's wrenches, -1 otherwise
   std::unique_ptr<SwitchWorker> switcher;
   std::thread spin;
   std::uint64_t period_ns{0};
@@ -278,6 +280,17 @@ void * create(const HakoControllerCreateV1 * args, char * error, size_t error_si
       joints.emplace_back(args->joint_names[i]);
     }
     PluginBridge::instance().configure(joints);
+    // Wrench PDUs also go to the hardware interface (sensor state interfaces), before
+    // the ControllerManager below loads it.
+    std::vector<std::string> wrenches;
+    plugin->wrench_slot.assign(args->pdu_channel_count, -1);
+    for (uint32_t i = 0; i < args->pdu_channel_count; ++i) {
+      if (std::string(args->pdu_types[i]) == "geometry_msgs/WrenchStamped") {
+        plugin->wrench_slot[i] = static_cast<int>(wrenches.size());
+        wrenches.emplace_back(args->pdu_names[i]);
+      }
+    }
+    PluginBridge::instance().configure_wrenches(wrenches);
 
     // ROS arguments: the parameter files apply to every node of the process
     // (controller_manager and each controller), all on simulation time.
@@ -408,6 +421,16 @@ int32_t update(void * p, const HakoTickV1 * tick, const HakoJointStatesV1 * stat
     }
     for (uint32_t i = 0; i < pdu_count; ++i) {
       plugin->sensors->post(pdus[i].channel, pdus[i].data, pdus[i].size);
+      const uint32_t channel = pdus[i].channel;
+      if (channel < plugin->wrench_slot.size() && plugin->wrench_slot[channel] >= 0) {
+        const void * base = hako_get_base_ptr_pdu(static_cast<char *>(const_cast<void *>(pdus[i].data)));
+        if (base == nullptr) {
+          throw std::runtime_error("invalid wrench PDU");
+        }
+        const auto & w = static_cast<const Hako_WrenchStamped *>(base)->wrench;
+        bridge.set_wrench(static_cast<std::size_t>(plugin->wrench_slot[channel]),
+                          {w.force.x, w.force.y, w.force.z, w.torque.x, w.torque.y, w.torque.z});
+      }
     }
     const rclcpp::Time now(static_cast<int64_t>(tick->sim_time_ns), RCL_ROS_TIME);
     if (plugin->clock) {

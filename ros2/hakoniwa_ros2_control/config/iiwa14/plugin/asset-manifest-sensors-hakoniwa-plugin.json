@@ -1,0 +1,95 @@
+{
+  "$schema": "https://hakoniwa.dev/schemas/hakoniwa-asset-manifest.schema.json",
+  "schema_version": 1,
+  "name": "IIWA14",
+  "description": "KUKA LBR iiwa 14 with the wrist force-torque sensor, Sensor PRO with the noise and vibration fitted to the real arm (needs a build with the hakoniwa implementation). ros2_control runs inside the Robot Runtime (controller plugin).",
+  "model": "/workspace/work-docker-jazzy/model-forge/iiwa14/install/iiwa14.environment.xml",
+  "pdu_def": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/pdu/iiwa14-pdudef.json",
+  "endpoint": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/endpoint/iiwa14_endpoint.json",
+  "runtime_config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/runtime-sensors.json",
+  "components": [
+    {
+      "id": "joint1",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/actuator/joint/joint1.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "joint2",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/actuator/joint/joint2.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "joint3",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/actuator/joint/joint3.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "joint4",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/actuator/joint/joint4.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "joint5",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/actuator/joint/joint5.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "joint6",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/actuator/joint/joint6.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "joint7",
+      "kind": "actuator",
+      "type": "joint_position_actuator",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/actuator/joint/joint7.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "trajectory_controller",
+      "kind": "controller",
+      "type": "joint_trajectory_controller",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/controller/trajectory.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "ros2_control_plugin",
+      "kind": "controller",
+      "type": "plugin",
+      "config": "/workspace/hakoniwa-robot-runtime/ros2/hakoniwa_ros2_control/config/iiwa14/plugin/iiwa14-plugin-controller.json"
+    },
+    {
+      "id": "joint_states",
+      "kind": "state_output",
+      "type": "joint_state",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/sensors/joint_state/iiwa14-joint-states.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "sensors",
+      "kind": "sensor",
+      "type": "sensor_instances",
+      "config": "/workspace/hakoniwa-robot-runtime/evaluation/force-torque/kuka-lbr-med14/sensors/iiwa14-sensors-hakoniwa.json",
+      "pdu_robot": "IIWA14"
+    },
+    {
+      "id": "wrist_wrench_output",
+      "kind": "state_output",
+      "type": "sensor_output",
+      "config": "/workspace/hakoniwa-robot-arm/recipes/iiwa14/config/sensors/iiwa14-wrist-wrench-output.json",
+      "pdu_robot": "IIWA14"
+    }
+  ]
+}
