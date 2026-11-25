@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="iiwa14">
+  <xacro:arg name="physical_urdf" default=""/>
+  <xacro:arg name="controllers" default=""/>
+  <xacro:include filename="$(arg physical_urdf)"/>
+
+  <link name="world"/>
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child link="base"/>
+  </joint>
+
+  <link name="wrist_ft"/>
+  <joint name="wrist_ft_mount" type="fixed">
+    <parent link="tool"/>
+    <child link="wrist_ft"/>
+  </joint>
+
+  <gazebo reference="ft_sensor_fixed">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+  <gazebo reference="tool_fixed">
+    <preserveFixedJoint>true</preserveFixedJoint>
+    <sensor name="wrist_ft" type="force_torque">
+      <always_on>true</always_on>
+      <update_rate>1000</update_rate>
+      <topic>/iiwa14/wrist_ft</topic>
+      <gz_frame_id>wrist_ft</gz_frame_id>
+      <force_torque>
+        <frame>child</frame>
+        <measure_direction>child_to_parent</measure_direction>
+      </force_torque>
+    </sensor>
+  </gazebo>
+
+  <xacro:macro name="arm_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+  <ros2_control name="iiwa14_gazebo" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+    <xacro:arm_joint name="joint1"/>
+    <xacro:arm_joint name="joint2"/>
+    <xacro:arm_joint name="joint3"/>
+    <xacro:arm_joint name="joint4"/>
+    <xacro:arm_joint name="joint5"/>
+    <xacro:arm_joint name="joint6"/>
+    <xacro:arm_joint name="joint7"/>
+    <sensor name="wrist_ft">
+      <state_interface name="force.x"/>
+      <state_interface name="force.y"/>
+      <state_interface name="force.z"/>
+      <state_interface name="torque.x"/>
+      <state_interface name="torque.y"/>
+      <state_interface name="torque.z"/>
+    </sensor>
+  </ros2_control>
+  <gazebo>
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(arg controllers)</parameters>
+    </plugin>
+  </gazebo>
+</robot>
