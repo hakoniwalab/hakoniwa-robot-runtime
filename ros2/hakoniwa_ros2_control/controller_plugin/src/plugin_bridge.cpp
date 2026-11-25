@@ -24,6 +24,40 @@ void PluginBridge::configure(const std::vector<std::string> & joints)
 void PluginBridge::clear()
 {
   configure({});
+  configure_wrenches({});
+}
+
+void PluginBridge::configure_wrenches(const std::vector<std::string> & pdu_names)
+{
+  wrench_names_ = pdu_names;
+  wrench_.assign(pdu_names.size(), std::array<double, 6>{});
+  has_wrench_.assign(pdu_names.size(), 0);
+}
+
+int PluginBridge::wrench_index(const std::string & pdu_name) const
+{
+  for (std::size_t i = 0; i < wrench_names_.size(); ++i) {
+    if (wrench_names_[i] == pdu_name) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+void PluginBridge::set_wrench(std::size_t index, const std::array<double, 6> & wrench)
+{
+  wrench_[index] = wrench;
+  has_wrench_[index] = 1;
+}
+
+bool PluginBridge::has_wrench(std::size_t index) const
+{
+  return has_wrench_[index] != 0;
+}
+
+const std::array<double, 6> & PluginBridge::wrench(std::size_t index) const
+{
+  return wrench_[index];
 }
 
 int PluginBridge::index(const std::string & joint) const

@@ -4,8 +4,15 @@
 // read() and write() run inside the plugin's update(), on the Robot Runtime's
 // simulation thread, and exchange joint values with the PluginBridge. No PDU, no
 // Hakoniwa asset.
+//
+// Force-torque sensors: a URDF <sensor> whose state interfaces are among force.x,
+// force.y, force.z, torque.x, torque.y, torque.z (the names of ros2_control's
+// ForceTorqueSensor) reads the wrench PDU named by its parameter "pdu" (default:
+// the sensor's name), the latest value the Robot Runtime passed to update() for
+// this control step. Before the first value the interfaces read 0.
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "hardware_interface/system_interface.hpp"
@@ -69,6 +76,35 @@ public:
       }
       joints_.push_back(joint);
     }
+    static const char * const axes[6] = {"force.x", "force.y", "force.z", "torque.x", "torque.y", "torque.z"};
+    sensors_.clear();
+    for (const auto & info : get_hardware_info().sensors) {
+      Sensor sensor;
+      const auto pdu = info.parameters.find("pdu");
+      const std::string pdu_name = pdu != info.parameters.end() ? pdu->second : info.name;
+      const int index = bridge.wrench_index(pdu_name);
+      if (index < 0) {
+        RCLCPP_ERROR(get_logger(), "sensor %s: no wrench PDU %s among the plugin component's pdus",
+                     info.name.c_str(), pdu_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+      sensor.index = static_cast<std::size_t>(index);
+      for (const auto & state : info.state_interfaces) {
+        int axis = -1;
+        for (int a = 0; a < 6; ++a) {
+          if (state.name == axes[a]) {
+            axis = a;
+          }
+        }
+        if (axis < 0) {
+          RCLCPP_ERROR(get_logger(), "sensor %s: unsupported state interface %s", info.name.c_str(),
+                       state.name.c_str());
+          return CallbackReturn::ERROR;
+        }
+        sensor.interfaces.push_back({info.name + "/" + state.name, axis});
+      }
+      sensors_.push_back(sensor);
+    }
     return CallbackReturn::SUCCESS;
   }
 
@@ -96,6 +132,15 @@ public:
       }
       if (joint.has_effort) {
         set_state(joint.name + "/" + hardware_interface::HW_IF_EFFORT, bridge.effort(joint.index));
+      }
+    }
+    for (const auto & sensor : sensors_) {
+      if (!bridge.has_wrench(sensor.index)) {
+        continue;
+      }
+      const auto & wrench = bridge.wrench(sensor.index);
+      for (const auto & [name, axis] : sensor.interfaces) {
+        set_state(name, wrench[axis]);
       }
     }
     return hardware_interface::return_type::OK;
@@ -127,6 +172,12 @@ private:
     bool has_effort{false};
   };
   std::vector<Joint> joints_;
+  struct Sensor
+  {
+    std::size_t index{0};                               // in the bridge's wrenches
+    std::vector<std::pair<std::string, int>> interfaces;  // "<sensor>/force.x" and its axis
+  };
+  std::vector<Sensor> sensors_;
 };
 
 }  // namespace hakoniwa_ros2_control

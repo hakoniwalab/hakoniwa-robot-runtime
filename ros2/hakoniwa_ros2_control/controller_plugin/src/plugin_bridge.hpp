@@ -6,6 +6,7 @@
 // plugin through instance(); both live in the same shared library.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -41,6 +42,17 @@ public:
   std::uint8_t command_type(std::size_t index) const;
   double command(std::size_t index) const;
 
+  // Force-torque sensors: the wrench PDUs the Robot Runtime passes to update(),
+  // by PDU name, for the hardware interface's sensor state interfaces
+  // (force.x, force.y, force.z, torque.x, torque.y, torque.z). update() sets the
+  // latest value before ControllerManager::read(), so a controller reads the
+  // wrench of the same control step.
+  void configure_wrenches(const std::vector<std::string> & pdu_names);
+  int wrench_index(const std::string & pdu_name) const;
+  void set_wrench(std::size_t index, const std::array<double, 6> & wrench);
+  bool has_wrench(std::size_t index) const;
+  const std::array<double, 6> & wrench(std::size_t index) const;
+
 private:
   std::vector<std::string> joints_;
   std::vector<double> position_;
@@ -49,6 +61,9 @@ private:
   std::vector<std::uint8_t> has_command_;
   std::vector<std::uint8_t> command_type_;
   std::vector<double> command_;
+  std::vector<std::string> wrench_names_;
+  std::vector<std::array<double, 6>> wrench_;
+  std::vector<std::uint8_t> has_wrench_;
 };
 
 }  // namespace hakoniwa_ros2_control
