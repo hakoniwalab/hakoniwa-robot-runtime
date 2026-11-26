@@ -9,30 +9,21 @@
 #include <cstdio>
 #include <cstring>
 #include <new>
-#include <string_view>
 
 namespace {
 
-struct Joint {
-    std::string_view name;
+constexpr std::size_t joint_count = 6;
+
+struct JointLimits {
     double minimum;
     double maximum;
-};
-
-constexpr std::array joints {
-    Joint {"shoulder_pan", -1.91986, 1.91986},
-    Joint {"shoulder_lift", -1.74533, 1.74533},
-    Joint {"elbow_flex", -1.69, 1.69},
-    Joint {"wrist_flex", -1.65806, 1.65806},
-    Joint {"wrist_roll", -2.74385, 2.84121},
-    Joint {"gripper", -0.174533, 1.74533},
 };
 
 } // namespace
 
 struct HakoRobotPlugin {
-    std::array<std::size_t, joints.size()> actuator_index {};
-    std::array<double, joints.size()> start {};
+    std::array<JointLimits, joint_count> limits {};
+    std::array<double, joint_count> start {};
     Hako_ServoJRequest goal {};
     uint64_t start_ns {0};
     bool active {false};
@@ -43,22 +34,14 @@ namespace {
 
 HakoRobotPlugin* create(const HakoRobotCreateV1* args, char* error, size_t error_size)
 {
-    if (args->actuator_count != joints.size()) {
+    if (args->actuator_count != joint_count) {
         std::snprintf(error, error_size, "expected six SO-101 actuators");
         return nullptr;
     }
     HakoRobotPlugin service;
-    for (std::size_t i = 0; i < joints.size(); ++i) {
-        const auto first = args->actuators;
-        const auto last = first + args->actuator_count;
-        const auto found = std::find_if(first, last, [&](const auto& actuator) {
-            return actuator.id == joints[i].name;
-        });
-        if (found == last) {
-            std::snprintf(error, error_size, "missing SO-101 actuator %s", joints[i].name.data());
-            return nullptr;
-        }
-        service.actuator_index[i] = static_cast<std::size_t>(found - first);
+    for (std::size_t i = 0; i < joint_count; ++i) {
+        const auto& actuator = args->actuators[i];
+        service.limits[i] = {actuator.minimum, actuator.maximum};
     }
     return new (std::nothrow) HakoRobotPlugin(service);
 }
@@ -89,9 +72,10 @@ int32_t on_request(HakoRobotPlugin* instance, uint32_t service, const HakoServic
     if (!std::isfinite(goal.t) || goal.t < 1e-6 || goal.t > 60.0) {
         return 0;
     }
-    for (std::size_t i = 0; i < joints.size(); ++i) {
+    for (std::size_t i = 0; i < joint_count; ++i) {
         const auto value = goal.joint[i];
-        if (!std::isfinite(value) || value < joints[i].minimum || value > joints[i].maximum) {
+        const auto& limit = instance->limits[i];
+        if (!std::isfinite(value) || value < limit.minimum || value > limit.maximum) {
             return 0;
         }
     }
@@ -111,8 +95,8 @@ int32_t on_step(HakoRobotPlugin* instance, const HakoTickV1* tick, const HakoRob
         service.active = false;
         slot.result = HAKO_SERVICE_RESULT_CANCELED;
     } else if (slot.state == HAKO_SERVICE_STATE_DOING) {
-        for (std::size_t i = 0; i < joints.size(); ++i) {
-            service.start[i] = state->joints.position[service.actuator_index[i]];
+        for (std::size_t i = 0; i < joint_count; ++i) {
+            service.start[i] = state->joints.position[i];
         }
         service.start_ns = tick->sim_time_ns;
         service.active = true;
@@ -128,11 +112,10 @@ int32_t on_step(HakoRobotPlugin* instance, const HakoTickV1* tick, const HakoRob
     const double elapsed = static_cast<double>(tick->sim_time_ns - service.start_ns) * 1e-9;
     const double progress = std::min(elapsed / service.goal.t, 1.0);
     auto& commands = output->commands;
-    for (std::size_t i = 0; i < joints.size(); ++i) {
-        const auto target = service.actuator_index[i];
-        commands.has_command[target] = 1;
-        commands.command_type[target] = HAKO_JOINT_COMMAND_POSITION;
-        commands.value[target] = std::lerp(service.start[i], service.goal.joint[i], progress);
+    for (std::size_t i = 0; i < joint_count; ++i) {
+        commands.has_command[i] = 1;
+        commands.command_type[i] = HAKO_JOINT_COMMAND_POSITION;
+        commands.value[i] = std::lerp(service.start[i], service.goal.joint[i], progress);
     }
     service.commanded = true;
     return 0;

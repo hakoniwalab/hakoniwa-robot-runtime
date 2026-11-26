@@ -65,6 +65,9 @@ std::shared_ptr<PluginLibrary> PluginLibrary::open_builtin(
     require_supported_kind(path, expected_kind);
     std::shared_ptr<PluginLibrary> library(new PluginLibrary(path));
     library->validate(plugin->entry, expected_kind);
+    if (plugin->declaration_json != nullptr) {
+        library->builtin_declaration_json_.emplace(plugin->declaration_json);
+    }
     return library;
 }
 
@@ -81,6 +84,16 @@ PluginLibrary::~PluginLibrary()
 const std::string& PluginLibrary::path() const noexcept
 {
     return path_;
+}
+
+bool PluginLibrary::is_builtin() const noexcept
+{
+    return handle_ == nullptr;
+}
+
+const std::optional<std::string>& PluginLibrary::builtin_declaration_json() const noexcept
+{
+    return builtin_declaration_json_;
 }
 
 const std::string& PluginLibrary::plugin_id() const noexcept

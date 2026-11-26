@@ -166,6 +166,7 @@ set(HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES
     "${HAKO_RUNTIME_SRC_DIR}/plugin/builtin_plugins.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/plugin/plugin_library.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/runtime/controller/plugin_controller.cpp"
+    "${HAKO_RUNTIME_SRC_DIR}/runtime/service/robot_plugin_declaration.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/runtime/service/service_plugin_adapter.cpp"
 )
 

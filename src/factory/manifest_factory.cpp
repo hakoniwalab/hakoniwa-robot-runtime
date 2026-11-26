@@ -33,6 +33,7 @@
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+#include "runtime/service/robot_plugin_declaration.hpp"
 #include "runtime/service/service_plugin_adapter.hpp"
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
@@ -546,6 +547,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     plugin_config.services.push_back({
                         service.name, rpc_service_types.at(service.name), service.lockstep});
                 }
+                runtime::require_robot_plugin_declaration(*robot.library, plugin_config, plant->capabilities());
                 const std::shared_ptr<runtime::IRobotServices> instance = std::make_shared<runtime::ServicePlugin>(
                     robot.library, std::move(plugin_config));
                 std::vector<std::shared_ptr<runtime::AsyncServiceCommandSource>> sources;
