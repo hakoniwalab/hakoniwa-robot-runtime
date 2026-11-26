@@ -2,7 +2,7 @@
 
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/robot_runtime/runner/runner.hpp"
-#include "hakoniwa/robot_runtime/runner/lockstep_input.hpp"
+#include "runner/lockstep_gate.hpp"
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
 #include "hakoniwa/robot_runtime/runner/async_rpc_input.hpp"
 #endif
@@ -14,12 +14,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-namespace hakoniwa::robot_runtime::runtime {
-class AsyncServiceLockstepGate;
-}
-#endif
 
 namespace hakoniwa::robot_runtime::runner {
 
@@ -34,13 +28,12 @@ struct HakoniwaRunnerResources {
     std::shared_ptr<adapters::mujoco::MujocoActuatorPlant> plant;
     std::unique_ptr<::hakoniwa::pdu::Endpoint> endpoint;
     /** Inputs each step waits for (lockstep mode; empty otherwise). */
-    std::vector<std::shared_ptr<ILockstepInput>> lockstep_inputs;
+    std::vector<LockstepGate::Input> lockstep_inputs;
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
     /** Complete multi-robot request batches; opt-in build and empty by default. */
     std::vector<std::shared_ptr<AsyncRpcInput>> async_rpc_inputs;
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    std::shared_ptr<runtime::AsyncServiceLockstepGate> async_service_lockstep_gate;
     std::function<void()> prepare_async_services;
 #endif
 };
@@ -65,6 +58,7 @@ struct HakoniwaRunnerConfig {
     std::uint32_t physics_substeps {1};
     /** Core service definition JSON for RPC inputs; empty when unused. */
     std::string async_rpc_service_definition_path;
+    LockstepGate::Now lockstep_now {LockstepGate::Clock::now};
 };
 
 /** Runs one pre-composed ActuatorRuntime as a Hakoniwa Asset. */

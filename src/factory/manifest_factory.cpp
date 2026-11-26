@@ -36,7 +36,6 @@
 #include "adapters/endpoint/ackermann_step_service.hpp"
 #include "adapters/endpoint/person_step_service.hpp"
 #include "runner/hakoniwa/core_async_service_server.hpp"
-#include "runtime/service/async_service_lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
@@ -342,7 +341,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 "failed to open Runtime endpoint: " + endpoint_path);
         }
 
-        std::vector<std::shared_ptr<runner::ILockstepInput>> lockstep_inputs;
+        std::vector<runner::LockstepGate::Input> lockstep_inputs;
         std::vector<std::string> lockstep_matched;
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
         std::unordered_map<std::string,
@@ -355,7 +354,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             std::vector<runtime::AsyncServiceComponents> person_services;
             std::shared_ptr<runtime::IStatePublisher> person_state_publisher;
             std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
-            std::vector<std::shared_ptr<runtime::AsyncServiceCommandSource>> lockstep_services;
 #endif
             auto plant = std::make_shared<
                 adapters::mujoco::MujocoActuatorPlant>(definition);
@@ -396,7 +394,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 auto source = std::make_shared<runtime::AsyncServiceCommandSource>(
                     config.name, static_cast<int>(index), service_server, std::move(service), config.lockstep);
                 if (config.lockstep) {
-                    lockstep_services.push_back(source);
+                    lockstep_inputs.push_back({config.name, source});
                 }
                 return runtime::AsyncServiceComponents {
                     source,
@@ -579,7 +577,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key)
                         != lockstep_keys.end()) {
                         reader->subscribe_lockstep();
-                        lockstep_inputs.push_back(reader);
+                        lockstep_inputs.push_back({key, reader});
                         lockstep_matched.push_back(key);
                     } else {
                         reader->subscribe();
@@ -624,7 +622,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key)
                         != lockstep_keys.end()) {
                         reader->subscribe_lockstep();
-                        lockstep_inputs.push_back(reader);
+                        lockstep_inputs.push_back({key, reader});
                         lockstep_matched.push_back(key);
                     } else {
                         reader->subscribe();
@@ -937,8 +935,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 std::move(async_rpc_inputs),
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-                lockstep_services.empty() ? nullptr
-                    : std::make_shared<runtime::AsyncServiceLockstepGate>(std::move(lockstep_services)),
                 service_server ? std::function<void()>([service_server] { service_server->prepare(); })
                     : std::function<void()>(),
 #endif

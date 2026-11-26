@@ -3,7 +3,6 @@
 #include "runner/hakoniwa/hakoniwa_asset_driver.hpp"
 #include "runner/hakoniwa/hakoniwa_runner.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
-#include "runtime/service/async_service_lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 
 #include <array>
@@ -67,8 +66,8 @@ public:
         assert(usec == kStepUsec);
         sleeps.push_back(times());
         hakoniwa_usec_ += static_cast<std::uint64_t>(usec);
-        // Simulate a normal external stop after the first post-step sleep.
-        return EINTR;
+        // Simulate a normal external stop after the test's last sleep.
+        return sleeps.size() == stop_after_sleeps ? EINTR : 0;
     }
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
@@ -81,6 +80,7 @@ public:
     }
 
     std::vector<Times> sleeps;
+    std::size_t stop_after_sleeps {1};
     bool force_stopped {false};
 
 private:
@@ -202,10 +202,20 @@ std::shared_ptr<adapters::mujoco::MujocoActuatorPlant> make_plant()
     return plant;
 }
 
+class FakePduInput final : public ILockstepInput {
+public:
+    bool lockstep_ready() noexcept override { return ++polls >= 3; }
+    int polls {0};
+};
+
 struct Fixture {
-    Fixture(std::size_t request_on_poll, std::chrono::milliseconds clock_tick)
+    Fixture(std::size_t request_on_poll, std::chrono::milliseconds clock_tick, bool with_pdu = false)
         : server(std::make_shared<FakeServer>(*api, request_on_poll, clock_tick))
     {
+        if (with_pdu) {
+            pdu = std::make_shared<FakePduInput>();
+            api->stop_after_sleeps = 2;
+        }
     }
 
     HakoniwaRunnerResources resources()
@@ -223,19 +233,21 @@ struct Fixture {
             std::vector<std::shared_ptr<IController>> {controller},
             std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority> {}),
             plant, std::vector<std::shared_ptr<IStatePublisher>> {publisher});
-        resources.async_service_lockstep_gate = std::make_shared<AsyncServiceLockstepGate>(
-            std::vector {source}, AsyncServiceLockstepConfig {},
-            [server = server] { return server->now; });
+        resources.lockstep_inputs.push_back({kServiceName, source});
+        if (pdu) {
+            resources.lockstep_inputs.push_back({"Car-1/tire_friction", pdu});
+        }
         return resources;
     }
 
     std::shared_ptr<adapters::mujoco::MujocoActuatorPlant> plant = make_plant();
     std::shared_ptr<FakeAssetApi> api = std::make_shared<FakeAssetApi>(*plant);
     std::shared_ptr<FakeServer> server;
+    std::shared_ptr<FakePduInput> pdu;
     HakoniwaRunner runner {
         [this] { return resources(); },
         {.asset_name = "runner-lockstep", .pdu_definition_path = "unused.json",
-            .owns_conductor = false},
+            .owns_conductor = false, .lockstep_now = [this] { return server->now; }},
         api,
     };
 };
@@ -281,11 +293,23 @@ void test_runner_stops_on_gate_timeout()
     assert(fixture.api->times() == (Times {0, 0}));
 }
 
+void test_runner_syncs_before_first_step_when_a_pdu_is_registered()
+{
+    Fixture fixture(1, 1ms, true);
+    assert(fixture.runner.start() == 0);
+    assert(fixture.runner.wait() == 0);
+    assert(fixture.api->sleeps == (std::vector<Times> {{0, 0}, {kStepUsec, kStepUsec}}));
+    assert(fixture.pdu->polls == 3);
+    assert(fixture.server->polls == (std::vector<Times> {{kStepUsec, 0}}));
+    assert(fixture.server->replies == (std::vector<Times> {{kStepUsec, kStepUsec}}));
+}
+
 } // namespace
 
 int main()
 {
     test_runner_waits_without_advancing();
     test_runner_stops_on_gate_timeout();
+    test_runner_syncs_before_first_step_when_a_pdu_is_registered();
     return 0;
 }

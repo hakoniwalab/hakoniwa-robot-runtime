@@ -142,7 +142,7 @@ run_timeout() {
     local result=0
     wait "$SERVER_PID" || result=$?
     [[ "$result" -eq 1 ]]
-    grep -Fx 'SERVER ERROR: async service lockstep timeout: missing CarService/AckermannStep/B' "$run/server.log"
+    grep -Fx 'SERVER ERROR: lockstep timeout: missing CarService/AckermannStep/B' "$run/server.log"
     [[ $(grep -c '^STEP count=' "$run/server.log") -eq 1 ]]
     [[ $(grep -c '^RESPONSE ' "$run/client-A.log") -eq 1 ]]
     echo "Exactly one physics step completed before the timeout"

@@ -5,7 +5,7 @@
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/controller/ackermann_controller.hpp"
 #include "runtime/actuator_runtime.hpp"
-#include "runtime/service/async_service_lockstep_gate.hpp"
+#include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
@@ -126,7 +126,7 @@ struct ServicePipeline {
         std::make_shared<AsyncServiceController>("service", source);
     std::shared_ptr<AsyncServiceResponsePublisher> publisher =
         std::make_shared<AsyncServiceResponsePublisher>("reply", source);
-    AsyncServiceLockstepGate gate {{source}};
+    runner::LockstepGate gate {{{kService, source}}, {}};
 };
 
 void same_response_bytes()

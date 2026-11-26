@@ -3,7 +3,7 @@
 #include "runner/hakoniwa/hakoniwa_asset_driver.hpp"
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
-#include "runtime/service/async_service_lockstep_gate.hpp"
+#include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 
 #include "hako_asset_service.h"
@@ -19,6 +19,7 @@
 using namespace async_service_lockstep_fixture;
 using namespace hakoniwa::robot_runtime::runtime;
 using namespace hakoniwa::robot_runtime::runner::detail;
+using hakoniwa::robot_runtime::runner::LockstepGate;
 using hakoniwa::robot_runtime::runner::hakoniwa::CoreAsyncServiceServer;
 
 namespace {
@@ -123,7 +124,7 @@ public:
     {
         try {
             auto server = std::make_shared<CoreAsyncServiceServer>();
-            std::vector<std::shared_ptr<AsyncServiceCommandSource>> lockstep_sources;
+            std::vector<LockstepGate::Input> gate_inputs;
             std::vector<std::shared_ptr<ICommandSource>> sources;
             std::vector<std::shared_ptr<IController>> controllers;
             std::vector<std::shared_ptr<IStatePublisher>> publishers;
@@ -138,18 +139,18 @@ public:
                 auto source = std::make_shared<AsyncServiceCommandSource>(
                     name, id, server, std::make_shared<OneStepService>(i), true);
                 auto controller = std::make_shared<AsyncServiceController>(controller_id, source);
-                lockstep_sources.push_back(source);
+                gate_inputs.push_back({name, source});
                 sources.push_back(source);
                 controllers.push_back(controller);
                 publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(
                     std::string(name) + "/publisher", source));
                 priorities.push_back({controller_id, 10, "lockstep-joints"});
             }
-            AsyncServiceLockstepConfig config;
+            LockstepGate::Config config;
             config.timeout = std::chrono::seconds(3);
             config.initial_timeout = std::chrono::seconds(10);
-            gate_ = std::make_unique<AsyncServiceLockstepGate>(
-                std::move(lockstep_sources), config);
+            gate_ = std::make_unique<LockstepGate>(
+                std::move(gate_inputs), config);
             runtime_ = std::make_unique<ActuatorRuntime>(
                 std::move(sources), std::move(controllers),
                 std::make_shared<PriorityCommandArbiter>(std::move(priorities)),
@@ -215,7 +216,7 @@ private:
     }
 
     std::unique_ptr<ActuatorRuntime> runtime_;
-    std::unique_ptr<AsyncServiceLockstepGate> gate_;
+    std::unique_ptr<LockstepGate> gate_;
     unsigned steps_ {0};
     bool failed_ {false};
 };

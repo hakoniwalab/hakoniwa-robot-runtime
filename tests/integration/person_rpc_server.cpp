@@ -7,7 +7,7 @@
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
-#include "runtime/service/async_service_lockstep_gate.hpp"
+#include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 #endif
 
@@ -144,7 +144,7 @@ public:
             adapters::hakoniwa::person_step_service_name("B"),
         };
         server_ = std::make_shared<runner::hakoniwa::CoreAsyncServiceServer>(kAsset, names);
-        std::vector<std::shared_ptr<AsyncServiceCommandSource>> gate_sources;
+        std::vector<runner::LockstepGate::Input> gate_inputs;
         std::vector<std::shared_ptr<ICommandSource>> sources;
         std::vector<std::shared_ptr<IController>> controllers;
         std::vector<std::shared_ptr<IStatePublisher>> publishers;
@@ -161,12 +161,13 @@ public:
                 });
             auto source = std::make_shared<AsyncServiceCommandSource>(
                 name, id++, server_, std::move(service), true);
-            gate_sources.push_back(source);
+            gate_inputs.push_back({name, source});
             sources.push_back(source);
             controllers.push_back(std::make_shared<AsyncServiceController>(name + ":controller", source));
             publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":response", source));
         }
-        gate_ = std::make_unique<AsyncServiceLockstepGate>(std::move(gate_sources));
+        gate_ = std::make_unique<runner::LockstepGate>(
+            std::move(gate_inputs), runner::LockstepGate::Config {});
         runtime_ = std::make_unique<ActuatorRuntime>(
             std::move(sources), std::move(controllers),
             std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority> {}),
@@ -221,7 +222,7 @@ private:
     }
 
     std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> server_;
-    std::unique_ptr<AsyncServiceLockstepGate> gate_;
+    std::unique_ptr<runner::LockstepGate> gate_;
     std::unique_ptr<ActuatorRuntime> runtime_;
     std::size_t steps_ {0};
     bool failed_ {false};

@@ -68,6 +68,65 @@ AsyncServiceCommandSource::AsyncServiceCommandSource(
 
 std::string_view AsyncServiceCommandSource::id() const noexcept { return id_; }
 
+void AsyncServiceCommandSource::lockstep_prepare() noexcept
+{
+    staged_request_.reset();
+    lockstep_failure_.clear();
+}
+
+bool AsyncServiceCommandSource::lockstep_ready() noexcept
+{
+    if (!lockstep_) {
+        return true;
+    }
+    if (!lockstep_failure_.empty()) {
+        return false;
+    }
+
+    try {
+        if (!staged_request_) {
+            switch (server_->poll(service_id_)) {
+            case AsyncServiceEvent::None:
+                return false;
+            case AsyncServiceEvent::Request: {
+                if (expected_state_ != AsyncServiceState::Idle) {
+                    lockstep_failure_ = "service request arrived before the previous response";
+                    return false;
+                }
+                std::vector<std::byte> request;
+                if (!server_->get_request(service_id_, request)) {
+                    lockstep_failure_ = "failed to read request";
+                    return false;
+                }
+                staged_request_ = std::move(request);
+                break;
+            }
+            case AsyncServiceEvent::Cancel:
+                lockstep_failure_ = "request was canceled";
+                return false;
+            default:
+                lockstep_failure_ = "failed to poll server";
+                return false;
+            }
+        }
+        // A staged request already owns this service. Check the state without
+        // polling again, which could consume another event or send BUSY.
+        const auto actual = server_->status(service_id_);
+        if (actual == AsyncServiceState::Doing) {
+            return true;
+        }
+        lockstep_failure_ = state_mismatch(AsyncServiceState::Doing, actual);
+    } catch (const std::exception& error) {
+        lockstep_failure_ = error.what();
+        if (lockstep_failure_.empty()) {
+            lockstep_failure_ = "failed to stage request";
+        }
+    } catch (...) {
+        lockstep_failure_ = "failed to stage request";
+    }
+    return false;
+}
+
 CommandSourcePollResult AsyncServiceCommandSource::poll(const RuntimeStepContext& context)
 {
     const auto event = lockstep_
@@ -122,8 +181,8 @@ CommandSourcePollResult AsyncServiceCommandSource::poll(const RuntimeStepContext
 
 void AsyncServiceCommandSource::reset() noexcept
 {
-    // The gate owns the lifetime of requests staged from Core. A local plant
-    // reset can happen between the gate granting a step and its source poll.
+    // A local plant reset can happen after admission and before the source poll.
+    // Keep the staged request until the step takes it or Core discards the run.
     sequence_ = 0;
 }
 

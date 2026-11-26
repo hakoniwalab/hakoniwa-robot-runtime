@@ -3,7 +3,7 @@
 #include "runner/hakoniwa/hakoniwa_asset_driver.hpp"
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
-#include "runtime/service/async_service_lockstep_gate.hpp"
+#include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 
 #include "hako_asset_service.h"
@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 using namespace ::hakoniwa::robot_runtime::runtime;
+using ::hakoniwa::robot_runtime::runner::LockstepGate;
 using namespace ::hakoniwa::robot_runtime::adapters::hakoniwa;
 using namespace ::hakoniwa::robot_runtime::runner::detail;
 using ::hakoniwa::robot_runtime::runner::hakoniwa::CoreAsyncServiceServer;
@@ -85,7 +86,7 @@ public:
         }
         server_ = std::make_shared<CoreAsyncServiceServer>(kAsset, service_names);
         std::vector<Plant::Vehicle> vehicles;
-        std::vector<std::shared_ptr<AsyncServiceCommandSource>> gate_sources;
+        std::vector<LockstepGate::Input> gate_inputs;
         std::vector<std::shared_ptr<ICommandSource>> sources;
         std::vector<std::shared_ptr<IController>> controllers;
         std::vector<std::shared_ptr<IStatePublisher>> publishers;
@@ -97,14 +98,14 @@ public:
             auto source = std::make_shared<AsyncServiceCommandSource>(
                 name, static_cast<int>(index), server_, std::move(service), true);
             vehicles.push_back({vehicle, std::move(reader)});
-            gate_sources.push_back(source);
+            gate_inputs.push_back({name, source});
             sources.push_back(source);
             controllers.push_back(std::make_shared<AsyncServiceController>(name + ":controller", source));
             publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":reply", source));
         }
-        AsyncServiceLockstepConfig config;
+        LockstepGate::Config config;
         config.timeout = std::chrono::seconds(3);
-        gate_ = std::make_unique<AsyncServiceLockstepGate>(std::move(gate_sources), config);
+        gate_ = std::make_unique<LockstepGate>(std::move(gate_inputs), config);
         runtime_ = std::make_unique<ActuatorRuntime>(
             std::move(sources), std::move(controllers),
             std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority> {}),
@@ -163,7 +164,7 @@ private:
     }
 
     std::shared_ptr<CoreAsyncServiceServer> server_;
-    std::unique_ptr<AsyncServiceLockstepGate> gate_;
+    std::unique_ptr<LockstepGate> gate_;
     std::unique_ptr<ActuatorRuntime> runtime_;
     std::size_t steps_ {0};
     bool failed_ {false};

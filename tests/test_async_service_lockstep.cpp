@@ -1,6 +1,7 @@
 #undef NDEBUG  // Keep the contract checks in Release builds.
 
 #include "runtime/service/async_service_pipeline.hpp"
+#include "runner/lockstep_gate.hpp"
 
 #include <array>
 #include <cassert>
@@ -16,7 +17,6 @@
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP) && HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
-#include "runtime/service/async_service_lockstep_gate.hpp"
 
 #include <chrono>
 #include <initializer_list>
@@ -24,6 +24,7 @@
 #endif
 
 using namespace hakoniwa::robot_runtime::runtime;
+using namespace hakoniwa::robot_runtime::runner;
 
 namespace {
 
@@ -185,17 +186,30 @@ private:
     std::uint64_t time_usec_ {0};
 };
 
+class FakePduInput final : public ILockstepInput {
+public:
+    bool lockstep_ready() noexcept override
+    {
+        ++polls;
+        return arrived;
+    }
+
+    bool arrived {false};
+    int polls {0};
+};
+
 struct Fixture {
     Trace trace;
-    AsyncServiceLockstepGate::Clock::time_point now {};
+    LockstepGate::Clock::time_point now {};
     std::shared_ptr<FakePlant> plant = std::make_shared<FakePlant>(trace);
     std::vector<std::shared_ptr<FakeServer>> servers;
-    std::unique_ptr<AsyncServiceLockstepGate> gate;
+    std::shared_ptr<FakePduInput> pdu;
+    std::unique_ptr<LockstepGate> gate;
     std::unique_ptr<ActuatorRuntime> runtime;
 
-    explicit Fixture(std::initializer_list<bool> lockstep = {true})
+    explicit Fixture(std::initializer_list<bool> lockstep = {true}, bool with_pdu = false)
     {
-        std::vector<std::shared_ptr<AsyncServiceCommandSource>> gate_sources;
+        std::vector<LockstepGate::Input> gate_inputs;
         std::vector<std::shared_ptr<ICommandSource>> sources;
         std::vector<std::shared_ptr<IController>> controllers;
         std::vector<std::shared_ptr<IStatePublisher>> publishers;
@@ -211,7 +225,9 @@ struct Fixture {
             auto controller = std::make_shared<AsyncServiceController>(
                 "controller-" + suffix, source);
             servers.push_back(server);
-            gate_sources.push_back(source);
+            if (is_lockstep) {
+                gate_inputs.push_back({std::string(source->id()), source});
+            }
             sources.push_back(source);
             controllers.push_back(controller);
             publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(
@@ -219,8 +235,12 @@ struct Fixture {
             priorities.push_back({std::string(controller->id()), 1, "services"});
         }
 
-        gate = std::make_unique<AsyncServiceLockstepGate>(
-            std::move(gate_sources), AsyncServiceLockstepConfig {}, [this] { return now; });
+        if (with_pdu) {
+            pdu = std::make_shared<FakePduInput>();
+            gate_inputs.push_back({"Car-1/tire_friction", pdu});
+        }
+        gate = std::make_unique<LockstepGate>(
+            std::move(gate_inputs), LockstepGate::Config {}, [this] { return now; });
         runtime = std::make_unique<ActuatorRuntime>(
             std::move(sources), std::move(controllers),
             std::make_shared<PriorityCommandArbiter>(std::move(priorities)), plant,
@@ -234,6 +254,9 @@ struct Fixture {
             return false;
         }
         (void)runtime->step_hakoniwa(1);
+        if (pdu) {
+            pdu->arrived = false;
+        }
         return true;
     }
 
@@ -243,6 +266,87 @@ struct Fixture {
         assert(plant->read_state().sample_time_usec == steps * kDelta);
     }
 };
+
+void waits_for_pdu_and_service_in_either_order()
+{
+    for (const bool pdu_first : {true, false}) {
+        Fixture f({true}, true);
+        auto& server = *f.servers[0];
+        if (pdu_first) {
+            f.pdu->arrived = true;
+        } else {
+            server.queue(std::byte {1});
+        }
+        assert(!f.step_if_ready());
+        f.assert_time(0);
+        assert(server.replies.empty());
+        if (pdu_first) {
+            server.queue(std::byte {1});
+        } else {
+            f.pdu->arrived = true;
+        }
+        assert(f.step_if_ready());
+        f.assert_time(1);
+        assert(server.reads == 1 && server.replies.size() == 1);
+    }
+}
+
+void mixed_timeout_names_only_the_missing_input()
+{
+    for (const bool pdu_missing : {true, false}) {
+        Fixture f({true}, true);
+        if (pdu_missing) {
+            f.servers[0]->queue(std::byte {1});
+        } else {
+            f.pdu->arrived = true;
+        }
+        assert(!f.step_if_ready() && !f.gate->failed());
+        f.now += 60s;
+        assert(!f.step_if_ready() && f.gate->failed());
+        const auto reason = f.gate->failure_reason();
+        assert((reason.find("Car-1/tire_friction") != std::string::npos) == pdu_missing);
+        assert((reason.find("service-1") != std::string::npos) == !pdu_missing);
+        f.assert_time(0);
+    }
+}
+
+void mixed_pause_holds_both_inputs_and_restarts_the_deadline()
+{
+    Fixture f({true}, true);
+    auto& server = *f.servers[0];
+    f.now += 59s;
+    assert(!f.step_if_ready());
+    f.gate->set_waiting_paused(true);
+    server.queue(std::byte {1});
+    f.now += 2h;
+    assert(!f.step_if_ready() && !f.gate->failed());
+    assert(f.pdu->polls == 1 && server.polls == 1);
+    f.gate->set_waiting_paused(false);
+    assert(!f.step_if_ready());
+    f.now += 59s;
+    assert(!f.step_if_ready() && !f.gate->failed());
+    f.gate->set_waiting_paused(true);
+    f.pdu->arrived = true;
+    assert(!f.step_if_ready());
+    f.assert_time(0);
+    f.gate->set_waiting_paused(false);
+    assert(f.step_if_ready());
+    f.assert_time(1);
+}
+
+void pdu_only_keeps_initial_sync_and_has_no_deadline()
+{
+    const auto pdu = std::make_shared<FakePduInput>();
+    LockstepGate gate({{"Car-1/tire_friction", pdu}}, {}, [] {
+        assert(false && "PDU-only lockstep must not consult the clock");
+        return LockstepGate::Clock::time_point {};
+    });
+    gate.prepare();
+    assert(gate.sleep_before_first_step());
+    assert(!gate.ready_to_step() && !gate.failed());
+    pdu->arrived = true;
+    assert(gate.ready_to_step());
+}
 
 void waits_without_a_request()
 {
@@ -389,17 +493,14 @@ void old_core_busy_state_mismatch_stops_the_step()
     assert(server.reads == 1 && server.replies.empty());
 
     // Emulate Core having observed the overlap while the first input was staged.
-    // The gate must still avoid a second poll when the staged input is consumed.
+    // The source must report the error to the gate before admitting a step.
     server.queue(std::byte {2});
     assert(server.poll(1) == AsyncServiceEvent::None);
     assert(server.busy_replies == 1);
-    bool stopped = false;
-    try {
-        (void)f.step_if_ready();
-    } catch (const std::runtime_error& error) {
-        stopped = std::string(error.what()).find("service state mismatch") != std::string::npos;
-    }
-    assert(stopped);
+    assert(!f.gate->ready_to_step());
+    assert(f.gate->failed());
+    assert(f.gate->failure_reason().find("service-1") != std::string::npos);
+    assert(f.gate->failure_reason().find("service state mismatch") != std::string::npos);
     assert(f.trace.empty());
     assert(server.polls == 2 && server.reads == 1);
     assert(server.replies.empty());
@@ -439,7 +540,11 @@ int main()
     pause_blocks_progress_and_restarts_timeout();
     gate_does_not_wait_for_or_poll_an_async_service();
     old_core_busy_state_mismatch_stops_the_step();
-    std::cout << "async service lockstep unit tests H1-H8 passed\n";
+    waits_for_pdu_and_service_in_either_order();
+    mixed_timeout_names_only_the_missing_input();
+    mixed_pause_holds_both_inputs_and_restarts_the_deadline();
+    pdu_only_keeps_initial_sync_and_has_no_deadline();
+    std::cout << "async service lockstep unit tests H1-H8 and common gate G1-G4 passed\n";
 #else
     rejects_lockstep_construction_when_disabled();
     std::cout << "async service lockstep-disabled unit test H9 passed\n";

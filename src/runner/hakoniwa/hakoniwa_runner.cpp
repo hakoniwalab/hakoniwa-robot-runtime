@@ -2,9 +2,6 @@
 
 #include "runner/hakoniwa/hakoniwa_asset_driver.hpp"
 #include "runner/realtime_pacer.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-#include "runtime/service/async_service_lockstep_gate.hpp"
-#endif
 
 #include "hako_conductor.h"
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
@@ -19,6 +16,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -142,6 +140,7 @@ public:
             mj_deleteData(view);
             view = nullptr;
         }
+        step_gate.reset();
         resources = {};
         runtime_started = false;
         pacer.reset();
@@ -152,9 +151,6 @@ public:
 
     int on_initialize() noexcept override
     {
-        for (const auto& input : resources.lockstep_inputs) {
-            input->lockstep_prepare();
-        }
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
         for (const auto& input : resources.async_rpc_inputs) {
             if (!input->prepare_channels()) {
@@ -173,10 +169,8 @@ public:
                 return -1;
             }
         }
-        if (auto& gate = resources.async_service_lockstep_gate) {
-            gate->prepare();
-        }
 #endif
+        step_gate->prepare();
         if (resources.endpoint == nullptr
             || resources.endpoint->post_start() != HAKO_PDU_ERR_OK) {
             fail("failed to complete endpoint post_start");
@@ -190,25 +184,13 @@ public:
 
     bool sleep_before_first_step() const noexcept override
     {
-        // PDU lockstep needs its initial sync. Service clients can wait for
-        // the first reply before advancing their own time.
-        return !resources.lockstep_inputs.empty();
+        return step_gate->sleep_before_first_step();
     }
-
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    [[nodiscard]] bool has_async_service_lockstep() const noexcept
-    {
-        const auto& gate = resources.async_service_lockstep_gate;
-        return gate && !gate->empty();
-    }
-#endif
 
     bool ready_to_step() noexcept override
     {
-#if (defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT) \
-    || (defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE)
         const bool is_paused = paused.load();
-#endif
+        step_gate->set_waiting_paused(is_paused);
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
         // Propagate pause before consulting any other lockstep input.  A
         // different input may be incomplete and return early below, but that
@@ -216,23 +198,6 @@ public:
         for (const auto& input : resources.async_rpc_inputs) {
             input->set_waiting_paused(is_paused);
         }
-#endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-        bool service_ready = true;
-        if (has_async_service_lockstep()) {
-            const auto& gate = resources.async_service_lockstep_gate;
-            gate->set_waiting_paused(is_paused);
-            if (is_paused) {
-                return false;
-            }
-            service_ready = gate->ready_to_step();
-            if (gate->failed()) {
-                fail(gate->failure_reason());
-                return false;
-            }
-        }
-#endif
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
         // With asynchronous RPC, one request batch corresponds to exactly one
         // physics/time step.  A viewer pause therefore blocks the Driver before
         // on_step() and sleep_no_wait().  The legacy PDU-only path remains below.
@@ -240,10 +205,13 @@ public:
             return false;
         }
 #endif
-        for (const auto& input : resources.lockstep_inputs) {
-            if (!input->lockstep_ready()) {
-                return false;
-            }
+        const bool inputs_ready = step_gate->ready_to_step();
+        if (step_gate->failed()) {
+            fail(step_gate->failure_reason());
+            return false;
+        }
+        if (!step_gate->initial_sync_inputs_ready()) {
+            return false;
         }
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
         for (const auto& input : resources.async_rpc_inputs) {
@@ -255,11 +223,7 @@ public:
             }
         }
 #endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-        return service_ready;
-#else
-        return true;
-#endif
+        return inputs_ready;
     }
 
     int on_step() noexcept override
@@ -276,13 +240,9 @@ public:
                     std::cout << "[INFO] Robot simulation reset." << std::endl;
                     refresh_view(true);
                 }
-                // A service batch already admitted by ready_to_step() owns
+                // A timed batch already admitted by ready_to_step() owns
                 // this tick. A concurrent pause takes effect on the next tick.
-                if (paused.load()
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-                    && !has_async_service_lockstep()
-#endif
-                ) {
+                if (paused.load() && !step_gate->uses_deadline()) {
                     pacer.reset();
                     return 0;
                 }
@@ -341,11 +301,7 @@ public:
                 input->lockstep_prepare();
             }
 #endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-            if (auto& gate = resources.async_service_lockstep_gate) {
-                gate->prepare();
-            }
-#endif
+            step_gate->reset();
             return 0;
         } catch (const std::exception& error) {
             fail(error.what());
@@ -374,6 +330,7 @@ public:
     std::shared_ptr<detail::IHakoniwaAssetApi> asset_api;
 #endif
     HakoniwaRunnerResources resources;
+    std::optional<LockstepGate> step_gate;
     std::unique_ptr<detail::HakoniwaAssetDriver> driver;
     std::thread asset_thread;
     std::atomic_bool running {true};
@@ -456,6 +413,9 @@ int HakoniwaRunner::start()
             throw std::runtime_error(
                 "Hakoniwa Runner resources factory returned incomplete resources");
         }
+        impl_->step_gate.emplace(
+            std::move(impl_->resources.lockstep_inputs), LockstepGate::Config {},
+            impl_->config.lockstep_now);
 
         const auto delta_time_usec = impl_->resources.plant->delta_time_usec()
             * std::max<std::uint32_t>(1, impl_->config.physics_substeps);

@@ -2,6 +2,7 @@
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 
+#include "hakoniwa/robot_runtime/runner/lockstep_input.hpp"
 #include "runtime/controller/controller.hpp"
 #include "runtime/publisher/state_publisher.hpp"
 #include "runtime/service/async_service.hpp"
@@ -11,7 +12,7 @@
 
 namespace hakoniwa::robot_runtime::runtime {
 
-class AsyncServiceCommandSource final : public ICommandSource {
+class AsyncServiceCommandSource final : public ICommandSource, public runner::ILockstepInput {
 public:
     AsyncServiceCommandSource(
         std::string id, int service_id, std::shared_ptr<IAsyncServiceServer> server,
@@ -21,9 +22,14 @@ public:
     std::string_view id() const noexcept override;
     CommandSourcePollResult poll(const RuntimeStepContext& context) override;
     void reset() noexcept override;
+    bool lockstep_ready() noexcept override;
+    void lockstep_prepare() noexcept override;
+    void lockstep_reset() noexcept override { lockstep_prepare(); }
+    std::string_view lockstep_failure_reason() const noexcept override { return lockstep_failure_; }
+    bool lockstep_uses_deadline() const noexcept override { return lockstep_; }
+    bool lockstep_needs_initial_sync() const noexcept override { return false; }
 
 private:
-    friend class AsyncServiceLockstepGate;
     friend class AsyncServiceController;
     friend class AsyncServiceResponsePublisher;
 
@@ -33,6 +39,7 @@ private:
     std::shared_ptr<IAsyncService> service_;
     bool lockstep_;
     std::optional<std::vector<std::byte>> staged_request_;
+    std::string lockstep_failure_;
     AsyncServiceState expected_state_ {AsyncServiceState::Idle};
     std::optional<AsyncServiceResultCode> completion_;
     std::uint64_t sequence_ {0};
