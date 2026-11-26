@@ -1,4 +1,5 @@
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR \
     && !defined(HAKO_MUJOCO_ROBOTS_ENABLE_RAY_CASTER)
@@ -169,7 +170,8 @@ public:
         double initial_yaw_rad {0.0};
         std::array<int, adapters::hakoniwa::person_limb_joint_names.size()>
             limb_qpos {};
-        adapters::hakoniwa::PersonStepCommand command;
+        runtime::HumanoidMotionOperation command;
+        std::uint32_t last_motion_result {0};
         std::array<double, adapters::hakoniwa::person_limb_joint_names.size()>
             gait_angles {};
         double gait_phase {0.0};
@@ -195,7 +197,6 @@ public:
         std::optional<std::size_t> vehicle_index;
     };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     struct LocalContactBody {
         std::string body_id;
         int root_body_id {-1};
@@ -212,10 +213,9 @@ public:
 
     struct GeomFrictionBinding {
         int geom_id {-1};
-        /** Model friction before any directive; restored by reset(). */
+        /** Model friction before any operation, restored by reset(). */
         std::array<mjtNum, 3> original_friction {};
     };
-#endif
 
     explicit Impl(const runtime::RuntimeDefinition& definition)
         : world(std::make_shared<hako::robots::physics::impl::WorldImpl>())
@@ -321,7 +321,6 @@ public:
                 });
             }
         }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         std::unordered_set<std::string> mirror_ids;
         for (const auto& config : definition.mirror_bodies) {
             if (!mirror_ids.insert(config.mirror_id).second) {
@@ -364,7 +363,6 @@ public:
             mirror_bindings.push_back(std::move(mirror));
         }
         bind_geom_frictions(definition.geom_frictions);
-#endif
     }
 
     static std::string person_model_name(
@@ -536,20 +534,10 @@ public:
         return person_bindings[found->second];
     }
 
-    const PersonBinding& person(const std::string& name) const
-    {
-        const auto found = person_binding_by_name.find(name);
-        if (found == person_binding_by_name.end()) {
-            throw std::invalid_argument("PersonStep person is not bound: " + name);
-        }
-        return person_bindings[found->second];
-    }
-
     std::uint32_t apply_person_command(
-        const std::string& name,
-        const adapters::hakoniwa::PersonStepCommand& command)
+        PersonBinding& binding,
+        const runtime::HumanoidMotionOperation& command)
     {
-        auto& binding = person(name);
         const auto finite = [](const double value) {
             return std::isfinite(value);
         };
@@ -1056,11 +1044,8 @@ public:
         }
     }
 
-    adapters::hakoniwa::PersonStepState person_state(
-        const std::string& name,
-        const std::uint32_t result_code) const
+    runtime::HumanoidState person_state(const PersonBinding& binding) const
     {
-        const auto& binding = person(name);
         const auto* data = world->getData();
         const mjtNum* actual_position = &data->xpos[3 * binding.body_id];
         const mjtNum* actual_quaternion = &data->xquat[4 * binding.body_id];
@@ -1093,14 +1078,14 @@ public:
             quaternion = tilted;
         }
         return {
-            result_code,
-            model_time_usec(data),
+            binding.name,
             position,
             {quaternion[1], quaternion[2], quaternion[3], quaternion[0]},
             {data->qvel[binding.slide_x_qvel],
                 data->qvel[binding.slide_y_qvel], 0.0},
             {0.0, 0.0, data->qvel[binding.turn_qvel]},
             binding.gait_angles,
+            binding.last_motion_result,
         };
     }
 
@@ -1195,6 +1180,10 @@ public:
                 {velocity[0], velocity[1], velocity[2]},
                 sample_time_usec,
             });
+        }
+        state.humanoids.reserve(person_bindings.size());
+        for (const auto& binding : person_bindings) {
+            state.humanoids.push_back(person_state(binding));
         }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         append_mirror_contacts(state);
@@ -1333,6 +1322,8 @@ public:
         }
     }
 
+#endif
+
     /**
      * Resolves geom names once at binding and remembers their original
      * friction for reset().
@@ -1379,23 +1370,22 @@ public:
 
     /**
      * Sets the sliding friction (geom_friction[3 * id]) of each bound geom.
-     * Torsional and rolling friction stay unchanged. Directives are applied in
-     * list order, so a later directive for the same geom wins. The value
-     * persists in the model until the next directive or reset().
+     * Torsional and rolling friction stay unchanged. Operations are applied in
+     * list order, so a later operation for the same geom wins. The value
+     * persists in the model until the next operation or reset().
      */
-    void apply_geom_friction_directives(
-        const std::vector<std::shared_ptr<const runtime::GeomFrictionDirective>>&
-            directives,
+    void apply_surface_frictions(
+        const std::vector<runtime::SurfaceFrictionOperation>& operations,
         std::uint64_t simulation_time_usec)
     {
         auto* model = world->getModel();
-        for (const auto& directive : directives) {
-            const double friction = directive->sliding_friction();
-            if (directive->created_at_usec() > simulation_time_usec
+        for (const auto& operation : operations) {
+            const double friction = operation.sliding_friction;
+            if (operation.created_at_usec > simulation_time_usec
                 || !std::isfinite(friction) || friction < 0.0) {
                 continue;
             }
-            for (const auto& name : directive->geom_names()) {
+            for (const auto& name : operation.surfaces) {
                 const auto binding = geom_friction_binding_by_name.find(name);
                 if (binding == geom_friction_binding_by_name.end()) {
                     continue;
@@ -1405,9 +1395,8 @@ public:
         }
     }
 
-    void apply_mirror_directives(
-        const std::vector<std::shared_ptr<const runtime::MirrorBodyDirective>>&
-            directives,
+    void apply_body_motions(
+        const std::vector<runtime::BodyMotionOperation>& operations,
         std::uint64_t simulation_time_usec)
     {
         // Mirror configurations run a forward pass every step after applying
@@ -1416,15 +1405,14 @@ public:
         if (mirror_bindings.empty()) {
             return;
         }
-        std::unordered_map<std::string_view, const runtime::MirrorBodyCommand*> first;
+        std::unordered_map<std::string_view, const runtime::BodyMotionOperation*> first;
         std::unordered_set<std::string_view> duplicates;
-        for (const auto& directive : directives) {
-            const auto& command = directive->command();
-            if (!mirror_binding_by_id.contains(command.mirror_id)) {
+        for (const auto& command : operations) {
+            if (!mirror_binding_by_id.contains(command.body)) {
                 continue;
             }
-            if (!first.emplace(command.mirror_id, &command).second) {
-                duplicates.insert(command.mirror_id);
+            if (!first.emplace(command.body, &command).second) {
+                duplicates.insert(command.body);
             }
         }
         auto* data = world->getData();
@@ -1473,7 +1461,6 @@ public:
         }
         mj_forward(world->getModel(), data);
     }
-#endif
 
     double fallback_value(const Binding& binding) const noexcept
     {
@@ -1521,11 +1508,9 @@ public:
     std::vector<runtime::Vector3State> vehicle_contact_velocities;
     std::uint64_t next_person_contact_id {1};
     bool person_terrain_groups_configured {false};
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<MirrorBinding> mirror_bindings;
     std::unordered_map<std::string, std::size_t> mirror_binding_by_id;
     std::unordered_map<std::string, GeomFrictionBinding> geom_friction_binding_by_name;
-#endif
     std::uint64_t delta_time_usec {0};
 };
 
@@ -1606,23 +1591,22 @@ runtime::RobotState MujocoActuatorPlant::step(
     return impl_->state();
 }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-void MujocoActuatorPlant::apply_directives(
-    const runtime::PlantDirectiveList& directives)
+runtime::PlantCapabilities MujocoActuatorPlant::capabilities() const noexcept
+{
+    return {true, true, true};
+}
+
+void MujocoActuatorPlant::apply_operations(const runtime::PlantOperations& operations)
 {
     const auto simulation_time_usec = model_time_usec(
         impl_->world->getData());
-    // Each applier takes only its own directive kind. Model parameters such as
-    // friction are set first; the Mirror applier ends with mj_forward() so the
-    // state handed to the physics step is consistent.
-    impl_->apply_geom_friction_directives(
-        runtime::directives_of<runtime::GeomFrictionDirective>(directives),
-        simulation_time_usec);
-    impl_->apply_mirror_directives(
-        runtime::directives_of<runtime::MirrorBodyDirective>(directives),
-        simulation_time_usec);
+    impl_->apply_surface_frictions(operations.surface_frictions, simulation_time_usec);
+    impl_->apply_body_motions(operations.body_motions, simulation_time_usec);
+    for (const auto& motion : operations.humanoid_motions) {
+        auto& binding = impl_->person(motion.humanoid);
+        binding.last_motion_result = impl_->apply_person_command(binding, motion);
+    }
 }
-#endif
 
 runtime::RobotState MujocoActuatorPlant::reset(
     const std::uint64_t simulation_time_usec)
@@ -1632,11 +1616,9 @@ runtime::RobotState MujocoActuatorPlant::reset(
             "MuJoCo reset time must align to the model timestep");
     }
     auto* data = impl_->world->getData();
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    // mj_resetData() does not touch mjModel, so directive-modified model
+    // mj_resetData() does not touch mjModel, so operation-modified model
     // parameters are restored explicitly.
     impl_->restore_geom_frictions();
-#endif
     mj_resetData(impl_->world->getModel(), data);
     impl_->apply_initial_body_poses();
     data->time =
@@ -1686,20 +1668,6 @@ void MujocoActuatorPlant::bind_person(
     const double initial_yaw_rad)
 {
     impl_->bind_person(std::move(person_name), initial_yaw_rad);
-}
-
-std::uint32_t MujocoActuatorPlant::apply_person_command(
-    const std::string& person_name,
-    const adapters::hakoniwa::PersonStepCommand& command)
-{
-    return impl_->apply_person_command(person_name, command);
-}
-
-adapters::hakoniwa::PersonStepState MujocoActuatorPlant::person_state(
-    const std::string& person_name,
-    const std::uint32_t result_code) const
-{
-    return impl_->person_state(person_name, result_code);
 }
 
 std::vector<runtime::PersonContactEvent>

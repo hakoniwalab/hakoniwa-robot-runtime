@@ -44,8 +44,8 @@ class RecordingPlant final : public IActuatorPlant {
 public:
     std::uint64_t time_usec {0};
     std::vector<ActuatorCommand> actuator_commands;
-    std::vector<std::shared_ptr<const GeomFrictionDirective>> friction_directives;
-    std::optional<std::uint64_t> directives_applied_at_usec;
+    std::vector<SurfaceFrictionOperation> surface_frictions;
+    std::optional<std::uint64_t> operations_applied_at_usec;
 
     std::uint64_t delta_time_usec() const noexcept override
     {
@@ -60,10 +60,12 @@ public:
         return state;
     }
 
-    void apply_directives(const PlantDirectiveList& directives) override
+    PlantCapabilities capabilities() const noexcept override { return {.surface_friction = true}; }
+
+    void apply_operations(const PlantOperations& operations) override
     {
-        friction_directives = directives_of<GeomFrictionDirective>(directives);
-        directives_applied_at_usec = time_usec;
+        surface_frictions = operations.surface_frictions;
+        operations_applied_at_usec = time_usec;
     }
 
     RobotState step(const std::vector<ActuatorCommand>& commands) override
@@ -77,8 +79,8 @@ public:
     {
         time_usec = requested_time_usec;
         actuator_commands.clear();
-        friction_directives.clear();
-        directives_applied_at_usec.reset();
+        surface_frictions.clear();
+        operations_applied_at_usec.reset();
         return read_state();
     }
 };
@@ -151,58 +153,61 @@ void test_directive_bypasses_arbiter_and_rejects_invalid_values()
     assert(first.arbitration.selected_commands.size() == 1);
     assert(first.arbitration.selected_commands[0].actuator_id == "joint1");
     assert(plant->actuator_commands.size() == 1);
-    // The friction value reaches the Plant only as a directive.
-    assert(first.plant_directives.size() == 1);
-    assert(first.plant_directives[0]->type_name() == "hakoniwa/GeomFriction");
+    // The friction value reaches the Plant as a surface-friction operation.
+    assert(first.plant_operations.surface_frictions.size() == 1);
+    assert(first.plant_operations.body_motions.empty() && first.plant_operations.humanoid_motions.empty());
     assert(first.directive_controller_statuses.size() == 1);
     assert(first.directive_controller_statuses[0].state == ComponentState::Ready);
-    assert(plant->directives_applied_at_usec == 0);
-    assert(plant->friction_directives.size() == 1);
-    assert(plant->friction_directives[0]->geom_names() == tires);
-    assert(plant->friction_directives[0]->sliding_friction() == 0.8);
-    assert(plant->friction_directives[0]->created_at_usec() == 0);
+    assert(plant->operations_applied_at_usec == 0);
+    assert(plant->surface_frictions.size() == 1);
+    assert(plant->surface_frictions[0].surfaces == tires);
+    assert(plant->surface_frictions[0].sliding_friction == 0.8);
+    assert(plant->surface_frictions[0].created_at_usec == 0);
 
-    // No new value: no directive, the Plant keeps the applied friction.
+    // With no new value, the Plant keeps the applied friction.
     const auto idle = runtime.step();
-    assert(idle.plant_directives.empty());
-    assert(plant->friction_directives.empty());
+    assert(idle.plant_operations.surface_frictions.empty()
+        && idle.plant_operations.body_motions.empty() && idle.plant_operations.humanoid_motions.empty());
+    assert(plant->surface_frictions.empty());
     assert(idle.directive_controller_statuses[0].state == ComponentState::Ready);
 
     for (int index = 0; index < 3; ++index) {
         const auto rejected = runtime.step();
-        assert(rejected.plant_directives.empty());
-        assert(plant->friction_directives.empty());
+        assert(rejected.plant_operations.surface_frictions.empty()
+            && rejected.plant_operations.body_motions.empty() && rejected.plant_operations.humanoid_motions.empty());
+        assert(plant->surface_frictions.empty());
         assert(rejected.directive_controller_statuses[0].state
             == ComponentState::Degraded);
     }
 
     const auto updated = runtime.step();
-    assert(updated.plant_directives.size() == 1);
-    assert(plant->friction_directives.size() == 1);
-    assert(plant->friction_directives[0]->sliding_friction() == 1.2);
-    assert(plant->friction_directives[0]->created_at_usec() == 5'000);
+    assert(updated.plant_operations.surface_frictions.size() + updated.plant_operations.body_motions.size()
+        + updated.plant_operations.humanoid_motions.size() == 1);
+    assert(plant->surface_frictions.size() == 1);
+    assert(plant->surface_frictions[0].sliding_friction == 1.2);
+    assert(plant->surface_frictions[0].created_at_usec == 5'000);
     assert(arbiter->offered.size() == 1);
 
     (void)runtime.reset(0);
     assert(friction_reader->was_reset);
     const auto after_reset = runtime.step();
-    assert(after_reset.plant_directives.empty());
+    assert(after_reset.plant_operations.surface_frictions.empty()
+        && after_reset.plant_operations.body_motions.empty() && after_reset.plant_operations.humanoid_motions.empty());
     assert(after_reset.directive_controller_statuses[0].state
         == ComponentState::WaitingForInput);
 }
 
-void test_directives_of_picks_one_kind()
+void test_operations_group_each_kind()
 {
-    PlantDirectiveList mixed {
-        std::make_shared<const GeomFrictionDirective>(tires, 0.9, 0),
-        std::make_shared<const MirrorBodyDirective>(MirrorBodyCommand {}),
-        std::make_shared<const GeomFrictionDirective>(tires, 1.1, 0),
+    PlantOperations mixed {
+        .surface_frictions = {{tires, 0.9, 0}, {tires, 1.1, 0}},
+        .body_motions = {BodyMotionOperation {}},
     };
-    const auto frictions = directives_of<GeomFrictionDirective>(mixed);
+    const auto& frictions = mixed.surface_frictions;
     assert(frictions.size() == 2);
-    assert(frictions[0]->sliding_friction() == 0.9);
-    assert(frictions[1]->sliding_friction() == 1.1);
-    assert(directives_of<MirrorBodyDirective>(mixed).size() == 1);
+    assert(frictions[0].sliding_friction == 0.9);
+    assert(frictions[1].sliding_friction == 1.1);
+    assert(mixed.body_motions.size() == 1);
 }
 
 void test_factory_wires_geom_friction_as_directive()
@@ -241,8 +246,8 @@ void test_factory_wires_geom_friction_as_directive()
     assert(report.directive_controller_statuses.size() == 1);
     assert(report.directive_controller_statuses[0].component_id
         == "car-3-tire-friction");
-    assert(plant->friction_directives.size() == 1);
-    assert(plant->friction_directives[0]->sliding_friction() == 0.7);
+    assert(plant->surface_frictions.size() == 1);
+    assert(plant->surface_frictions[0].sliding_friction == 0.7);
 
     bool rejected = false;
     try {
@@ -258,7 +263,7 @@ void test_factory_wires_geom_friction_as_directive()
 int main()
 {
     test_directive_bypasses_arbiter_and_rejects_invalid_values();
-    test_directives_of_picks_one_kind();
+    test_operations_group_each_kind();
     test_factory_wires_geom_friction_as_directive();
     return 0;
 }

@@ -39,9 +39,9 @@ class RecordingPlant final : public IActuatorPlant {
 public:
     std::uint64_t time_usec {0};
     std::vector<ActuatorCommand> actuator_commands;
-    std::vector<MirrorBodyCommand> mirror_commands;
-    /** Plant time observed by apply_directives(); must precede step(). */
-    std::optional<std::uint64_t> directives_applied_at_usec;
+    std::vector<BodyMotionOperation> mirror_commands;
+    /** Plant time observed by apply_operations(); must precede step(). */
+    std::optional<std::uint64_t> operations_applied_at_usec;
 
     std::uint64_t delta_time_usec() const noexcept override
     {
@@ -62,13 +62,12 @@ public:
         return read_state();
     }
 
-    void apply_directives(const PlantDirectiveList& directives) override
+    PlantCapabilities capabilities() const noexcept override { return {.body_motion = true}; }
+
+    void apply_operations(const PlantOperations& operations) override
     {
-        mirror_commands.clear();
-        for (const auto& mirror : directives_of<MirrorBodyDirective>(directives)) {
-            mirror_commands.push_back(mirror->command());
-        }
-        directives_applied_at_usec = time_usec;
+        mirror_commands = operations.body_motions;
+        operations_applied_at_usec = time_usec;
     }
 
     RobotState reset(const std::uint64_t requested_time_usec) override
@@ -76,7 +75,7 @@ public:
         time_usec = requested_time_usec;
         actuator_commands.clear();
         mirror_commands.clear();
-        directives_applied_at_usec.reset();
+        operations_applied_at_usec.reset();
         return read_state();
     }
 };
@@ -111,11 +110,11 @@ MirrorContactState contact(
     return value;
 }
 
-const MirrorBodyCommand& mirror_command(const RuntimeStepReport& report)
+const BodyMotionOperation& mirror_command(const RuntimeStepReport& report)
 {
-    const auto mirrors = directives_of<MirrorBodyDirective>(report.plant_directives);
+    const auto& mirrors = report.plant_operations.body_motions;
     assert(mirrors.size() == 1);
-    return mirrors.front()->command();
+    return mirrors.front();
 }
 
 ComponentStatus publish_at(
@@ -180,11 +179,12 @@ void test_mirror_bypasses_arbiter_and_derives_velocity()
 
     const auto first = runtime.step();
     assert(first.arbitration.selected_commands.empty());
-    assert(first.plant_directives.size() == 1);
+    assert(first.plant_operations.surface_frictions.size() + first.plant_operations.body_motions.size()
+        + first.plant_operations.humanoid_motions.size() == 1);
     assert(first.directive_controller_statuses.size() == 1);
     assert(first.directive_controller_statuses[0].state == ComponentState::Ready);
-    // Directives are applied at the step-start Plant time, before physics.
-    assert(plant->directives_applied_at_usec == 0);
+    // Operations are applied at the step-start Plant time, before physics.
+    assert(plant->operations_applied_at_usec == 0);
     assert(plant->actuator_commands.empty());
     assert(plant->mirror_commands.size() == 1);
     assert(plant->mirror_commands[0].linear_velocity.x == 4.0);

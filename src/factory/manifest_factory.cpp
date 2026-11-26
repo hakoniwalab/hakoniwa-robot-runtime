@@ -186,18 +186,18 @@ private:
 
 class PersonStatePublisher final : public runtime::IStatePublisher {
 public:
-    explicit PersonStatePublisher(std::function<bool(std::string&)> write)
+    explicit PersonStatePublisher(std::function<bool(const runtime::RobotState&, std::string&)> write)
         : write_(std::move(write)) {}
 
     std::string_view id() const noexcept override { return "person-state"; }
 
     runtime::ComponentStatus publish(
-        const runtime::RobotState&, const runtime::RuntimeStepContext&) noexcept override
+        const runtime::RobotState& state, const runtime::RuntimeStepContext&) noexcept override
     {
         const std::string component_id(id());
         try {
             std::string error;
-            const bool ok = write_(error);
+            const bool ok = write_(state, error);
             return {component_id, ok ? runtime::ComponentState::Ready
                                      : runtime::ComponentState::Error, std::move(error)};
         } catch (const std::exception& error) {
@@ -210,7 +210,7 @@ public:
     void reset() noexcept override {}
 
 private:
-    std::function<bool(std::string&)> write_;
+    std::function<bool(const runtime::RobotState&, std::string&)> write_;
 };
 
 } // namespace
@@ -408,7 +408,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         ? 0.0
                         : initial->yaw_rad);
             }
-            std::function<bool(std::string&)> publish_people;
+            std::function<bool(const runtime::RobotState&, std::string&)> publish_people;
             if (!people.empty()) {
                 auto person_joint_writer = std::make_shared<
                     adapters::hakoniwa::JointStatePduWriter>(
@@ -421,34 +421,31 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     people,
                     person_state_robot,
                     person_contact_log_path);
-                publish_people = [plant, people, person_joint_writer,
-                    person_body_writer, person_contact_output](std::string& error) {
+                publish_people = [plant, person_joint_writer, person_body_writer, person_contact_output](
+                    const runtime::RobotState& state, std::string& error) {
                     runtime::JointStateOutput joints;
                     runtime::MultiDofJointStateOutput bodies;
+                    joints.simulation_time_usec = state.sample_time_usec;
+                    bodies.simulation_time_usec = state.sample_time_usec;
                     bodies.frame_id = "city_map";
-                    for (const auto& person : people) {
-                        const auto state = plant->person_state(person);
-                        joints.simulation_time_usec =
-                            state.simulation_time_usec;
-                        bodies.simulation_time_usec =
-                            state.simulation_time_usec;
+                    for (const auto& person : state.humanoids) {
                         for (std::size_t index = 0;
                              index < adapters::hakoniwa::person_limb_joint_names.size();
                              ++index) {
                             joints.names.push_back(
-                                person + "/" + std::string(
+                                person.name + "/" + std::string(
                                     adapters::hakoniwa::person_limb_joint_names[index]));
                             joints.position.push_back(
-                                state.joint_positions[index]);
+                                person.joint_positions[index]);
                             joints.velocity.push_back(0.0);
                             joints.effort.push_back(0.0);
                         }
                         bodies.bodies.push_back({
-                            person,
-                            state.position,
-                            state.orientation,
-                            state.linear_velocity,
-                            state.angular_velocity,
+                            person.name,
+                            person.position,
+                            person.orientation,
+                            person.linear_velocity,
+                            person.angular_velocity,
                         });
                     }
                     if (!person_joint_writer->send(joints)
@@ -471,13 +468,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 }
                 const auto& person = service.pdu_robot;
                 additional_services.push_back(make_service_components(index,
-                    std::make_shared<adapters::hakoniwa::PersonStepService>(person,
-                        [plant, person](const auto& command) {
-                            return plant->apply_person_command(person, command);
-                        },
-                        [plant, person](std::uint32_t code) {
-                            return plant->person_state(person, code);
-                        })));
+                    std::make_shared<adapters::hakoniwa::PersonStepService>(person)));
             }
             if (!additional_services.empty()) {
                 // An asynchronous person may have no reply on this tick.

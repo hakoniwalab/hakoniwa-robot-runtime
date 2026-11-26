@@ -11,7 +11,7 @@ namespace hakoniwa::robot_runtime::runtime {
 
 /**
  * Converts a std_msgs/Float64 sliding-friction value into one
- * GeomFrictionDirective for a fixed set of geoms.
+ * SurfaceFrictionOperation for a fixed set of geoms.
  *
  * A directive is emitted only when a new value arrives. The Plant keeps the
  * applied friction until the next directive, so a missing sample is not a

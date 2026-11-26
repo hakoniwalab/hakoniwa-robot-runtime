@@ -90,15 +90,14 @@ void test_mirror_application_and_contact_extraction()
     definition.mirror_bodies.push_back(mirror);
 
     adapters::mujoco::MujocoActuatorPlant plant(definition);
-    runtime::MirrorBodyCommand command;
-    command.mirror_id = "Drone-1";
+    runtime::BodyMotionOperation command;
+    command.body = "Drone-1";
     command.position = {0.0, 0.0, 1.0};
     command.orientation = {0.0, 0.0, 0.0};
     command.linear_velocity = {1.0, 0.0, 0.0};
     command.created_at_usec = 0;
 
-    plant.apply_directives({
-        std::make_shared<const runtime::MirrorBodyDirective>(command)});
+    plant.apply_operations({.body_motions = {command}});
     const auto state = plant.step({});
     assert(state.sample_time_usec == 1'000);
     assert(!state.mirror_contacts.empty());

@@ -41,6 +41,16 @@ bool input_is_active(
             || context.simulation_time_usec < *metadata.expires_at_usec);
 }
 
+void append_operations(PlantOperations& collected, const PlantOperations& operations)
+{
+    collected.surface_frictions.insert(collected.surface_frictions.end(),
+        operations.surface_frictions.begin(), operations.surface_frictions.end());
+    collected.body_motions.insert(collected.body_motions.end(),
+        operations.body_motions.begin(), operations.body_motions.end());
+    collected.humanoid_motions.insert(collected.humanoid_motions.end(),
+        operations.humanoid_motions.begin(), operations.humanoid_motions.end());
+}
+
 } // namespace
 
 ActuatorRuntime::ActuatorRuntime(
@@ -48,19 +58,14 @@ ActuatorRuntime::ActuatorRuntime(
     std::vector<std::shared_ptr<IController>> controllers,
     std::shared_ptr<ICommandArbiter> arbiter,
     std::shared_ptr<IActuatorPlant> plant,
-    std::vector<std::shared_ptr<IStatePublisher>> publishers
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    , std::vector<std::shared_ptr<IDirectiveController>> directive_controllers
-#endif
-    )
+    std::vector<std::shared_ptr<IStatePublisher>> publishers,
+    std::vector<std::shared_ptr<IDirectiveController>> directive_controllers)
     : sources_(std::move(sources))
     , controllers_(std::move(controllers))
     , arbiter_(std::move(arbiter))
     , plant_(std::move(plant))
     , publishers_(std::move(publishers))
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     , directive_controllers_(std::move(directive_controllers))
-#endif
 {
     require_non_null(arbiter_, "command arbiter");
     require_non_null(plant_, "actuator plant");
@@ -103,7 +108,6 @@ ActuatorRuntime::ActuatorRuntime(
         }
     }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::unordered_set<std::string_view> directive_controller_ids;
     directive_controller_ids.reserve(directive_controllers_.size());
     for (const auto& controller : directive_controllers_) {
@@ -120,7 +124,6 @@ ActuatorRuntime::ActuatorRuntime(
                 + std::string(controller->source_id()));
         }
     }
-#endif
 }
 
 RobotState ActuatorRuntime::read_current_state() const
@@ -209,31 +212,29 @@ std::vector<ControllerOutput> ActuatorRuntime::update_controllers(
 }
 
 RobotState ActuatorRuntime::step_plant(
-    const std::vector<ActuatorCommand>& commands
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    , const PlantDirectiveList& directives
-#endif
-    )
+    const std::vector<ActuatorCommand>& commands,
+    const PlantOperations& operations)
 {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    // Directives are applied before physics advances; post-physics effects
-    // such as Mirror contacts are then produced by step().
-    plant_->apply_directives(directives);
+    const auto capabilities = plant_->capabilities();
+    if (!capabilities.surface_friction && !operations.surface_frictions.empty()) {
+        throw std::runtime_error("plant does not support surface friction operations");
+    }
+    if (!capabilities.body_motion && !operations.body_motions.empty()) {
+        throw std::runtime_error("plant does not support body motion operations");
+    }
+    if (!capabilities.humanoid_motion && !operations.humanoid_motions.empty()) {
+        throw std::runtime_error("plant does not support humanoid motion operations");
+    }
+    plant_->apply_operations(operations);
     return plant_->step(commands);
-#else
-    return plant_->step(commands);
-#endif
 }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-PlantDirectiveList ActuatorRuntime::update_directive_controllers(
+void ActuatorRuntime::update_directive_controllers(
     const ControllerInputMap& inputs,
     const RuntimeStepContext& context,
-    std::vector<ComponentStatus>& statuses)
+    RuntimeStepReport& report)
 {
-    PlantDirectiveList directives;
-    directives.reserve(directive_controllers_.size());
-    statuses.reserve(directive_controllers_.size());
+    report.directive_controller_statuses.reserve(directive_controllers_.size());
     for (const auto& controller : directive_controllers_) {
         auto input = inputs.at(controller->source_id());
         if (input != nullptr && !controller->accepts(*input)) {
@@ -244,18 +245,12 @@ PlantDirectiveList ActuatorRuntime::update_directive_controllers(
             throw std::runtime_error(
                 "directive Controller output ID does not match controller ID");
         }
-        statuses.push_back(output.status);
-        for (auto& directive : output.directives) {
-            if (directive == nullptr) {
-                throw std::runtime_error(
-                    "directive Controller produced a null directive");
-            }
-            directives.push_back(std::move(directive));
+        if (output.status.state != ComponentState::Error) {
+            append_operations(report.plant_operations, output.operations);
         }
+        report.directive_controller_statuses.push_back(std::move(output.status));
     }
-    return directives;
 }
-#endif
 
 RuntimeStepContext ActuatorRuntime::complete_step(
     const RobotState& next_state,
@@ -328,28 +323,23 @@ RuntimeStepReport ActuatorRuntime::step_impl(
         }
     }
 
-    // 4. Let every Controller generate its candidate ActuatorCommands.
+    // 4. Collect the Controllers' candidate commands and Plant operations.
     const auto outputs = update_controllers(
         inputs, current_state, context, report.controller_statuses);
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    // Plant Directive Controllers use a distinct output type. Their
-    // directives therefore cannot enter the arbitration input below.
-    report.plant_directives = update_directive_controllers(
-        inputs, context, report.directive_controller_statuses);
-#endif
+    for (const auto& output : outputs) {
+        if (output.status.state != ComponentState::Error) {
+            append_operations(report.plant_operations, output.operations);
+        }
+    }
+    update_directive_controllers(inputs, context, report);
 
     // 5. Select one logical control strategy for this step.
     report.arbitration = arbiter_->arbitrate(outputs, current_state, context);
 
-    // 6. Apply Plant Directives (opt-in), guard and apply the selected
-    // commands, then advance MuJoCo one step.
+    // 6. Apply Plant operations, then advance physics with the selected commands.
     auto next_state = step_plant(
-        report.arbitration.selected_commands
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-        , report.plant_directives
-#endif
-        );
+        report.arbitration.selected_commands, report.plant_operations);
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
     // 6b. Measure: the sensor stage reads the truth of this physics step.
@@ -440,11 +430,9 @@ RobotState ActuatorRuntime::reset(const std::uint64_t simulation_time_usec)
     for (const auto& controller : controllers_) {
         controller->reset(state);
     }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     for (const auto& controller : directive_controllers_) {
         controller->reset();
     }
-#endif
     for (const auto& publisher : publishers_) {
         publisher->reset();
     }

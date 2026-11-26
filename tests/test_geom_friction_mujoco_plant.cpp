@@ -68,14 +68,11 @@ runtime::RuntimeDefinition definition_with(std::vector<std::string> geoms)
     return definition;
 }
 
-runtime::PlantDirectiveList friction_directive(
+runtime::PlantOperations friction_operation(
     const double value,
     const std::uint64_t created_at_usec = 0)
 {
-    return {std::make_shared<const runtime::GeomFrictionDirective>(
-        std::vector<std::string> {"tire", "not_bound"},
-        value,
-        created_at_usec)};
+    return {.surface_frictions = {{{"tire", "not_bound"}, value, created_at_usec}}};
 }
 
 void test_unknown_geom_is_a_configuration_error()
@@ -105,7 +102,7 @@ void test_directive_and_reset()
     assert(model->geom_priority[ground] == 0);
     assert(model->geom_priority[shell] == 0);
 
-    plant.apply_directives(friction_directive(0.25));
+    plant.apply_operations(friction_operation(0.25));
     assert(model->geom_friction[3 * tire] == 0.25);
     // Torsional / rolling friction and other geoms are unchanged.
     assert(model->geom_friction[3 * tire + 1] == 0.02);
@@ -115,18 +112,18 @@ void test_directive_and_reset()
 
     // The value persists while no further directive arrives.
     (void)plant.step({});
-    plant.apply_directives({});
+    plant.apply_operations({});
     (void)plant.step({});
     assert(model->geom_friction[3 * tire] == 0.25);
 
     // The Plant guard ignores non-finite, negative, and future directives.
-    plant.apply_directives(friction_directive(
+    plant.apply_operations(friction_operation(
         std::numeric_limits<double>::quiet_NaN()));
-    plant.apply_directives(friction_directive(-1.0));
-    plant.apply_directives(friction_directive(0.5, 1'000'000));
+    plant.apply_operations(friction_operation(-1.0));
+    plant.apply_operations(friction_operation(0.5, 1'000'000));
     assert(model->geom_friction[3 * tire] == 0.25);
 
-    plant.apply_directives(friction_directive(0.6));
+    plant.apply_operations(friction_operation(0.6));
     assert(model->geom_friction[3 * tire] == 0.6);
 
     (void)plant.reset(0);
@@ -149,7 +146,7 @@ double slide_distance(const bool lower_friction)
     const double start_x = data->qpos[qpos];
     data->qvel[qvel] = 2.0;
     if (lower_friction) {
-        plant.apply_directives(friction_directive(0.05));
+        plant.apply_operations(friction_operation(0.05));
     }
     for (int index = 0; index < 500; ++index) {
         (void)plant.step({});
@@ -210,8 +207,9 @@ void test_ackermann_step_friction_applies_to_all_wheels_before_physics()
             const auto output = controller.update(input.input, context);
             const bool updates = substep == 0 && requested > 0.0;
             assert(input.has_new_input() == updates);
-            assert(output.directives.size() == (updates ? 1 : 0));
-            plant.apply_directives(output.directives);
+            assert(output.operations.surface_frictions.size() + output.operations.body_motions.size()
+                + output.operations.humanoid_motions.size() == (updates ? 1 : 0));
+            plant.apply_operations(output.operations);
             assert_wheel_friction(expected);
             (void)plant.step({});
         }

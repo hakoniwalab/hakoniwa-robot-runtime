@@ -123,6 +123,9 @@ public:
     int steps {0};
     std::vector<double> applied;
 
+    PlantCapabilities capabilities() const noexcept override { return {}; }
+    void apply_operations(const PlantOperations&) override {}
+
     std::uint64_t delta_time_usec() const noexcept override { return kDeltaUsec; }
 
     RobotState read_state() const override

@@ -359,11 +359,15 @@ ControllerOutput RobotServiceController::update(
         if (!result.error.empty()) {
             output.status.state = result.commands.empty() ? ComponentState::Error : ComponentState::Degraded;
             output.status.detail = std::move(result.error);
-        } else if (active || !result.commands.empty()) {
+        } else if (active || !result.commands.empty()
+            || !result.operations.surface_frictions.empty()
+            || !result.operations.body_motions.empty()
+            || !result.operations.humanoid_motions.empty()) {
             output.status.state = ComponentState::Ready;
         }
     }
     output.commands = std::move(result.commands);
+    output.operations = std::move(result.operations);
     return output;
 }
 

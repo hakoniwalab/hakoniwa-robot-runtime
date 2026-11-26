@@ -31,6 +31,7 @@ struct RobotServiceSlot {
 struct RobotStepResult {
     std::vector<ActuatorCommand> commands; // The controller sets source_id.
     std::string error {}; // Empty on success, otherwise the robot-level failure reason.
+    PlantOperations operations {};
 };
 
 /** One robot's services, called synchronously from the simulation thread. */

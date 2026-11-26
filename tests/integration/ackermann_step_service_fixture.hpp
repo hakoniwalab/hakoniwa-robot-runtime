@@ -32,6 +32,9 @@ public:
 
     explicit Plant(std::vector<Vehicle> vehicles) : vehicles_(std::move(vehicles)) {}
 
+    PlantCapabilities capabilities() const noexcept override { return {}; }
+    void apply_operations(const PlantOperations&) override {}
+
     std::uint64_t delta_time_usec() const noexcept override { return kDelta; }
 
     RobotState read_state() const override

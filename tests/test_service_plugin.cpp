@@ -66,6 +66,9 @@ public:
 
 class Plant final : public IActuatorPlant {
 public:
+    PlantCapabilities capabilities() const noexcept override { return {}; }
+    void apply_operations(const PlantOperations&) override {}
+
     std::uint64_t delta_time_usec() const noexcept override { return 1000; }
     RobotState read_state() const override
     {

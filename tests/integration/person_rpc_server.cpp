@@ -28,9 +28,9 @@ struct Pose {
     double x {0.0};
     double y {0.0};
     double yaw {0.0};
-    adapters::hakoniwa::PersonStepCommand command;
+    runtime::HumanoidMotionOperation command;
 };
-void apply(Pose& pose, const adapters::hakoniwa::PersonStepCommand& command)
+void apply(Pose& pose, const runtime::HumanoidMotionOperation& command)
 {
     pose.command = command;
     const double c = std::cos(pose.yaw);
@@ -40,10 +40,10 @@ void apply(Pose& pose, const adapters::hakoniwa::PersonStepCommand& command)
     pose.yaw += dt * command.angular_velocity.z;
 }
 
-adapters::hakoniwa::PersonStepState read(const Pose& pose, std::uint64_t time)
+runtime::HumanoidState read(const Pose& pose, const std::string& name)
 {
-    adapters::hakoniwa::PersonStepState state;
-    state.simulation_time_usec = time;
+    runtime::HumanoidState state;
+    state.name = name;
     state.position = {pose.x, pose.y, 0.0};
     state.orientation = {0.0, 0.0, std::sin(pose.yaw / 2.0), std::cos(pose.yaw / 2.0)};
     state.linear_velocity = {
@@ -73,12 +73,27 @@ class Plant final : public IActuatorPlant {
 public:
     struct Person {
         Pose pose;
-        adapters::hakoniwa::PersonStepCommand command;
+        HumanoidMotionOperation command;
     };
     std::map<std::string, Person> people {{"A", {}}, {"B", {}}};
 
     std::uint64_t delta_time_usec() const noexcept override { return 1000; }
-    RobotState read_state() const override { return {.sample_time_usec = time_}; }
+    PlantCapabilities capabilities() const noexcept override { return {.humanoid_motion = true}; }
+    void apply_operations(const PlantOperations& operations) override
+    {
+        for (const auto& motion : operations.humanoid_motions) {
+            people.at(motion.humanoid).command = motion;
+        }
+    }
+    RobotState read_state() const override
+    {
+        RobotState state;
+        state.sample_time_usec = time_;
+        for (const auto& [name, person] : people) {
+            state.humanoids.push_back(read(person.pose, name));
+        }
+        return state;
+    }
     RobotState step(const std::vector<ActuatorCommand>&) override
     {
         for (auto& [name, person] : people) {
@@ -116,14 +131,7 @@ public:
         int id = 0;
         for (const auto& [person, input] : plant->people) {
             const auto& name = names.at(id);
-            auto service = std::make_shared<adapters::hakoniwa::PersonStepService>(person,
-                [plant, person](const auto& command) {
-                    plant->people.at(person).command = command;
-                    return 0;
-                },
-                [plant, person](std::uint32_t) {
-                    return read(plant->people.at(person).pose, plant->read_state().sample_time_usec);
-                });
+            auto service = std::make_shared<adapters::hakoniwa::PersonStepService>(person);
             auto service_source = std::make_shared<AsyncServiceCommandSource>(
                 name + "/0", id++, server_, service, 0, true);
             auto source = std::make_shared<RobotServiceSource>(name, std::vector {service_source});

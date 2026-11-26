@@ -18,14 +18,11 @@ std::string read_text(const char (&text)[HAKO_STRING_SIZE])
 
 } // namespace
 
-PersonStepService::PersonStepService(std::string person, ApplyCommand apply_command,
-    ReadState read_state)
-    : person_(std::move(person)),
-      apply_command_(std::move(apply_command)),
-      read_state_(std::move(read_state))
+PersonStepService::PersonStepService(std::string person)
+    : person_(std::move(person))
 {
-    if (person_.empty() || !apply_command_ || !read_state_) {
-        throw std::invalid_argument("PersonStep requires a person and plant bindings");
+    if (person_.empty()) {
+        throw std::invalid_argument("PersonStep requires a person");
     }
 }
 
@@ -41,11 +38,12 @@ bool PersonStepService::on_request(std::size_t, std::span<const std::byte> reque
     }
     Hako_PersonStepRequest wire {};
     std::memcpy(&wire, request.data() + metadata.base_off + body_offset, body_size);
-    result_code_ = apply_command_({
+    motion_ = runtime::HumanoidMotionOperation {
+        person_,
         {wire.cmd_vel.linear.x, wire.cmd_vel.linear.y, wire.cmd_vel.linear.z},
         {wire.cmd_vel.angular.x, wire.cmd_vel.angular.y, wire.cmd_vel.angular.z},
         read_text(wire.animation), read_text(wire.ride),
-    });
+    };
     step_ = wire.step;
     return true;
 }
@@ -54,22 +52,39 @@ runtime::RobotStepResult PersonStepService::on_step(
     const runtime::RobotState&, const runtime::RuntimeStepContext&,
     std::span<runtime::RobotServiceSlot> slots)
 {
+    runtime::RobotStepResult result;
     if (slots[0].state != runtime::AsyncServiceState::Idle) {
         slots[0].result = runtime::AsyncServiceStepOutcome::Ok;
+        if (motion_) {
+            result.operations.humanoid_motions.push_back(std::move(*motion_));
+            motion_.reset();
+        }
     }
-    return {};
+    return result;
 }
 
 bool PersonStepService::on_response(
-    std::size_t, const runtime::RobotState&, const runtime::RuntimeStepContext&, std::span<std::byte> packet)
+    std::size_t, const runtime::RobotState& state, const runtime::RuntimeStepContext&, std::span<std::byte> packet)
 {
-    return encode_person_step_response(person_, step_, read_state_(result_code_), packet);
+    const auto person = std::ranges::find(state.humanoids, person_, &runtime::HumanoidState::name);
+    if (person == state.humanoids.end()) {
+        return false;
+    }
+    return encode_person_step_response(person_, step_, {
+        person->last_motion_result,
+        state.sample_time_usec,
+        person->position,
+        person->orientation,
+        person->linear_velocity,
+        person->angular_velocity,
+        person->joint_positions,
+    }, packet);
 }
 
 void PersonStepService::reset()
 {
     step_ = 0;
-    result_code_ = 0;
+    motion_.reset();
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa
