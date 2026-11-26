@@ -162,3 +162,7 @@ add_test(NAME hako-service-plugin-test COMMAND hako-service-plugin-test
 # Stage 2c-3: the declaration JSON next to a plugin and the startup validator.
 add_robot_plugin_test(hako-robot-plugin-declaration-test ${RUNTIME_ROOT}/tests/test_robot_plugin_declaration.cpp)
 add_test(NAME hako-robot-plugin-declaration-test COMMAND hako-robot-plugin-declaration-test)
+
+# Stage 2c-2: car and person as builtin robot plugins.
+add_robot_plugin_test(hako-builtin-robot-plugins-test ${RUNTIME_ROOT}/tests/test_builtin_robot_plugins.cpp)
+add_test(NAME hako-builtin-robot-plugins-test COMMAND hako-builtin-robot-plugins-test)
