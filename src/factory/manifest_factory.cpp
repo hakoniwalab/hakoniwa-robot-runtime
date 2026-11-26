@@ -318,7 +318,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             rpc_readers;
         try {
             runtime::AckermannServiceFactory ackermann_service_factory;
-            std::vector<runtime::AsyncServiceComponents> additional_services;
+            std::vector<runtime::RobotServiceComponents> additional_services;
             std::shared_ptr<runtime::IStatePublisher> person_state_publisher;
             std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
             auto plant = std::make_shared<
@@ -363,23 +363,26 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     asset_name, std::move(service_names));
             }
             const auto make_service_components = [&](
-                std::size_t index, std::shared_ptr<runtime::IAsyncService> service) {
+                std::size_t index, std::shared_ptr<runtime::IRobotServices> robot) {
                 const auto& config = definition.services[index];
-                auto source = std::make_shared<runtime::AsyncServiceCommandSource>(
-                    config.name, static_cast<int>(index), service_server, std::move(service), config.lockstep);
+                auto service_source = std::make_shared<runtime::AsyncServiceCommandSource>(
+                    config.name + "/0", static_cast<int>(index), service_server, robot, 0, config.lockstep);
                 if (config.lockstep) {
-                    lockstep_inputs.push_back({config.name, source});
+                    lockstep_inputs.push_back({config.name, service_source});
                 }
-                return runtime::AsyncServiceComponents {
+                auto source = std::make_shared<runtime::RobotServiceSource>(config.name,
+                    std::vector {service_source});
+                return runtime::RobotServiceComponents {
                     source,
-                    std::make_shared<runtime::AsyncServiceController>(config.name + ":controller", source),
-                    std::make_shared<runtime::AsyncServiceResponsePublisher>(config.name + ":response", source),
+                    std::make_shared<runtime::RobotServiceController>(config.name + ":controller", source, robot),
+                    {std::make_shared<runtime::AsyncServiceResponsePublisher>(
+                        config.name + ":response", service_source)},
                 };
             };
             if (!ackermann_service_ids.empty()) {
                 ackermann_service_factory =
                     [&](const runtime::RuntimeAckermannControllerConfig& drive)
-                        -> std::optional<runtime::AsyncServiceComponents> {
+                        -> std::optional<runtime::RobotServiceComponents> {
                     const auto& vehicle = drive.pdu_robot;
                     const auto service = ackermann_service_ids.find(vehicle);
                     if (service == ackermann_service_ids.end()) {
@@ -498,11 +501,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     service_plugins.at(service.name), service.name, service.plugin_config_json,
                     std::move(actuator_ids), plant->delta_time_usec() * 1000,
                     HAKO_PDU_META_DATA_SIZE(), sizeof(Hako_ServiceResponseHeader));
-                auto components = make_service_components(index, instance);
-                if (instance->has_update()) {
-                    components.controller = std::make_shared<runtime::ServicePluginController>(
-                        std::move(components.controller), std::move(instance));
-                }
+                auto components = make_service_components(index, std::move(instance));
                 components.priority = service.priority;
                 additional_services.push_back(std::move(components));
             }

@@ -4,6 +4,7 @@
 #include "runner/hakoniwa/hakoniwa_runner.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#include "support/single_service_robot.hpp"
 
 #include <array>
 #include <cassert>
@@ -151,14 +152,14 @@ private:
     AsyncServiceState state_ {AsyncServiceState::Idle};
 };
 
-class Service final : public IAsyncService {
+class Service final : public test_support::OneService {
 public:
     bool on_request(std::span<const std::byte> request) override
     {
         return request.size() == 1 && request.front() == kRequest;
     }
 
-    AsyncServiceStepResult on_step(
+    test_support::OneServiceStepResult on_step(
         const RobotState&, AsyncServiceState, const RuntimeStepContext&) override
     {
         return {AsyncServiceStepOutcome::Ok, {}};
@@ -222,16 +223,18 @@ struct Fixture {
         resources.plant = plant;
         resources.endpoint = std::make_unique<::hakoniwa::pdu::Endpoint>(
             "runner-lockstep", HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
-        const auto source = std::make_shared<AsyncServiceCommandSource>(
-            kServiceName, kServiceId, server, std::make_shared<Service>(), true);
-        const auto controller = std::make_shared<AsyncServiceController>("controller", source);
-        const auto publisher = std::make_shared<AsyncServiceResponsePublisher>("publisher", source);
+        const auto robot = std::make_shared<test_support::SingleServiceRobot>(std::make_shared<Service>());
+        const auto service_source = std::make_shared<AsyncServiceCommandSource>(
+            std::string(kServiceName) + "/0", kServiceId, server, robot, 0, true);
+        const auto source = std::make_shared<RobotServiceSource>(kServiceName, std::vector {service_source});
+        const auto controller = std::make_shared<RobotServiceController>("controller", source, robot);
+        const auto publisher = std::make_shared<AsyncServiceResponsePublisher>("publisher", service_source);
         resources.runtime = std::make_unique<ActuatorRuntime>(
             std::vector<std::shared_ptr<ICommandSource>> {source},
             std::vector<std::shared_ptr<IController>> {controller},
             std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority> {}),
             plant, std::vector<std::shared_ptr<IStatePublisher>> {publisher});
-        resources.lockstep_inputs.push_back({kServiceName, source});
+        resources.lockstep_inputs.push_back({kServiceName, service_source});
         if (pdu) {
             resources.lockstep_inputs.push_back({"Car-1/tire_friction", pdu});
         }

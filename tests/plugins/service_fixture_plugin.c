@@ -1,5 +1,6 @@
 #include "hakoniwa/robot_runtime/plugin/service_plugin.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -80,6 +81,21 @@ static int32_t response(void* plugin, const HakoTickV1* tick, const HakoJointSta
 #define update NULL
 #define cancel NULL
 #else
+#ifdef SERVICE_FAILING_UPDATE
+static int32_t update(void* plugin, const HakoTickV1* tick, const HakoJointStatesV1* states,
+                      uint32_t pdu_count, const HakoPduViewV1* pdus,
+                      HakoJointCommandsV1* commands, char* error, size_t error_size)
+{
+    (void)plugin;
+    (void)tick;
+    (void)states;
+    (void)pdu_count;
+    (void)pdus;
+    (void)commands;
+    snprintf(error, error_size, "fixture update failed");
+    return 1;
+}
+#else
 static int32_t update(void* plugin, const HakoTickV1* tick, const HakoJointStatesV1* states,
                       uint32_t pdu_count, const HakoPduViewV1* pdus,
                       HakoJointCommandsV1* commands, char* error, size_t error_size)
@@ -95,6 +111,7 @@ static int32_t update(void* plugin, const HakoTickV1* tick, const HakoJointState
     commands->value[0] = tick->selected ? 4.0 : 3.0;
     return 0;
 }
+#endif
 
 static void cancel(void* plugin)
 {

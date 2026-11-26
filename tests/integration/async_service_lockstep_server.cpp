@@ -5,6 +5,7 @@
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#include "support/single_service_robot.hpp"
 
 #include "hako_asset_service.h"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
@@ -17,6 +18,7 @@
 #include <memory>
 
 using namespace async_service_lockstep_fixture;
+namespace test_support = hakoniwa::robot_runtime::test_support;
 using namespace hakoniwa::robot_runtime::runtime;
 using namespace hakoniwa::robot_runtime::runner::detail;
 using hakoniwa::robot_runtime::runner::LockstepGate;
@@ -67,7 +69,7 @@ private:
     std::array<double, kJoints.size()> positions_ {};
 };
 
-class OneStepService final : public IAsyncService {
+class OneStepService final : public test_support::OneService {
 public:
     explicit OneStepService(std::size_t channel) : channel_(channel) {}
 
@@ -82,7 +84,7 @@ public:
         return true;
     }
 
-    AsyncServiceStepResult on_step(
+    test_support::OneServiceStepResult on_step(
         const RobotState&, AsyncServiceState, const RuntimeStepContext& context) override
     {
         return {
@@ -136,14 +138,16 @@ public:
                     return fail("service server creation failed");
                 }
                 const std::string controller_id = std::string(name) + "/controller";
-                auto source = std::make_shared<AsyncServiceCommandSource>(
-                    name, id, server, std::make_shared<OneStepService>(i), true);
-                auto controller = std::make_shared<AsyncServiceController>(controller_id, source);
-                gate_inputs.push_back({name, source});
+                auto robot = std::make_shared<test_support::SingleServiceRobot>(std::make_shared<OneStepService>(i));
+                auto service_source = std::make_shared<AsyncServiceCommandSource>(
+                    std::string(name) + "/0", id, server, robot, 0, true);
+                auto source = std::make_shared<RobotServiceSource>(name, std::vector {service_source});
+                auto controller = std::make_shared<RobotServiceController>(controller_id, source, robot);
+                gate_inputs.push_back({name, service_source});
                 sources.push_back(source);
                 controllers.push_back(controller);
                 publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(
-                    std::string(name) + "/publisher", source));
+                    std::string(name) + "/publisher", service_source));
                 priorities.push_back({controller_id, 10, "lockstep-joints"});
             }
             LockstepGate::Config config;

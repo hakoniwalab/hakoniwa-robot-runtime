@@ -117,6 +117,7 @@ add_service_plugin(service_bad_abi SERVICE_BAD_ABI)
 add_service_plugin(service_small_table SERVICE_SMALL_TABLE)
 add_service_plugin(service_missing_step SERVICE_MISSING_STEP)
 add_service_plugin(service_no_optional SERVICE_NO_OPTIONAL)
+add_service_plugin(service_failing_update SERVICE_FAILING_UPDATE)
 
 add_executable(hako-service-plugin-test
     ${RUNTIME_ROOT}/tests/test_service_plugin.cpp
@@ -140,4 +141,4 @@ add_test(NAME hako-service-plugin-test COMMAND hako-service-plugin-test
     "$<TARGET_FILE:service_fixture>" "$<TARGET_FILE:hold_target>"
     "$<TARGET_FILE:service_bad_kind>" "$<TARGET_FILE:service_bad_abi>"
     "$<TARGET_FILE:service_small_table>" "$<TARGET_FILE:service_missing_step>"
-    "$<TARGET_FILE:service_no_optional>")
+    "$<TARGET_FILE:service_no_optional>" "$<TARGET_FILE:service_failing_update>")

@@ -38,15 +38,15 @@ using JoyEventReaderFactory = std::function<
 using AckermannDriveEventReaderFactory = std::function<
     std::shared_ptr<IAckermannDriveEventReader>(
         const RuntimeAckermannControllerConfig&)>;
-struct AsyncServiceComponents {
+struct RobotServiceComponents {
     std::shared_ptr<ICommandSource> source;
     std::shared_ptr<IController> controller;
-    std::shared_ptr<IStatePublisher> publisher;
+    std::vector<std::shared_ptr<IStatePublisher>> publishers;
     std::optional<std::int32_t> priority {std::nullopt};
 };
 
 using AckermannServiceFactory = std::function<
-    std::optional<AsyncServiceComponents>(const RuntimeAckermannControllerConfig&)>;
+    std::optional<RobotServiceComponents>(const RuntimeAckermannControllerConfig&)>;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 using MirrorBodyStateReaderFactory = std::function<
     std::shared_ptr<IMirrorBodyStateReader>(const RuntimeMirrorBodyConfig&)>;
@@ -86,7 +86,7 @@ using GeomFrictionReaderFactory = std::function<
     , const PluginPduChannels* plugin_pdu_channels = nullptr
 #endif
     , const AckermannServiceFactory& ackermann_service_factory = {}
-    , std::vector<AsyncServiceComponents> additional_services = {}
+    , std::vector<RobotServiceComponents> additional_services = {}
     , std::shared_ptr<IStatePublisher> person_state_publisher = {}
     );
 

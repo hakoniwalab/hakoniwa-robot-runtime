@@ -2,6 +2,7 @@
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
 #include "adapters/endpoint/person_step_service.hpp"
+#include "support/single_robot_service_calls.hpp"
 #include "adapters/endpoint/person_step_packet.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_PersonStepRequestPacket.hpp"
 #define hako_convert_pdu2cpp_array_string_varray hako_convert_pdu2ros_array_string_varray
@@ -282,7 +283,7 @@ void test_service_packet()
         {4.0, -5.0, 6.0}, {0.4, -0.5, 0.6}, {0.1, -0.2, 0.3, -0.4, 0.5, -0.6},
     };
     unsigned applied = 0;
-    PersonStepService service("A",
+    PersonStepService robot("A",
         [&](const PersonStepCommand& input) {
             REQUIRE(input.linear_velocity.x == 1.25);
             REQUIRE(input.linear_velocity.y == -0.5);
@@ -296,6 +297,7 @@ void test_service_packet()
             REQUIRE(result_code == state.result_code);
             return state;
         });
+    test_support::SingleRobotServiceCalls service(robot);
     const auto request = request_packet(
         41, command(1.25, -0.5, 0.25, "sit_talk", "Car-1/driver"));
     REQUIRE(service.on_request(request));
@@ -464,11 +466,12 @@ void test_gestures_and_sitting(bool use_service = false)
                            const adapters::hakoniwa::PersonStepCommand& input) {
         if (use_service) {
             std::uint32_t code = 0;
-            adapters::hakoniwa::PersonStepService service(person,
+            adapters::hakoniwa::PersonStepService robot(person,
                 [&](const auto& decoded) {
                     return code = plant.apply_person_command(person, decoded);
                 },
                 [&](std::uint32_t result) { return plant.person_state(person, result); });
+            test_support::SingleRobotServiceCalls service(robot);
             REQUIRE(service.on_request(request_packet(0, input)));
             return code;
         }

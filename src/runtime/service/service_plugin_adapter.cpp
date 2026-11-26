@@ -63,32 +63,39 @@ ServicePlugin::~ServicePlugin()
     table_.destroy(instance_);
 }
 
-bool ServicePlugin::on_request(std::span<const std::byte> request)
+bool ServicePlugin::on_request(std::size_t, std::span<const std::byte> request)
 {
     return table_.on_request(instance_, request.data(), request.size()) == 1;
 }
 
-AsyncServiceStepResult ServicePlugin::on_step(const RobotState& state, AsyncServiceState server_state,
-    const RuntimeStepContext& context)
+RobotStepResult ServicePlugin::on_step(const RobotState& state, const RuntimeStepContext& context,
+    std::span<RobotServiceSlot> slots)
 {
-    if (!copy_states(state)) {
-        return {AsyncServiceStepOutcome::Error, {}};
+    RobotStepResult result;
+    auto& slot = slots[0];
+    if (slot.state != AsyncServiceState::Idle) {
+        slot.result = AsyncServiceStepOutcome::Error;
+        if (copy_states(state)) {
+            const auto time = tick(context, first_step_);
+            const HakoJointStatesV1 states {
+                static_cast<uint32_t>(position_.size()), position_.data(), velocity_.data(), effort_.data(),
+            };
+            auto commands = prepare_commands();
+            slot.result = step_outcome(
+                table_.on_step(instance_, &time, &states, service_state(slot.state), &commands));
+            if (slot.result != AsyncServiceStepOutcome::Error && !collect_commands(context, result.commands)) {
+                slot.result = AsyncServiceStepOutcome::Error;
+                result.commands.clear();
+            }
+        }
     }
-    const auto time = tick(context, first_step_);
-    const HakoJointStatesV1 states {
-        static_cast<uint32_t>(position_.size()), position_.data(), velocity_.data(), effort_.data(),
-    };
-    auto commands = prepare_commands();
-    const auto outcome = step_outcome(
-        table_.on_step(instance_, &time, &states, service_state(server_state), &commands));
-    AsyncServiceStepResult result {outcome, {}};
-    if (outcome != AsyncServiceStepOutcome::Error && !collect_commands(context, result.commands)) {
-        return {AsyncServiceStepOutcome::Error, {}};
+    if (table_.update) {
+        result.error = append_periodic_commands(state, context, result.commands);
     }
     return result;
 }
 
-bool ServicePlugin::on_response(const RobotState& state, const RuntimeStepContext& context,
+bool ServicePlugin::on_response(std::size_t, const RobotState& state, const RuntimeStepContext& context,
     std::span<std::byte> packet)
 {
     if (packet.size() < metadata_size_ || packet.size() - metadata_size_ < header_size_
@@ -107,7 +114,7 @@ bool ServicePlugin::on_response(const RobotState& state, const RuntimeStepContex
     return table_.on_response(instance_, &time, &states, &reply) == 1;
 }
 
-void ServicePlugin::on_cancel()
+void ServicePlugin::on_cancel(std::size_t)
 {
     if (table_.on_cancel) {
         table_.on_cancel(instance_);
@@ -120,17 +127,11 @@ void ServicePlugin::reset()
     first_step_ = first_response_ = first_update_ = true;
 }
 
-bool ServicePlugin::has_update() const noexcept
+std::string ServicePlugin::append_periodic_commands(const RobotState& state, const RuntimeStepContext& context,
+    std::vector<ActuatorCommand>& output)
 {
-    return table_.update != nullptr;
-}
-
-ControllerOutput ServicePlugin::update(const RobotState& state, const RuntimeStepContext& context)
-{
-    ControllerOutput output {controller_id_, {controller_id_, ComponentState::Ready, {}}, {}};
     if (!copy_states(state)) {
-        output.status = {controller_id_, ComponentState::Error, "missing joint state"};
-        return output;
+        return "missing joint state";
     }
     const auto time = tick(context, first_update_);
     const HakoJointStatesV1 states {
@@ -140,12 +141,21 @@ ControllerOutput ServicePlugin::update(const RobotState& state, const RuntimeSte
     std::array<char, 512> error {};
     if (table_.update(instance_, &time, &states, 0, nullptr, &commands, error.data(), error.size()) != 0) {
         error.back() = '\0';
-        output.status = {controller_id_, ComponentState::Error, error.data()};
-    } else if (!collect_commands(context, output.commands)) {
-        output.status = {controller_id_, ComponentState::Error, "invalid joint command"};
-        output.commands.clear();
+        return error[0] ? error.data() : "service plugin update failed";
     }
-    return output;
+    std::vector<ActuatorCommand> periodic;
+    if (!collect_commands(context, periodic)) {
+        return "invalid joint command";
+    }
+    for (auto& command : periodic) {
+        const auto overlaps_rpc = [&](const auto& candidate) {
+            return candidate.actuator_id == command.actuator_id;
+        };
+        if (std::none_of(output.begin(), output.end(), overlaps_rpc)) {
+            output.push_back(std::move(command));
+        }
+    }
+    return {};
 }
 
 bool ServicePlugin::copy_states(const RobotState& state)
@@ -189,7 +199,7 @@ bool ServicePlugin::collect_commands(
         if (!std::isfinite(command_value_[i])) {
             return false;
         }
-        output.push_back({actuator_ids_[i], type, command_value_[i], service_name_,
+        output.push_back({actuator_ids_[i], type, command_value_[i], {},
             context.simulation_time_usec, std::nullopt});
     }
     return true;
@@ -201,42 +211,6 @@ HakoTickV1 ServicePlugin::tick(const RuntimeStepContext& context, bool& first_ca
         context.delta_time_usec * 1000,
         static_cast<uint8_t>(context.previous_selected_control_id == controller_id_),
         static_cast<uint8_t>(std::exchange(first_call, false))};
-}
-
-ServicePluginController::ServicePluginController(
-    std::shared_ptr<IController> rpc, std::shared_ptr<ServicePlugin> plugin)
-    : rpc_(std::move(rpc)), plugin_(std::move(plugin))
-{
-}
-
-ControllerOutput ServicePluginController::update(std::shared_ptr<const IControllerInput> input,
-    const RobotState& state, const RuntimeStepContext& context)
-{
-    auto rpc = rpc_->update(std::move(input), state, context);
-    auto periodic = plugin_->update(state, context);
-    if (rpc.status.state == ComponentState::Error) {
-        return rpc;
-    }
-    if (periodic.status.state == ComponentState::Error) {
-        if (rpc.commands.empty()) {
-            return periodic;
-        }
-        rpc.status = {rpc.controller_id, ComponentState::Degraded, std::move(periodic.status.detail)};
-        return rpc;
-    }
-
-    for (auto& command : periodic.commands) {
-        const auto overlaps_rpc = [&](const auto& candidate) {
-            return candidate.actuator_id == command.actuator_id;
-        };
-        if (std::none_of(rpc.commands.begin(), rpc.commands.end(), overlaps_rpc)) {
-            rpc.commands.push_back(std::move(command));
-        }
-    }
-    if (!rpc.commands.empty()) {
-        rpc.status.state = ComponentState::Ready;
-    }
-    return rpc;
 }
 
 } // namespace hakoniwa::robot_runtime::runtime

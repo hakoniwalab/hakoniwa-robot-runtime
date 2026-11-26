@@ -1,6 +1,7 @@
 #undef NDEBUG  // Keep the contract checks in Release builds.
 
 #include "runtime/service/async_service_pipeline.hpp"
+#include "support/single_service_robot.hpp"
 #include "runner/lockstep_gate.hpp"
 
 #include <array>
@@ -25,6 +26,7 @@
 
 using namespace hakoniwa::robot_runtime::runtime;
 using namespace hakoniwa::robot_runtime::runner;
+namespace test_support = hakoniwa::robot_runtime::test_support;
 
 namespace {
 
@@ -126,7 +128,7 @@ private:
 
 constexpr std::uint64_t kDelta = 1'000;
 
-class FakeService final : public IAsyncService {
+class FakeService final : public test_support::OneService {
 public:
     FakeService(std::string joint, Trace& trace, bool finish_request = true)
         : joint_(std::move(joint)), trace_(trace), finish_request_(finish_request) {}
@@ -141,7 +143,7 @@ public:
 
     void on_cancel() override { trace_.push_back(Call::Cancel); }
 
-    AsyncServiceStepResult on_step(
+    test_support::OneServiceStepResult on_step(
         const RobotState& state, AsyncServiceState server_state,
         const RuntimeStepContext& context) override
     {
@@ -251,19 +253,21 @@ struct Fixture {
         for (const bool is_lockstep : lockstep) {
             const auto suffix = std::to_string(++id);
             auto server = std::make_shared<FakeServer>(id, trace);
-            auto source = std::make_shared<AsyncServiceCommandSource>(
-                "service-" + suffix, id, server,
-                std::make_shared<FakeService>("joint-" + suffix, trace, finish_request), is_lockstep);
-            auto controller = std::make_shared<AsyncServiceController>(
-                "controller-" + suffix, source);
+            auto robot = std::make_shared<test_support::SingleServiceRobot>(
+                std::make_shared<FakeService>("joint-" + suffix, trace, finish_request));
+            auto service_source = std::make_shared<AsyncServiceCommandSource>(
+                "service-" + suffix + "/0", id, server, robot, 0, is_lockstep);
+            auto source = std::make_shared<RobotServiceSource>("service-" + suffix, std::vector {service_source});
+            auto controller = std::make_shared<RobotServiceController>(
+                "controller-" + suffix, source, robot);
             servers.push_back(server);
             if (is_lockstep) {
-                gate_inputs.push_back({std::string(source->id()), source});
+                gate_inputs.push_back({std::string(source->id()), service_source});
             }
             sources.push_back(source);
             controllers.push_back(controller);
             publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(
-                "publisher-" + suffix, source));
+                "publisher-" + suffix, service_source));
             priorities.push_back({std::string(controller->id()), 1, "services"});
         }
 
@@ -609,11 +613,12 @@ void rejects_lockstep_construction_when_disabled()
     Trace trace;
     auto server = std::make_shared<FakeServer>(1, trace);
     auto service = std::make_shared<FakeService>("joint", trace);
-    AsyncServiceCommandSource ordinary("async-service", 1, server, service);
+    auto robot = std::make_shared<test_support::SingleServiceRobot>(service);
+    AsyncServiceCommandSource ordinary("async-service", 1, server, robot, 0);
     assert(ordinary.id() == "async-service");
     bool rejected = false;
     try {
-        AsyncServiceCommandSource lockstep("lockstep-service", 1, server, service, true);
+        AsyncServiceCommandSource lockstep("lockstep-service", 1, server, robot, 0, true);
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
