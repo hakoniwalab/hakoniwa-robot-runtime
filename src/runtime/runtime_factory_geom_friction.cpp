@@ -2,6 +2,7 @@
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 
+#include <algorithm>
 #include <unordered_set>
 #include <utility>
 
@@ -15,6 +16,7 @@ bool load_geom_friction_definitions(
     // A geom can be owned by only one friction component; otherwise two PDU
     // streams would silently overwrite each other inside the Plant.
     std::unordered_set<std::string> owned_geoms;
+    std::unordered_set<std::string> service_vehicles;
     for (const auto& component : context.components) {
         if (component.value("kind", "") != "controller"
             || component.value("type", "") != "geom_friction") {
@@ -73,20 +75,38 @@ bool load_geom_friction_definitions(
             friction.geoms.push_back(std::move(name));
         }
 
-        std::string message_type;
-        if (!required_string(root.at("input"), "pdu_name", friction.pdu_name,
-                error, "geom friction input")
-            || !required_string(root.at("input"), "message_type",
-                message_type, error, "geom friction input")) {
-            return false;
-        }
-        if (message_type != "std_msgs/Float64") {
-            return fail(error,
-                "geom friction input must use std_msgs/Float64");
-        }
-        if (!verify_pdu_binding(context, friction.pdu_robot,
-                friction.pdu_name, "std_msgs/Float64", 32, error)) {
-            return false;
+        const auto& input = root.at("input");
+        if (input.contains("source")) {
+            if (input.at("source") != "ackermann_step"
+                || input.contains("pdu_name") || input.contains("message_type")) {
+                return fail(error, "invalid AckermannStep geom friction input: "
+                    + friction.component_id);
+            }
+            const auto& robot = friction.pdu_robot;
+            if (std::none_of(definition.services.begin(), definition.services.end(),
+                    [&robot](const auto& service) {
+                        return service.type == RuntimeServiceType::AckermannStep
+                            && service.pdu_robot == robot;
+                    })) {
+                return fail(error, "geom friction requires an AckermannStep service for " + robot);
+            }
+            if (!service_vehicles.insert(robot).second) {
+                return fail(error, "multiple AckermannStep geom friction inputs for " + robot);
+            }
+            friction.ackermann_step = true;
+        } else {
+            std::string message_type;
+            if (!required_string(input, "pdu_name", friction.pdu_name, error, "geom friction input")
+                || !required_string(input, "message_type", message_type, error, "geom friction input")) {
+                return false;
+            }
+            if (message_type != "std_msgs/Float64") {
+                return fail(error, "geom friction input must use std_msgs/Float64");
+            }
+            if (!verify_pdu_binding(context, friction.pdu_robot,
+                    friction.pdu_name, "std_msgs/Float64", 32, error)) {
+                return false;
+            }
         }
         definition.geom_frictions.push_back(std::move(friction));
     }

@@ -330,6 +330,16 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             auto plant = std::make_shared<
                 adapters::mujoco::MujocoActuatorPlant>(definition);
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+            std::unordered_map<std::string,
+                std::shared_ptr<adapters::hakoniwa::AckermannStepFrictionInput>> service_friction;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+            for (const auto& friction : definition.geom_frictions) {
+                if (friction.ackermann_step) {
+                    service_friction.emplace(friction.pdu_robot,
+                        std::make_shared<adapters::hakoniwa::AckermannStepFrictionInput>());
+                }
+            }
+#endif
             std::unordered_map<std::string, std::string> state_id_by_vehicle;
             for (const auto& output : definition.multi_dof_state_outputs) {
                 for (const auto& body : output.bodies) {
@@ -382,9 +392,11 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     if (service == ackermann_service_ids.end()) {
                         return std::nullopt;
                     }
+                    const auto friction = service_friction.find(vehicle);
                     return make_service_components(service->second,
                         std::make_shared<adapters::hakoniwa::AckermannStepService>(
-                            rpc_readers.at(vehicle), state_id_by_vehicle.at(vehicle)));
+                            rpc_readers.at(vehicle), state_id_by_vehicle.at(vehicle),
+                            friction == service_friction.end() ? nullptr : friction->second));
                 };
             }
             for (const auto& person : people) {
@@ -580,7 +592,13 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         output.pdu_robot,
                         output.pdu_name);
                 },
-                [&](const runtime::RuntimeGeomFrictionConfig& friction) {
+                [&](const runtime::RuntimeGeomFrictionConfig& friction)
+                    -> std::shared_ptr<runtime::IFloat64EventReader> {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+                    if (friction.ackermann_step) {
+                        return service_friction.at(friction.pdu_robot);
+                    }
+#endif
                     auto reader = std::make_shared<
                         adapters::hakoniwa::Float64PduEventReader>(
                         *endpoint,

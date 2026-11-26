@@ -30,7 +30,7 @@ constexpr char kDriveSource[] = "ackermann-pdu:drive";
 constexpr std::uint64_t kDelta = 500;
 constexpr std::uint32_t kSubsteps = 4;
 
-Packet request_packet(std::uint64_t step, const AckermannDriveCommand& command)
+Packet request_packet(std::uint64_t step, const AckermannDriveCommand& command, double friction = 0.0)
 {
     Packet packet {};
     HakoCpp_AckermannStepRequestPacket message {};
@@ -43,6 +43,7 @@ Packet request_packet(std::uint64_t step, const AckermannDriveCommand& command)
     message.body.drive.speed = command.speed_m_s;
     message.body.drive.acceleration = command.acceleration_m_s2;
     message.body.drive.jerk = command.jerk_m_s3;
+    message.body.tire_friction = friction;
     assert(hako::pdu::msgs::hako_srv_msgs::AckermannStepRequestPacket {}.cpp2pdu(
         message, reinterpret_cast<char*>(packet.data()), packet.size()) > 0);
     return packet;
@@ -192,6 +193,13 @@ void malformed_request_returns_invalid()
     assert(!pipeline.server->has_writer && !pipeline.reader->take_latest());
 }
 
+void rejects_friction_without_a_bound_vehicle_input()
+{
+    ServicePipeline pipeline;
+    assert(!pipeline.service->on_request(request_packet(0, {}, 0.5)));
+    assert(!pipeline.reader->take_latest());
+}
+
 void accepts_request_without_cpp_tail_padding()
 {
     ServicePipeline pipeline;
@@ -203,11 +211,19 @@ void accepts_request_without_cpp_tail_padding()
         .jerk_m_s3 = 1.5,
     };
     auto packet = request_packet(41, command);
-    // The generated Python converter writes 300 bytes after the metadata,
-    // ending at the last field of drive, without C++ tail alignment.
-    constexpr auto size = HAKO_PDU_META_DATA_SIZE() + 300;
+    // The new unpadded Python packet ends at tire_friction.
+    constexpr auto header = HAKO_PDU_META_DATA_SIZE() + offsetof(Hako_AckermannStepRequestPacket, body);
+    constexpr auto old_end = header + offsetof(Hako_AckermannStepRequest, tire_friction);
+    constexpr auto size = old_end + sizeof(Hako_AckermannStepRequest::tire_friction);
     HakoPduMetaDataType metadata {};
     std::memcpy(&metadata, packet.data(), sizeof(metadata));
+    for (const auto legacy_size : {old_end,
+             HAKO_PDU_META_DATA_SIZE()
+                 + HAKO_ALIGN_SIZE(old_end - HAKO_PDU_META_DATA_SIZE(), HAKO_ALIGNMENT_SIZE)}) {
+        metadata.heap_off = metadata.total_size = legacy_size;
+        std::memcpy(packet.data(), &metadata, sizeof(metadata));
+        assert(!pipeline.service->on_request(std::span(packet).first(legacy_size)));
+    }
     metadata.heap_off = size;
     metadata.total_size = size;
     std::memcpy(packet.data(), &metadata, sizeof(metadata));
@@ -217,6 +233,23 @@ void accepts_request_without_cpp_tail_padding()
     const auto applied = pipeline.reader->take_latest();
     assert(applied);
     assert(encode_ackermann_command(*applied) == encode_ackermann_command(command));
+}
+
+void friction_is_staged_only_for_positive_values()
+{
+    auto reader = std::make_shared<AckermannDriveRpcEventReader>();
+    auto friction = std::make_shared<AckermannStepFrictionInput>();
+    AckermannStepService service(reader, kBody, friction);
+
+    assert(service.on_request(request_packet(0, {}, 0.5)));
+    assert(friction->take_latest() == 0.5);
+    assert(service.on_request(request_packet(1, {}, 0.0)));
+    assert(!friction->take_latest());
+    assert(service.on_request(request_packet(2, {}, -0.1)));
+    assert(!friction->take_latest());
+    assert(service.on_request(request_packet(3, {}, 0.9)));
+    assert(friction->take_latest() == 0.9);
+    std::cout << "F1-F3: friction staged as 0.5, no update at zero or negative, then 0.9\n";
 }
 
 void commands_match_from_first_substep()
@@ -280,7 +313,9 @@ int main()
 {
     same_response_bytes();
     malformed_request_returns_invalid();
+    rejects_friction_without_a_bound_vehicle_input();
     accepts_request_without_cpp_tail_padding();
+    friction_is_staged_only_for_positive_values();
     commands_match_from_first_substep();
     std::cout << "AckermannStep service P1-1 through P1-3 passed\n";
 }

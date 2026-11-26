@@ -165,6 +165,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    std::vector<std::shared_ptr<ICommandSource>> service_friction_sources;
     for (const auto& mirror : definition.mirror_bodies) {
         auto reader = mirror_reader_factory(mirror);
         if (reader == nullptr) {
@@ -191,9 +192,10 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         // The Float64 sample is consumed in the step it is polled; the Plant
         // keeps the applied friction afterwards. One Plant step is therefore
         // a sufficient input lifetime.
-        const std::string source_id =
-            "geom-friction-pdu:" + friction.component_id;
-        sources.push_back(std::make_shared<ScalarPduCommandSource>(
+        const std::string source_id = (friction.ackermann_step
+            ? "geom-friction-service:" : "geom-friction-pdu:") + friction.component_id;
+        auto& input_sources = friction.ackermann_step ? service_friction_sources : sources;
+        input_sources.push_back(std::make_shared<ScalarPduCommandSource>(
             source_id, plant->delta_time_usec(), std::move(reader)));
         directive_controllers.push_back(std::make_shared<GeomFrictionController>(
             friction.component_id,
@@ -477,6 +479,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
     for (auto& service : person_services) {
         publishers.push_back(std::move(service.publisher));
+    }
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    // Poll the service request before the friction reader in this same substep.
+    for (auto& source : service_friction_sources) {
+        sources.push_back(std::move(source));
     }
 #endif
     auto arbiter = std::make_shared<PriorityCommandArbiter>(

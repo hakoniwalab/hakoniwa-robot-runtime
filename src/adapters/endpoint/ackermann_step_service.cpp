@@ -7,6 +7,7 @@
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepResponsePacket.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -33,8 +34,9 @@ std::optional<HakoPduMetaDataType> packet_metadata(
 } // namespace
 
 AckermannStepService::AckermannStepService(
-    std::shared_ptr<AckermannDriveRpcEventReader> reader, std::string body_id)
-    : reader_(std::move(reader)), body_id_(std::move(body_id))
+    std::shared_ptr<AckermannDriveRpcEventReader> reader, std::string body_id,
+    std::shared_ptr<AckermannStepFrictionInput> friction)
+    : reader_(std::move(reader)), body_id_(std::move(body_id)), friction_(std::move(friction))
 {
     if (!reader_ || body_id_.empty()) {
         throw std::invalid_argument("AckermannStep requires a reader and a MultiDOF body ID");
@@ -46,8 +48,8 @@ bool AckermannStepService::on_request(std::span<const std::byte> request)
     constexpr auto body_offset = offsetof(Hako_AckermannStepRequestPacket, body);
     // Python's generated packet ends at the last field. C++ also rounds
     // the struct size up to its alignment, adding trailing padding.
-    constexpr auto body_size = offsetof(Hako_AckermannStepRequest, drive)
-        + offsetof(Hako_AckermannDrive, jerk) + sizeof(Hako_AckermannDrive::jerk);
+    constexpr auto body_size = offsetof(Hako_AckermannStepRequest, tire_friction)
+        + sizeof(Hako_AckermannStepRequest::tire_friction);
     if (!packet_metadata(request, body_offset + body_size)) {
         return false;
     }
@@ -57,6 +59,13 @@ bool AckermannStepService::on_request(std::span<const std::byte> request)
     std::memcpy(&wire, request.data() + HAKO_PDU_META_DATA_SIZE() + body_offset, body_size);
     HakoCpp_AckermannStepRequest decoded {};
     cpp_pdu2cpp_AckermannStepRequest(nullptr, wire, decoded);
+    if (!std::isfinite(decoded.tire_friction)
+        || (decoded.tire_friction > 0.0 && !friction_)) {
+        return false;
+    }
+    if (decoded.tire_friction > 0.0) {
+        friction_->stage(decoded.tire_friction);
+    }
     reader_->apply({
         decoded.drive.steering_angle, decoded.drive.steering_angle_velocity,
         decoded.drive.speed, decoded.drive.acceleration, decoded.drive.jerk,
@@ -110,6 +119,9 @@ void AckermannStepService::reset()
 {
     step_ = 0;
     reader_->reset();
+    if (friction_) {
+        friction_->reset();
+    }
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

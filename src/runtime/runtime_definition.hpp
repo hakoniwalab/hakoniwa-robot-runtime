@@ -210,6 +210,7 @@ struct RuntimeGeomFrictionConfig {
      * contact is decided by the model (geom priority), not by the Runtime.
      */
     std::vector<std::string> geoms;
+    bool ackermann_step {false};
 };
 #endif
 
