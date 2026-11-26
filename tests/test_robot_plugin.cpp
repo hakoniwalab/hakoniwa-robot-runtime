@@ -235,13 +235,16 @@ Observed run_scenario(std::shared_ptr<plugin::PluginLibrary> library)
     step();
     assert(f.applied_joint() == 0.5);
 
-    // 4. stop on service 1: answered on its own Core id; the joint goes back to hold.
+    // 4. stop on service 1: answered on its own Core id. The robot stops commanding, so the
+    // hold controller takes over and keeps the last selected position (0.5), not the measured angle.
     f.core(kStopId).request = request(0);
     step();
     assert(f.core(kStopId).replies == std::vector {AsyncServiceResultCode::Ok});
     assert(f.core(kStopId).bodies.back()[0] == std::byte {0x41});
     assert(f.core(kMoveId).replies.size() == 1);
-    assert(f.applied_joint() == kHold);
+    assert(f.plant->stepped.back().size() == 1);
+    assert(f.plant->stepped.back().front().source_id.empty());  // the hold controller's command
+    assert(f.applied_joint() == 0.5);
 
     // 5. move 2.0 stays open; a cancel ends it as CANCELED.
     f.core(kMoveId).request = request(20);

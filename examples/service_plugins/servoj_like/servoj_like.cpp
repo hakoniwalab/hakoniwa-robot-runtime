@@ -28,7 +28,9 @@ constexpr std::array joints {
     Joint {"gripper", -0.174533, 1.74533},
 };
 
-struct ServoJ {
+} // namespace
+
+struct HakoRobotPlugin {
     std::array<std::size_t, joints.size()> actuator_index {};
     std::array<double, joints.size()> start {};
     Hako_ServoJRequest goal {};
@@ -37,29 +39,41 @@ struct ServoJ {
     bool commanded {false};
 };
 
-void* create(const HakoServiceCreateV1* args, char* error, size_t error_size)
+namespace {
+
+HakoRobotPlugin* create(const HakoRobotCreateV1* args, char* error, size_t error_size)
 {
-    if (args->joint_count != joints.size()) {
+    if (args->actuator_count != joints.size()) {
         std::snprintf(error, error_size, "expected six SO-101 actuators");
         return nullptr;
     }
-    ServoJ service;
+    HakoRobotPlugin service;
     for (std::size_t i = 0; i < joints.size(); ++i) {
-        const auto names = args->joint_names;
-        const auto found = std::find(names, names + args->joint_count, joints[i].name);
-        if (found == names + args->joint_count) {
+        const auto first = args->actuators;
+        const auto last = first + args->actuator_count;
+        const auto found = std::find_if(first, last, [&](const auto& actuator) {
+            return actuator.id == joints[i].name;
+        });
+        if (found == last) {
             std::snprintf(error, error_size, "missing SO-101 actuator %s", joints[i].name.data());
             return nullptr;
         }
-        service.actuator_index[i] = static_cast<std::size_t>(found - names);
+        service.actuator_index[i] = static_cast<std::size_t>(found - first);
     }
-    return new (std::nothrow) ServoJ(service);
+    return new (std::nothrow) HakoRobotPlugin(service);
 }
 
-int32_t on_request(void* instance, const void* packet, size_t size)
+void destroy(HakoRobotPlugin* instance)
 {
+    delete instance;
+}
+
+int32_t on_request(HakoRobotPlugin* instance, uint32_t service, const HakoServiceRequestV1* request)
+{
+    const auto* packet = request->data;
+    const auto size = request->size;
     constexpr auto offset = HAKO_PDU_META_DATA_SIZE() + offsetof(Hako_ServoJRequestPacket, body);
-    if (size < offset + sizeof(Hako_ServoJRequest)) {
+    if (service != 0 || size < offset + sizeof(Hako_ServoJRequest)) {
         return 0;
     }
     HakoPduMetaDataType metadata {};
@@ -81,57 +95,30 @@ int32_t on_request(void* instance, const void* packet, size_t size)
             return 0;
         }
     }
-    static_cast<ServoJ*>(instance)->goal = goal;
+    instance->goal = goal;
     return 1;
 }
 
-int32_t on_step(void* instance, const HakoTickV1* tick, const HakoJointStatesV1* states,
-    uint32_t server_state, HakoJointCommandsV1*)
+int32_t on_step(HakoRobotPlugin* instance, const HakoTickV1* tick, const HakoRobotStateV1* state,
+    HakoServiceSlotV1* slots, uint32_t slot_count, HakoRobotOutputV1* output, char*, size_t)
 {
-    auto& service = *static_cast<ServoJ*>(instance);
-    if (server_state == HAKO_SERVICE_STATE_CANCELING) {
+    if (slot_count != 1) {
+        return 1;
+    }
+    auto& service = *instance;
+    auto& slot = slots[0];
+    if (slot.state == HAKO_SERVICE_STATE_CANCELING) {
         service.active = false;
-        return HAKO_SERVICE_STEP_CANCELED;
+        slot.result = HAKO_SERVICE_RESULT_CANCELED;
+    } else if (slot.state == HAKO_SERVICE_STATE_DOING) {
+        for (std::size_t i = 0; i < joints.size(); ++i) {
+            service.start[i] = state->joints.position[service.actuator_index[i]];
+        }
+        service.start_ns = tick->sim_time_ns;
+        service.active = true;
+        service.commanded = false;
+        slot.result = HAKO_SERVICE_RESULT_OK;
     }
-    for (std::size_t i = 0; i < joints.size(); ++i) {
-        service.start[i] = states->position[service.actuator_index[i]];
-    }
-    service.start_ns = tick->sim_time_ns;
-    service.active = true;
-    service.commanded = false;
-    return HAKO_SERVICE_STEP_OK;
-}
-
-int32_t on_response(void*, const HakoTickV1*, const HakoJointStatesV1*, const HakoServiceReplyV1* reply)
-{
-    constexpr auto body_offset = offsetof(Hako_ServoJResponsePacket, body)
-        - sizeof(Hako_ServiceResponseHeader);
-    constexpr auto padded_size = HAKO_ALIGN_SIZE(sizeof(Hako_ServoJResponsePacket), HAKO_ALIGNMENT_SIZE)
-        - sizeof(Hako_ServiceResponseHeader);
-    if (reply->metadata_size != HAKO_PDU_META_DATA_SIZE()
-        || reply->header_size != sizeof(Hako_ServiceResponseHeader)
-        || reply->payload_size < padded_size) {
-        return 0;
-    }
-    HakoPduMetaDataType metadata {};
-    std::memcpy(&metadata, reply->metadata, sizeof(metadata));
-    if (HAKO_PDU_METADATA_IS_INVALID(&metadata) || metadata.base_off != reply->metadata_size) {
-        return 0;
-    }
-    const auto size = static_cast<uint32_t>(reply->metadata_size + reply->header_size + padded_size);
-    metadata.heap_off = size;
-    metadata.total_size = size;
-    std::memcpy(reply->metadata, &metadata, sizeof(metadata));
-    const Hako_ServoJResponse body {0};
-    std::memset(reply->payload, 0, padded_size);
-    std::memcpy(static_cast<char*>(reply->payload) + body_offset, &body, sizeof(body));
-    return 1;
-}
-
-int32_t update(void* instance, const HakoTickV1* tick, const HakoJointStatesV1*, uint32_t,
-    const HakoPduViewV1*, HakoJointCommandsV1* commands, char*, size_t)
-{
-    auto& service = *static_cast<ServoJ*>(instance);
     if (service.commanded && !tick->selected) {
         service.active = false;
     }
@@ -140,36 +127,54 @@ int32_t update(void* instance, const HakoTickV1* tick, const HakoJointStatesV1*,
     }
     const double elapsed = static_cast<double>(tick->sim_time_ns - service.start_ns) * 1e-9;
     const double progress = std::min(elapsed / service.goal.t, 1.0);
+    auto& commands = output->commands;
     for (std::size_t i = 0; i < joints.size(); ++i) {
         const auto target = service.actuator_index[i];
-        commands->has_command[target] = 1;
-        commands->command_type[target] = HAKO_JOINT_COMMAND_POSITION;
-        commands->value[target] = std::lerp(service.start[i], service.goal.joint[i], progress);
+        commands.has_command[target] = 1;
+        commands.command_type[target] = HAKO_JOINT_COMMAND_POSITION;
+        commands.value[target] = std::lerp(service.start[i], service.goal.joint[i], progress);
     }
     service.commanded = true;
     return 0;
 }
 
-void reset(void* instance)
+int32_t on_response(HakoRobotPlugin*, uint32_t service, const HakoTickV1*, const HakoRobotStateV1*,
+    const HakoServiceResponseV1* response)
 {
-    auto& service = *static_cast<ServoJ*>(instance);
-    service.active = service.commanded = false;
+    constexpr auto packet_size = HAKO_ALIGN_SIZE(sizeof(Hako_ServoJResponsePacket), HAKO_ALIGNMENT_SIZE);
+    const auto base = hako_service_packet_base_offset(response->data, response->size);
+    if (service != 0 || base != HAKO_PDU_META_DATA_SIZE() || response->size - base < packet_size) {
+        return 0;
+    }
+    HakoPduMetaDataType metadata {};
+    std::memcpy(&metadata, response->data, sizeof(metadata));
+    if (HAKO_PDU_METADATA_IS_INVALID(&metadata)) {
+        return 0;
+    }
+    const auto size = static_cast<uint32_t>(base + packet_size);
+    metadata.heap_off = size;
+    metadata.total_size = size;
+    std::memcpy(response->data, &metadata, sizeof(metadata));
+    auto* packet = static_cast<char*>(response->data) + base;
+    constexpr auto header_size = sizeof(Hako_ServiceResponseHeader);
+    const Hako_ServoJResponse body {0};
+    std::memset(packet + header_size, 0, packet_size - header_size);
+    std::memcpy(packet + offsetof(Hako_ServoJResponsePacket, body), &body, sizeof(body));
+    return 1;
 }
 
-void destroy(void* instance)
+void reset(HakoRobotPlugin* instance)
 {
-    delete static_cast<ServoJ*>(instance);
+    instance->active = false;
+    instance->commanded = false;
 }
 
 const HakoServicePluginV1 table {
     {sizeof(HakoServicePluginV1), HAKO_SERVICE_PLUGIN_ABI_VERSION, HAKO_PLUGIN_KIND_SERVICE,
         HAKO_SERVICE_PLUGIN_INTERFACE_REVISION, "servoj-like"},
-    create, on_request, on_step, on_response, nullptr, reset, destroy, update,
+    create, destroy, on_request, nullptr, on_step, on_response, reset,
 };
 
 } // namespace
 
-extern "C" HAKO_PLUGIN_EXPORT const HakoPluginHeaderV1* hako_robot_runtime_plugin_v1(void)
-{
-    return &table.header;
-}
+HAKO_ROBOT_PLUGIN_ENTRY(servoj_like, table)
