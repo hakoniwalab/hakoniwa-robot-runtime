@@ -1,14 +1,24 @@
 #pragma once
 
 #include "runtime/plant/actuator_plant.hpp"
-#include "runtime/source/ackermann_drive_command_source.hpp"
 
 #include <cstddef>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace hakoniwa::robot_runtime::runtime {
+
+struct AckermannDriveCommand {
+    double steering_angle_rad {0.0};
+    double steering_angle_velocity_rad_s {0.0};
+    double speed_m_s {0.0};
+    double acceleration_m_s2 {0.0};
+    double jerk_m_s3 {0.0};
+};
+
+} // namespace hakoniwa::robot_runtime::runtime
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 
@@ -19,19 +29,6 @@ struct AckermannStepState {
     runtime::QuaternionState orientation;
     runtime::Vector3State linear_velocity;
     runtime::Vector3State angular_velocity;
-};
-
-/** IAckermannDriveEventReader fed by the AckermannStep service. */
-class AckermannDriveRpcEventReader final
-    : public runtime::IAckermannDriveEventReader {
-public:
-    void apply(const runtime::AckermannDriveCommand& command) noexcept;
-    [[nodiscard]] std::optional<runtime::AckermannDriveCommand>
-        take_latest() override;
-    void reset() noexcept override;
-
-private:
-    std::optional<runtime::AckermannDriveCommand> pending_;
 };
 
 [[nodiscard]] std::vector<std::byte> encode_ackermann_command(

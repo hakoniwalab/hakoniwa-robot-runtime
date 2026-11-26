@@ -1,12 +1,6 @@
-#include "adapters/endpoint/person_step_packet.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
-#define hako_convert_pdu2cpp_array_string_varray hako_convert_pdu2ros_array_string_varray
-#define hako_convert_cpp2pdu_array_string_varray hako_convert_ros2pdu_array_string_varray
-#include "hako_srv_msgs/pdu_cpptype_conv_PersonStepResponsePacket.hpp"
-#undef hako_convert_pdu2cpp_array_string_varray
-#undef hako_convert_cpp2pdu_array_string_varray
-
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -140,93 +134,6 @@ std::string person_step_service_name(const std::string_view person_name)
 {
     return make_robot_rpc_service_name(
         "PersonService", "PersonStep", person_name);
-}
-
-bool read_person_step_packet_metadata(std::span<const std::byte> packet, std::size_t base_size,
-    HakoPduMetaDataType& metadata)
-{
-    if (packet.size() < sizeof(metadata)) {
-        return false;
-    }
-    std::memcpy(&metadata, packet.data(), sizeof(metadata));
-    return metadata.magicno == HAKO_PDU_META_DATA_MAGICNO
-        && metadata.version == HAKO_PDU_META_DATA_VERSION
-        && metadata.base_off == HAKO_PDU_META_DATA_SIZE()
-        && metadata.heap_off >= metadata.base_off + base_size
-        && metadata.heap_off <= metadata.total_size
-        && metadata.total_size <= packet.size();
-}
-
-bool encode_person_step_response(
-    const std::string_view person_name, const std::uint64_t step, const PersonStepState& state,
-    std::span<std::byte> packet)
-{
-    HakoPduMetaDataType metadata {};
-    if (!read_person_step_packet_metadata(packet, sizeof(Hako_ServiceResponseHeader), metadata)) {
-        return false;
-    }
-    HakoCpp_PersonStepResponse body {};
-    body.step = step;
-    body.result_code = state.result_code;
-    body.sim_time_usec = state.simulation_time_usec;
-    body.pose.translation.x = state.position.x;
-    body.pose.translation.y = state.position.y;
-    body.pose.translation.z = state.position.z;
-    body.pose.rotation.x = state.orientation.x;
-    body.pose.rotation.y = state.orientation.y;
-    body.pose.rotation.z = state.orientation.z;
-    body.pose.rotation.w = state.orientation.w;
-    body.twist.linear.x = state.linear_velocity.x;
-    body.twist.linear.y = state.linear_velocity.y;
-    body.twist.linear.z = state.linear_velocity.z;
-    body.twist.angular.x = state.angular_velocity.x;
-    body.twist.angular.y = state.angular_velocity.y;
-    body.twist.angular.z = state.angular_velocity.z;
-    body.joints.header.frame_id = "city_map";
-    body.joints.header.stamp.sec =
-        static_cast<std::int32_t>(state.simulation_time_usec / 1'000'000);
-    body.joints.header.stamp.nanosec =
-        static_cast<std::uint32_t>((state.simulation_time_usec % 1'000'000) * 1000);
-    for (std::size_t index = 0;
-         index < person_limb_joint_names.size(); ++index) {
-        body.joints.name.push_back(
-            std::string(person_name) + "/" + std::string(person_limb_joint_names[index]));
-        body.joints.position.push_back(state.joint_positions[index]);
-        body.joints.velocity.push_back(0.0);
-        body.joints.effort.push_back(0.0);
-    }
-    Hako_PersonStepResponsePacket wire;
-    std::memset(&wire, 0, sizeof(wire));
-    PduDynamicMemory heap;
-    if (!cpp_cpp2pdu_PersonStepResponse(body, wire.body, heap)) {
-        return false;
-    }
-
-    constexpr auto body_offset = offsetof(Hako_PersonStepResponsePacket, body);
-    metadata.heap_off = metadata.base_off + HAKO_ALIGN_SIZE(sizeof(wire), HAKO_ALIGNMENT_SIZE);
-    metadata.total_size = metadata.heap_off
-        + HAKO_ALIGN_SIZE(heap.get_total_size(), HAKO_ALIGNMENT_SIZE);
-    if (packet.size() < metadata.total_size) {
-        return false;
-    }
-    // Older generated converters leave bytes after fixed strings undefined.
-    // Clear those bytes in the response body and preserve the Core header.
-    auto& frame = wire.body.joints.header.frame_id;
-    std::fill(std::find(std::begin(frame), std::end(frame), '\0'), std::end(frame), '\0');
-    std::memcpy(packet.data(), &metadata, sizeof(metadata));
-    std::fill(packet.begin() + metadata.base_off + sizeof(wire.header),
-        packet.begin() + metadata.total_size, std::byte {0});
-    std::memcpy(packet.data() + metadata.base_off + body_offset, &wire.body, sizeof(wire.body));
-
-    auto* heap_bytes = reinterpret_cast<char*>(packet.data() + metadata.heap_off);
-    heap.copy_to_pdu(heap_bytes);
-    auto* names = heap_bytes + wire.body.joints._name_off;
-    for (std::size_t i = 0; i < person_limb_joint_names.size(); ++i) {
-        auto* text = names + i * sizeof(Hako_cstring);
-        auto* end = text + sizeof(Hako_cstring);
-        std::fill(std::find(text, end, '\0'), end, '\0');
-    }
-    return true;
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

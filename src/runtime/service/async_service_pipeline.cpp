@@ -221,8 +221,8 @@ void AsyncServiceCommandSource::reset() noexcept
 }
 
 RobotServiceSource::RobotServiceSource(
-    std::string id, std::vector<std::shared_ptr<AsyncServiceCommandSource>> services)
-    : id_(std::move(id)), services_(std::move(services))
+    std::string id, std::vector<std::shared_ptr<AsyncServiceCommandSource>> services, PduPoll poll_pdus)
+    : id_(std::move(id)), services_(std::move(services)), poll_pdus_(std::move(poll_pdus))
 {
     if (id_.empty() ||
         std::any_of(services_.begin(), services_.end(), [](const auto& service) { return !service; })) {
@@ -248,6 +248,9 @@ CommandSourcePollResult RobotServiceSource::poll(const RuntimeStepContext& conte
             }
         }
         events.push_back(std::move(event));
+    }
+    if (poll_pdus_ && poll_pdus_(context) && status.state == ComponentState::WaitingForInput) {
+        status.state = ComponentState::Ready;
     }
     if (status.state == ComponentState::WaitingForInput) {
         return {nullptr, std::move(status)};

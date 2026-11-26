@@ -1,4 +1,4 @@
-#include "adapters/endpoint/ackermann_step_packet.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 
 #include <array>
 #include <cstring>
@@ -63,25 +63,6 @@ std::string ackermann_step_service_name(const std::string_view vehicle_name)
         "CarService", "AckermannStep", vehicle_name);
 }
 
-void AckermannDriveRpcEventReader::apply(
-    const runtime::AckermannDriveCommand& command) noexcept
-{
-    pending_ = command;
-}
-
-std::optional<runtime::AckermannDriveCommand>
-AckermannDriveRpcEventReader::take_latest()
-{
-    auto result = pending_;
-    pending_.reset();
-    return result;
-}
-
-void AckermannDriveRpcEventReader::reset() noexcept
-{
-    pending_.reset();
-}
-
 std::vector<std::byte> encode_ackermann_command(
     const runtime::AckermannDriveCommand& command)
 {
@@ -141,29 +122,6 @@ bool decode_ackermann_state(
             wire.angular_velocity[2]},
     };
     return true;
-}
-
-HakoCpp_AckermannStepResponse ackermann_step_response_body(
-    std::uint64_t step, const AckermannStepState& state)
-{
-    HakoCpp_AckermannStepResponse body {};
-    body.step = step;
-    body.result_code = 0;
-    body.sim_time_usec = state.simulation_time_usec;
-    body.pose.translation.x = state.position.x;
-    body.pose.translation.y = state.position.y;
-    body.pose.translation.z = state.position.z;
-    body.pose.rotation.x = state.orientation.x;
-    body.pose.rotation.y = state.orientation.y;
-    body.pose.rotation.z = state.orientation.z;
-    body.pose.rotation.w = state.orientation.w;
-    body.twist.linear.x = state.linear_velocity.x;
-    body.twist.linear.y = state.linear_velocity.y;
-    body.twist.linear.z = state.linear_velocity.z;
-    body.twist.angular.x = state.angular_velocity.x;
-    body.twist.angular.y = state.angular_velocity.y;
-    body.twist.angular.z = state.angular_velocity.z;
-    return body;
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

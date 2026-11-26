@@ -1,9 +1,8 @@
 #undef NDEBUG
 
-#include "adapters/endpoint/ackermann_step_service.hpp"
-#include "adapters/endpoint/ackermann_step_packet.hpp"
+#include "support/builtin_step_plugins.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
-#include "runtime/controller/ackermann_controller.hpp"
 #include "runtime/actuator_runtime.hpp"
 #include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
@@ -14,6 +13,7 @@
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <utility>
@@ -24,12 +24,31 @@ using namespace ::hakoniwa::robot_runtime;
 using namespace ::hakoniwa::robot_runtime::runtime;
 using namespace ::hakoniwa::robot_runtime::adapters::hakoniwa;
 
+using plugins::ackermann_step::AckermannDriveCommand;
 using Packet = std::array<std::byte, 1024>;
 constexpr char kBody[] = "car-body";
 constexpr char kService[] = "CarService/AckermannStep/A";
 constexpr char kDriveSource[] = "ackermann-pdu:drive";
 constexpr std::uint64_t kDelta = 500;
 constexpr std::uint32_t kSubsteps = 4;
+const RuntimeAckermannControllerConfig kDrive {
+    .component_id = "drive",
+    .pdu_robot = "A",
+    .pdu_name = "ackermann_cmd",
+    .input_timeout_usec = 2500,
+    .geometry = {2.0, 1.0, 0.3, 0.6, 50.0},
+    .actuators = {"left-steer", "right-steer", "left-wheel", "right-wheel"},
+};
+
+RobotState car_state(std::uint64_t time = 0)
+{
+    RobotState state {.sample_time_usec = time};
+    state.bodies.push_back({.body_id = kBody});
+    for (const auto& actuator : test_support::ackermann_actuators(kDrive.actuators)) {
+        state.actuators.push_back({.actuator_id = actuator.component_id});
+    }
+    return state;
+}
 
 Packet request_packet(std::uint64_t step, const AckermannDriveCommand& command, double friction = 0.0)
 {
@@ -72,7 +91,7 @@ public:
     void apply_operations(const PlantOperations&) override {}
 
     std::uint64_t delta_time_usec() const noexcept override { return kDelta; }
-    RobotState read_state() const override { return {.sample_time_usec = time_}; }
+    RobotState read_state() const override { return car_state(time_); }
     RobotState step(const std::vector<ActuatorCommand>& applied) override
     {
         commands.push_back(applied);
@@ -120,19 +139,16 @@ private:
 };
 
 struct ServicePipeline {
-    std::shared_ptr<AckermannDriveRpcEventReader> reader =
-        std::make_shared<AckermannDriveRpcEventReader>();
     std::shared_ptr<Server> server = std::make_shared<Server>();
-    std::shared_ptr<AckermannStepService> robot =
-        std::make_shared<AckermannStepService>(reader, kBody);
+    std::shared_ptr<ServicePlugin> robot = test_support::make_ackermann_plugin(kDrive, kBody, kService, kDelta);
     std::unique_ptr<test_support::SingleRobotServiceCalls> service =
         std::make_unique<test_support::SingleRobotServiceCalls>(*robot);
     std::shared_ptr<AsyncServiceCommandSource> service_source =
         std::make_shared<AsyncServiceCommandSource>(std::string(kService) + "/0", 0, server, robot, 0, true);
     std::shared_ptr<RobotServiceSource> source =
-        std::make_shared<RobotServiceSource>(kService, std::vector {service_source});
+        std::make_shared<RobotServiceSource>(kDriveSource, std::vector {service_source});
     std::shared_ptr<RobotServiceController> controller =
-        std::make_shared<RobotServiceController>("service", source, robot);
+        std::make_shared<RobotServiceController>(kDrive.component_id, source, robot);
     std::shared_ptr<AsyncServiceResponsePublisher> publisher =
         std::make_shared<AsyncServiceResponsePublisher>("reply", service_source);
     runner::LockstepGate gate {{{kService, service_source}}, {}};
@@ -143,13 +159,27 @@ void same_response_bytes()
     ServicePipeline pipeline;
     const auto request = request_packet(41, {.steering_angle_rad = 0.1, .speed_m_s = 4.0});
     assert(pipeline.service->on_request(request));
-    const auto step = pipeline.service->on_step({}, AsyncServiceState::Doing, {});
-    assert(step.outcome == AsyncServiceStepOutcome::Ok && step.commands.empty());
+    const auto step = pipeline.service->on_step(car_state(), AsyncServiceState::Doing, {});
+    assert(step.outcome == AsyncServiceStepOutcome::Ok && step.commands.size() == 4);
+    const double radius = 2.0 / std::tan(static_cast<double>(0.1F));
+    const double left_radius = radius - 0.5;
+    const double right_radius = radius + 0.5;
+    const double wheel_velocity = 4.0 / 0.3;
+    const std::array expected_values {
+        std::atan(2.0 / left_radius), std::atan(2.0 / right_radius),
+        wheel_velocity * left_radius / radius, wheel_velocity * right_radius / radius,
+    };
+    const std::array<std::string_view, 4> expected_ids {"left-steer", "right-steer", "left-wheel", "right-wheel"};
+    for (std::size_t i = 0; i < step.commands.size(); ++i) {
+        assert(step.commands[i].actuator_id == expected_ids[i]);
+        assert(step.commands[i].type == (i < 2 ? ActuatorCommandType::Position : ActuatorCommandType::Velocity));
+        assert(std::abs(step.commands[i].value - expected_values[i]) < 1e-12);
+    }
 
     const AckermannStepState expected {12'345, {1.5, -2.0, 3.0},
         {0.1, 0.2, -0.3, 0.9}, {4.0, -5.0, 6.0}, {0.4, -0.5, 0.6}};
-    RobotState state;
-    state.sample_time_usec = expected.simulation_time_usec;
+    auto state = car_state(expected.simulation_time_usec);
+    state.bodies.clear();
     state.bodies.push_back({.body_id = "other"});
     state.bodies.push_back({.body_id = kBody, .position = expected.position,
         .orientation = expected.orientation, .linear_velocity = expected.linear_velocity,
@@ -158,7 +188,15 @@ void same_response_bytes()
     HakoCpp_AckermannStepResponsePacket reference_packet {};
     auto converter = hako::pdu::msgs::hako_srv_msgs::AckermannStepResponsePacket {};
     assert(converter.pdu2cpp(reinterpret_cast<char*>(reference.data()), reference_packet));
-    reference_packet.body = ackermann_step_response_body(41, expected);
+    auto& response = reference_packet.body;
+    response.step = 41;
+    response.result_code = 0;
+    response.sim_time_usec = expected.simulation_time_usec;
+    response.pose.translation = {expected.position.x, expected.position.y, expected.position.z};
+    response.pose.rotation = {expected.orientation.x, expected.orientation.y, expected.orientation.z,
+        expected.orientation.w};
+    response.twist.linear = {expected.linear_velocity.x, expected.linear_velocity.y, expected.linear_velocity.z};
+    response.twist.angular = {expected.angular_velocity.x, expected.angular_velocity.y, expected.angular_velocity.z};
     assert(converter.cpp2pdu(reference_packet, reinterpret_cast<char*>(reference.data()),
         reference.size()) > 0);
     auto service = response_envelope();
@@ -198,14 +236,16 @@ void malformed_request_returns_invalid()
         std::make_shared<Plant>(), {pipeline.publisher});
     (void)runtime.step_hakoniwa(1);
     assert(pipeline.server->result == AsyncServiceResultCode::Invalid);
-    assert(!pipeline.server->has_writer && !pipeline.reader->take_latest());
+    assert(!pipeline.server->has_writer && !plugins::ackermann_step::decode_request(bad_offset));
 }
 
 void rejects_friction_without_a_bound_vehicle_input()
 {
     ServicePipeline pipeline;
     assert(!pipeline.service->on_request(request_packet(0, {}, 0.5)));
-    assert(!pipeline.reader->take_latest());
+    RobotServiceSlot slot;
+    const auto step = pipeline.robot->on_step(car_state(), {}, std::span(&slot, 1));
+    assert(step.commands.empty() && step.operations.surface_frictions.empty());
 }
 
 void accepts_request_without_cpp_tail_padding()
@@ -238,53 +278,56 @@ void accepts_request_without_cpp_tail_padding()
 
     assert(!pipeline.service->on_request(std::span(packet).first(size - 1)));
     assert(pipeline.service->on_request(std::span(packet).first(size)));
-    const auto applied = pipeline.reader->take_latest();
-    assert(applied);
-    assert(encode_ackermann_command(*applied) == encode_ackermann_command(command));
+    const auto decoded = plugins::ackermann_step::decode_request(std::span(packet).first(size));
+    assert(decoded && decoded->step == 41 && decoded->tire_friction == 0.0);
+    assert(decoded->drive.steering_angle_rad == command.steering_angle_rad);
+    assert(decoded->drive.steering_angle_velocity_rad_s == command.steering_angle_velocity_rad_s);
+    assert(decoded->drive.speed_m_s == command.speed_m_s);
+    assert(decoded->drive.acceleration_m_s2 == command.acceleration_m_s2);
+    assert(decoded->drive.jerk_m_s3 == command.jerk_m_s3);
 }
 
 void friction_is_staged_only_for_positive_values()
 {
-    auto reader = std::make_shared<AckermannDriveRpcEventReader>();
-    auto friction = std::make_shared<AckermannStepFrictionInput>();
-    AckermannStepService service(reader, kBody, friction);
-
+    const auto robot = test_support::make_ackermann_plugin(kDrive, kBody, kService, kDelta, {"tire"});
+    test_support::SingleRobotServiceCalls service(*robot);
+    const auto friction = [&]() -> std::optional<double> {
+        RobotServiceSlot slot {AsyncServiceState::Doing};
+        const auto step = robot->on_step(car_state(), {}, std::span(&slot, 1));
+        assert(slot.result == AsyncServiceStepOutcome::Ok);
+        const auto& operations = step.operations.surface_frictions;
+        if (operations.empty()) {
+            return std::nullopt;
+        }
+        assert(operations.size() == 1);
+        return operations.front().sliding_friction;
+    };
     assert(service.on_request(request_packet(0, {}, 0.5)));
-    assert(friction->take_latest() == 0.5);
+    assert(friction() == 0.5);
     assert(service.on_request(request_packet(1, {}, 0.0)));
-    assert(!friction->take_latest());
+    assert(!friction());
     assert(service.on_request(request_packet(2, {}, -0.1)));
-    assert(!friction->take_latest());
+    assert(!friction());
     assert(service.on_request(request_packet(3, {}, 0.9)));
-    assert(friction->take_latest() == 0.9);
+    assert(friction() == 0.9);
     std::cout << "F1-F3: friction staged as 0.5, no update at zero or negative, then 0.9\n";
 }
 
 void commands_match_from_first_substep()
 {
-    const RuntimeAckermannControllerConfig config {
-        .component_id = "drive",
-        .input_timeout_usec = 2500,
-        .geometry = {2.0, 1.0, 0.3, 0.6, 50.0},
-        .actuators = {"left-steer", "right-steer", "left-wheel", "right-wheel"},
-    };
     const auto make_arbiter = [] {
         return std::make_shared<PriorityCommandArbiter>(
-            std::vector<ControllerPriority> {{ "drive", 10, {} }});
+            std::vector<ControllerPriority> {{kDrive.component_id, 10, ackermann_control_group}});
     };
-    auto legacy_plant = std::make_shared<Plant>();
-    auto legacy_reader = std::make_shared<AckermannDriveRpcEventReader>();
-    auto legacy_source = std::make_shared<AckermannDriveCommandSource>(
-        kDriveSource, config.input_timeout_usec, legacy_reader);
-    ActuatorRuntime legacy({legacy_source}, {std::make_shared<AckermannController>(config)},
-        make_arbiter(), legacy_plant, {});
+    auto topic_plant = std::make_shared<Plant>();
+    auto topic_reader = std::make_shared<test_support::AckermannTopicReader>();
+    auto topic_car = test_support::make_topic_car(
+        kDrive, test_support::ackermann_actuators(kDrive.actuators), topic_reader, kDelta);
+    ActuatorRuntime topic({topic_car.source}, {topic_car.controller}, make_arbiter(), topic_plant, {});
 
     ServicePipeline pipeline;
     auto service_plant = std::make_shared<Plant>();
-    auto service_drive = std::make_shared<AckermannDriveCommandSource>(
-        kDriveSource, config.input_timeout_usec, pipeline.reader);
-    ActuatorRuntime service({pipeline.source, service_drive},
-        {std::make_shared<AckermannController>(config), pipeline.controller},
+    ActuatorRuntime service({pipeline.source}, {pipeline.controller},
         make_arbiter(), service_plant, {pipeline.publisher});
 
     const std::array<AckermannDriveCommand, 2> inputs {{
@@ -292,27 +335,32 @@ void commands_match_from_first_substep()
         {.steering_angle_rad = -0.375, .speed_m_s = 7.0},
     }};
     for (std::size_t step = 0; step < inputs.size(); ++step) {
-        legacy_reader->apply(inputs[step]);
-        (void)legacy.step_hakoniwa(kSubsteps);
+        topic_reader->send(inputs[step]);
+        (void)topic.step_hakoniwa(kSubsteps);
         pipeline.server->send(request_packet(step, inputs[step]));
         assert(pipeline.gate.ready_to_step());
         (void)service.step_hakoniwa(kSubsteps);
     }
-    assert(legacy_plant->commands.size() == inputs.size() * kSubsteps);
-    assert(legacy_plant->commands.size() == service_plant->commands.size());
-    for (std::size_t substep = 0; substep < legacy_plant->commands.size(); ++substep) {
-        const auto& expected = legacy_plant->commands.at(substep);
+    assert(topic_plant->commands.size() == inputs.size() * kSubsteps);
+    assert(topic_plant->commands.size() == service_plant->commands.size());
+    for (std::size_t substep = 0; substep < topic_plant->commands.size(); ++substep) {
+        const auto& expected = topic_plant->commands.at(substep);
         const auto& actual = service_plant->commands.at(substep);
         assert(expected.size() == 4 && actual.size() == expected.size());
         for (std::size_t i = 0; i < expected.size(); ++i) {
             assert(expected[i].actuator_id == actual[i].actuator_id);
             assert(expected[i].type == actual[i].type);
             assert(expected[i].value == actual[i].value);
-            assert(expected[i].source_id == actual[i].source_id);
-            assert(expected[i].created_at_usec == actual[i].created_at_usec);
-            assert(expected[i].expires_at_usec == actual[i].expires_at_usec);
         }
     }
+
+    (void)topic.step();
+    (void)service.step();
+    assert(topic_plant->commands.back().size() == 4 && service_plant->commands.back().size() == 4);
+    (void)topic.step();
+    (void)service.step();
+    assert(topic_plant->commands.back().empty());
+    assert(service_plant->commands.back().size() == 4);
 }
 
 } // namespace

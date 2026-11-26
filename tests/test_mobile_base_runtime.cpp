@@ -1,5 +1,5 @@
 #include "runtime/runtime_factory.hpp"
-#include "runtime/controller/ackermann_controller.hpp"
+#include "support/builtin_step_plugins.hpp"
 #include "runtime/publisher/multi_dof_joint_state_publisher.hpp"
 
 #include <algorithm>
@@ -14,6 +14,7 @@
 #include <vector>
 
 using namespace hakoniwa::robot_runtime::runtime;
+namespace test_support = hakoniwa::robot_runtime::test_support;
 
 namespace {
 
@@ -23,26 +24,6 @@ class EmptyScalarReader final : public IFloat64EventReader {
 public:
     std::optional<double> take_latest() override { return std::nullopt; }
     void reset() noexcept override { }
-};
-
-class AckermannReader final : public IAckermannDriveEventReader {
-public:
-    explicit AckermannReader(AckermannDriveCommand command)
-        : command_(command)
-    {
-    }
-
-    std::optional<AckermannDriveCommand> take_latest() override
-    {
-        auto result = command_;
-        command_.reset();
-        return result;
-    }
-
-    void reset() noexcept override { }
-
-private:
-    std::optional<AckermannDriveCommand> command_;
 };
 
 class JointWriter final : public IJointStateWriter {
@@ -251,11 +232,10 @@ int main()
         [&](const RuntimeAckermannControllerConfig& config) {
             reader_namespaces.push_back(config.pdu_robot);
             const double direction = config.pdu_robot == "Car-1" ? 1.0 : -1.0;
-            return std::make_shared<AckermannReader>(
-                AckermannDriveCommand {
-                    .steering_angle_rad = direction * 0.35,
-                    .speed_m_s = direction * 2.0,
-                });
+            auto reader = std::make_shared<test_support::AckermannTopicReader>();
+            reader->send({.steering_angle_rad = direction * 0.35, .speed_m_s = direction * 2.0});
+            return test_support::make_topic_car(
+                config, definition.actuators, reader, plant->delta_time_usec());
         },
         [&](const RuntimeMultiDofStateOutputConfig& config) {
             assert(config.pdu_robot == "UrbanFleet");
@@ -307,8 +287,12 @@ int main()
     try {
         auto invalid = controller("invalid", "Car-3", "car3_");
         invalid.geometry.wheel_radius_m = 0.0;
-        [[maybe_unused]] AckermannController candidate(std::move(invalid));
-    } catch (const std::invalid_argument&) {
+        auto reader = std::make_shared<test_support::AckermannTopicReader>();
+        (void)test_support::make_topic_car(
+            invalid, test_support::ackermann_actuators(invalid.actuators),
+            reader, plant->delta_time_usec());
+    } catch (const std::runtime_error& error) {
+        assert(std::string_view(error.what()).find("invalid Ackermann controller configuration") != std::string::npos);
         rejected_invalid_geometry = true;
     }
     assert(rejected_invalid_geometry);

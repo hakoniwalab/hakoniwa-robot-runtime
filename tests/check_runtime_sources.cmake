@@ -6,6 +6,9 @@ file(GLOB_RECURSE source_files LIST_DIRECTORIES FALSE "${HAKO_RUNTIME_SRC_DIR}/*
 get_cmake_property(variables VARIABLES)
 set(listed_sources)
 foreach(variable IN LISTS variables)
+    if(variable STREQUAL "HAKO_RUNTIME_ACKERMANN_STEP_SERVICE_SOURCES")
+        continue() # Compatibility alias of HAKO_RUNTIME_ROBOT_PLUGIN_SOURCES.
+    endif()
     if(variable MATCHES "^HAKO_RUNTIME_[A-Z0-9_]+_SOURCES$")
         foreach(source IN LISTS ${variable})
             if(source IN_LIST listed_sources)
@@ -27,3 +30,10 @@ endif()
 
 list(LENGTH listed_sources source_count)
 message(STATUS "Runtime source catalog covers all ${source_count} C++ sources")
+
+foreach(plugin IN ITEMS ackermann_step person_step)
+    set(source "${HAKO_RUNTIME_SRC_DIR}/plugins/${plugin}/${plugin}.cpp")
+    if(NOT source IN_LIST HAKO_RUNTIME_ROBOT_PLUGIN_SOURCES)
+        message(FATAL_ERROR "Builtin ${plugin} must link with the robot plugin loader")
+    endif()
+endforeach()

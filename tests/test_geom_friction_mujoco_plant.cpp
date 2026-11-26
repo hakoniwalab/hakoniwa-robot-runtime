@@ -2,9 +2,8 @@
 
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
-#include "adapters/endpoint/ackermann_step_service.hpp"
+#include "support/builtin_step_plugins.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
-#include "runtime/controller/geom_friction_controller.hpp"
 
 #include <array>
 
@@ -167,15 +166,23 @@ void test_directive_friction_takes_effect_in_contacts()
 
 void test_ackermann_step_friction_applies_to_all_wheels_before_physics()
 {
-    using namespace adapters::hakoniwa;
-
     write_model(true);
     const std::vector<std::string> geoms {"tire", "tire2", "tire3", "tire4"};
     adapters::mujoco::MujocoActuatorPlant plant(definition_with(geoms));
-    auto friction = std::make_shared<AckermannStepFrictionInput>();
-    AckermannStepService service(std::make_shared<AckermannDriveRpcEventReader>(), "car", friction);
-    runtime::ScalarPduCommandSource source("tire-input", plant.delta_time_usec(), friction);
-    runtime::GeomFrictionController controller("tire-directive", "tire-input", geoms);
+    const runtime::RuntimeAckermannControllerConfig drive {
+        .component_id = "drive",
+        .pdu_robot = "car",
+        .input_timeout_usec = plant.delta_time_usec(),
+        .geometry = {2.0, 1.0, 0.3, 0.6, 50.0},
+        .actuators = {"left-steer", "right-steer", "left-wheel", "right-wheel"},
+    };
+    const auto robot = test_support::make_ackermann_plugin(
+        drive, "car", "CarService/AckermannStep/car", plant.delta_time_usec(), geoms);
+    runtime::RobotState car_state;
+    car_state.bodies.push_back({.body_id = "car"});
+    for (const auto& actuator : test_support::ackermann_actuators(drive.actuators)) {
+        car_state.actuators.push_back({.actuator_id = actuator.component_id});
+    }
 
     auto assert_wheel_friction = [&](double expected) {
         const auto* model = plant.model();
@@ -196,17 +203,23 @@ void test_ackermann_step_friction_applies_to_all_wheels_before_physics()
         std::array<std::byte, 1024> packet {};
         assert(hako::pdu::msgs::hako_srv_msgs::AckermannStepRequestPacket {}.cpp2pdu(
             message, reinterpret_cast<char*>(packet.data()), packet.size()) > 0);
-        assert(service.on_request(packet));
+        assert(robot->on_request(0, packet));
         for (int substep = 0; substep < 4; ++substep, ++physics_step) {
             const runtime::RuntimeStepContext context {
                 .simulation_time_usec = plant.read_state().sample_time_usec,
                 .delta_time_usec = plant.delta_time_usec(),
                 .step_index = physics_step,
             };
-            const auto input = source.poll(context);
-            const auto output = controller.update(input.input, context);
+            car_state.sample_time_usec = context.simulation_time_usec;
+            runtime::RobotServiceSlot slot {runtime::AsyncServiceState::Doing};
+            const auto output = robot->on_step(car_state, context, std::span(&slot, 1));
             const bool updates = substep == 0 && requested > 0.0;
-            assert(input.has_new_input() == updates);
+            assert(!output.operations.surface_frictions.empty() == updates);
+            if (updates) {
+                const auto& friction = output.operations.surface_frictions.front();
+                assert(friction.created_at_usec == context.simulation_time_usec);
+                assert(friction.surfaces == geoms);
+            }
             assert(output.operations.surface_frictions.size() + output.operations.body_motions.size()
                 + output.operations.humanoid_motions.size() == (updates ? 1 : 0));
             plant.apply_operations(output.operations);

@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -119,8 +120,9 @@ bool collect_operations(const HakoRobotOutputV1& output, std::uint64_t time_usec
 
 ServicePlugin::ServicePlugin(std::shared_ptr<plugin::PluginLibrary> library, ServicePluginConfig config)
     : library_(std::move(library)), table_(library_->service_table()), config_(std::move(config))
-    , controller_id_(config_.robot + ":controller")
+    , controller_id_(config_.control_id.empty() ? config_.robot + ":controller" : config_.control_id)
     , bodies_(config_.bodies.size()), humanoids_(config_.humanoids.size()), slots_(config_.services.size())
+    , pdu_samples_(config_.pdus.size())
     , position_(config_.actuators.size()), velocity_(position_.size()), effort_(position_.size())
     , command_value_(position_.size()), has_command_(position_.size()), command_type_(position_.size())
 {
@@ -132,6 +134,15 @@ ServicePlugin::ServicePlugin(std::shared_ptr<plugin::PluginLibrary> library, Ser
     }
     const auto bodies = string_views(config_.bodies);
     const auto humanoids = string_views(config_.humanoids);
+    std::vector<const char*> pdus;
+    pdus.reserve(config_.pdus.size());
+    pdu_views_.reserve(config_.pdus.size());
+    for (const auto& pdu : config_.pdus) {
+        if (!pdu.reader) {
+            throw std::invalid_argument("service plugin PDU input requires a reader: " + pdu.name);
+        }
+        pdus.push_back(pdu.name.c_str());
+    }
     std::vector<HakoRobotServiceV1> services;
     services.reserve(config_.services.size());
     for (const auto& service : config_.services) {
@@ -142,7 +153,7 @@ ServicePlugin::ServicePlugin(std::shared_ptr<plugin::PluginLibrary> library, Ser
         static_cast<std::uint32_t>(actuators.size()), actuators.data(),
         static_cast<std::uint32_t>(bodies.size()), bodies.data(),
         static_cast<std::uint32_t>(humanoids.size()), humanoids.data(),
-        0, nullptr,
+        static_cast<std::uint32_t>(pdus.size()), pdus.data(),
         static_cast<std::uint32_t>(services.size()), services.data(),
         config_.config_json.c_str(), config_.physics_step_ns, log_to_runtime, &config_.robot,
     };
@@ -160,6 +171,20 @@ ServicePlugin::~ServicePlugin()
     table_.destroy(instance_);
 }
 
+bool ServicePlugin::poll_pdus(const RuntimeStepContext& context)
+{
+    pdu_views_.clear();
+    for (std::size_t i = 0; i < config_.pdus.size(); ++i) {
+        auto& sample = pdu_samples_[i];
+        sample = config_.pdus[i].reader->take_latest(context.simulation_time_usec);
+        if (sample && sample->bytes.size() <= std::numeric_limits<std::uint32_t>::max()) {
+            pdu_views_.push_back({static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(sample->bytes.size()),
+                sample->bytes.data(), sample->sample_time_usec * 1000});
+        }
+    }
+    return !pdu_views_.empty();
+}
+
 bool ServicePlugin::on_request(std::size_t service, std::span<const std::byte> request)
 {
     const HakoServiceRequestV1 view {request.data(), request.size()};
@@ -170,6 +195,7 @@ RobotStepResult ServicePlugin::on_step(const RobotState& state, const RuntimeSte
     std::span<RobotServiceSlot> slots)
 {
     const auto fail = [&](std::string reason) -> RobotStepResult {
+        pdu_views_.clear();
         for (auto& slot : slots) {
             if (slot.state != AsyncServiceState::Idle) {
                 slot.result = AsyncServiceStepOutcome::Error;
@@ -205,6 +231,7 @@ RobotStepResult ServicePlugin::on_step(const RobotState& state, const RuntimeSte
         return fail(error[0] ? error.data() : "service plugin on_step failed");
     }
 
+    pdu_views_.clear();
     RobotStepResult result;
     if (!collect_commands(context, result.commands)) {
         return fail("invalid joint command");
@@ -226,7 +253,8 @@ bool ServicePlugin::on_response(std::size_t service, const RobotState& state, co
     if (!copy_states(state).empty()) {
         return false;
     }
-    const auto time = tick(context, first_response_);
+    auto time = tick(context, first_response_);
+    time.sim_time_ns = state.sample_time_usec * 1000;
     const auto states = state_view();
     const HakoServiceResponseV1 view {packet.data(), packet.size()};
     return table_.on_response(instance_, static_cast<std::uint32_t>(service), &time, &states, &view) == 1;
@@ -242,6 +270,10 @@ void ServicePlugin::on_cancel(std::size_t service)
 void ServicePlugin::reset()
 {
     table_.reset(instance_);
+    pdu_views_.clear();
+    for (const auto& pdu : config_.pdus) {
+        pdu.reader->reset();
+    }
     first_step_ = true;
     first_response_ = true;
 }
@@ -289,7 +321,8 @@ HakoRobotStateV1 ServicePlugin::state_view() const
     return {sizeof(HakoRobotStateV1),
         {static_cast<std::uint32_t>(position_.size()), position_.data(), velocity_.data(), effort_.data()},
         static_cast<std::uint32_t>(bodies_.size()), bodies_.data(),
-        static_cast<std::uint32_t>(humanoids_.size()), humanoids_.data(), 0, nullptr};
+        static_cast<std::uint32_t>(humanoids_.size()), humanoids_.data(),
+        static_cast<std::uint32_t>(pdu_views_.size()), pdu_views_.data()};
 }
 
 HakoJointCommandsV1 ServicePlugin::prepare_commands()

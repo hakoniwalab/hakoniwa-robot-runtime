@@ -8,7 +8,6 @@
 #include "runtime/source/joint_trajectory_command_source.hpp"
 #include "runtime/source/joy_command_source.hpp"
 #include "runtime/source/scalar_pdu_command_source.hpp"
-#include "runtime/source/ackermann_drive_command_source.hpp"
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 #include "runtime/publisher/impulse_collision_publisher.hpp"
 #include "runtime/source/mirror_body_state_source.hpp"
@@ -35,9 +34,6 @@ using JointTrajectoryEventReaderFactory = std::function<
         const RuntimeTrajectoryControllerConfig&)>;
 using JoyEventReaderFactory = std::function<
     std::shared_ptr<IJoyEventReader>(const RuntimeManualControllerConfig&)>;
-using AckermannDriveEventReaderFactory = std::function<
-    std::shared_ptr<IAckermannDriveEventReader>(
-        const RuntimeAckermannControllerConfig&)>;
 struct RobotServiceComponents {
     std::shared_ptr<ICommandSource> source;
     std::shared_ptr<IController> controller;
@@ -45,8 +41,10 @@ struct RobotServiceComponents {
     std::optional<std::int32_t> priority {std::nullopt};
 };
 
-using AckermannServiceFactory = std::function<
-    std::optional<RobotServiceComponents>(const RuntimeAckermannControllerConfig&)>;
+inline constexpr char ackermann_control_group[] = "ackermann-pdu-direct";
+
+using AckermannRobotFactory = std::function<
+    RobotServiceComponents(const RuntimeAckermannControllerConfig&)>;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 using MirrorBodyStateReaderFactory = std::function<
     std::shared_ptr<IMirrorBodyStateReader>(const RuntimeMirrorBodyConfig&)>;
@@ -73,7 +71,7 @@ using GeomFrictionReaderFactory = std::function<
     const JointStateWriterFactory& writer_factory = {},
     const JointTrajectoryEventReaderFactory& trajectory_reader_factory = {},
     const JoyEventReaderFactory& joy_reader_factory = {},
-    const AckermannDriveEventReaderFactory& ackermann_reader_factory = {},
+    const AckermannRobotFactory& ackermann_robot_factory = {},
     const MultiDofJointStateWriterFactory& multi_dof_writer_factory = {}
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     , const MirrorBodyStateReaderFactory& mirror_reader_factory = {}
@@ -85,7 +83,6 @@ using GeomFrictionReaderFactory = std::function<
     /// required when a plugin lists "pdus", the PDU writers store into them.
     , const PluginPduChannels* plugin_pdu_channels = nullptr
 #endif
-    , const AckermannServiceFactory& ackermann_service_factory = {}
     , std::vector<RobotServiceComponents> additional_services = {}
     , std::shared_ptr<IStatePublisher> person_state_publisher = {}
     );

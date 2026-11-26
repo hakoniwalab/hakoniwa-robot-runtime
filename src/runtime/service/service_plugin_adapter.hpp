@@ -2,6 +2,7 @@
 
 #include "plugin/plugin_library.hpp"
 #include "runtime/service/robot_services.hpp"
+#include "runtime/service/robot_pdu_reader.hpp"
 
 namespace hakoniwa::robot_runtime::runtime {
 
@@ -17,15 +18,21 @@ struct RobotServiceSpec {
     bool lockstep {false};
 };
 
+struct RobotPduInput {
+    std::string name;
+    std::shared_ptr<IRobotPduReader> reader;
+};
+
 struct ServicePluginConfig {
     std::string robot;
     std::vector<RobotActuatorSpec> actuators;
     std::vector<std::string> bodies;
     std::vector<std::string> humanoids;
-    std::vector<std::string> pdus;
+    std::vector<RobotPduInput> pdus;
     std::vector<RobotServiceSpec> services;
     std::string config_json {"{}"};
     std::uint64_t physics_step_ns {0};
+    std::string control_id;
 };
 
 /** Adapts one C ABI v1 robot instance and its services to the runtime. */
@@ -36,6 +43,8 @@ public:
 
     ServicePlugin(const ServicePlugin&) = delete;
     ServicePlugin& operator=(const ServicePlugin&) = delete;
+
+    bool poll_pdus(const RuntimeStepContext& context);
 
     bool on_request(std::size_t service, std::span<const std::byte> request) override;
     RobotStepResult on_step(const RobotState& state, const RuntimeStepContext& context,
@@ -59,6 +68,8 @@ private:
     std::vector<HakoBodyStateV1> bodies_;
     std::vector<HakoHumanoidStateV1> humanoids_;
     std::vector<HakoServiceSlotV1> slots_;
+    std::vector<std::optional<RobotPduSample>> pdu_samples_;
+    std::vector<HakoPduViewV1> pdu_views_;
     std::vector<double> position_, velocity_, effort_, command_value_;
     std::vector<std::uint8_t> has_command_, command_type_;
     bool first_step_ {true};
