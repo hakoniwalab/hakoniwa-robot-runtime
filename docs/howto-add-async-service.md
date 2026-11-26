@@ -1,58 +1,51 @@
-# 非同期 RPC のサービスをプラグインとして足す（手順書・ServoJ のようなサービスを例に）
+# 非同期 RPC のサービスをプラグインとして足す
 
-この文書は、Robot Runtime に、自分の RPC のサービスを**外部のプラグイン（共有ライブラリ）**として足す人のための手順書です。例として、Dobot の `ServoJ` のようなサービス（関節の目標を受け取って、すぐ応え、そのあと目標まで動かす）を、SO-101 の腕に足します。
+SO-101 の腕に ServoJ のようなサービスを足します。
+クライアントが関節の目標を送ると、サービスはすぐに応え、腕はそのあとも目標まで動きます。
+Robot Runtime のアプリは、起動時に共有ライブラリと宣言 JSON を読み込みます。
 
-**Robot Runtime のソースは、1 行も変えません。** 自分のプラグイン（`.so`）を作り、マニフェストに書くだけで、Robot Runtime が起動のときに自動で読み込みます。
+## 0. 準備する
 
-> **状態（2026-11-26）**：第 3 稿。プラグインの仕組みは Robot Runtime の main に入っています（hakoniwalab/hakoniwa-robot-runtime#67）。この手順書のもとになったサンプル（`examples/service_plugins/servoj_like/`）は、Linux と macOS（Apple Silicon）で、本物の hakoniwa-core-pro と SO-101 で 5 つの動きが通ることを確かめています。この第 3 稿は、初めて読む人が手順書だけを見て macOS（Apple Silicon）で最後まで追い、画面なしで 3 回とも期待どおりの出力になることを確かめています（Linux での手順書の確かめは、まだです）。
+Bash を使い、最後まで同じシェルで実行します。
+ビルド済みの Foundation（Core Pro と PDU Endpoint）と、`cffi`、`hakoniwa-pdu` 1.7.1 以降が入った Python を用意します。
+Robot Arm は `--rpc-service-config` に対応する版（例は `5249ed3`）を使います。
+PDU RPC は SHM に対応する main の #91 以降を使います。
+Linux では GLFW と OpenGL の開発用ファイル、macOS では Homebrew の GLFW を用意します。
+MuJoCo Robots が使う版の展開済み MuJoCo を用意します（Linux の例は 3.16.0）。
 
-仕組みの説明は [design-async-rpc.md](design-async-rpc.md)、マニフェストの書き方は [configuration.md](configuration.md) の 2.4 節にあります。
-
-## 0. 全体の流れと前提
-
-```text
-1. 型を決める          ServoJ.srv を書く
-2. PDU の型を作る      手元で生成する（hakoniwa-pdu-registry の本体には足さない）
-3. プラグインを書く    service_plugin.h の関数を実装した C/C++ のファイル 1 つ
-4. プラグインを作る    CMake で共有ライブラリにする
-5. 書く                マニフェストの services と、core-pro の service.json
-6. 動かして呼ぶ        Robot Runtime（腕）→ Python のクライアント → hako-cmd start
-```
-
-**前提**
-- Business Pack の Foundation（hakoniwa-core-pro `e0fa56f` 以降、hakoniwa-pdu-endpoint、`hakoniwa-pdu` 1.7.1 以降、Python と cffi）が入っていること。Foundation は Business Pack の手順で作ります。手で作ると、つまずきやすい点が多いためです（付録 B）。
-- 並べて clone しておくもの：hakoniwa-robot-runtime、hakoniwa-robot-arm、hakoniwa-mujoco-robots、hakoniwa-sensor-adapter、hakoniwa-pdu-registry、hakoniwa-pdu-rpc。どれも main で確かめています。
-- SO-101 のモデル（Business Pack の Model Forge の出力。`so101.xml` と `assets/`）。
-- Docker（手順 2.3 で使う）。macOS では Homebrew の `glfw`。
-
-この手順書では、場所を次の変数で書きます。自分の環境に合わせて、最初に一度だけ設定してください（すべて絶対パス）。**最後まで、同じシェルで続けてください。** 後の節は、前の節で決めた変数（`SRC_REF`、`PDU_TYPES`、`PDU_PY`、`PLUGIN`、`SHLIB`）を使います。別の端末で続けるときは、6.2 の頭の「変数のまとめ」を貼り直してください。
-
-**待ち時間を減らすには**：6.1 のビルド（数分かかる）は、2〜5 節に依存しません。別の端末で、0 節の変数を設定してから先に走らせておけます。
+下のパスを手元に合わせて書き換えます。
+`SO101_MODEL` は Model Forge が出力した `so101.xml` と `assets/` があるディレクトリです。
+`MUJOCO_PRECOMPILED` は展開した MuJoCo のルートです。
+`WORK` には新しい作業ディレクトリを指定します。
 
 ```bash
-B=$HOME/work                                   # リポジトリを並べた場所
-RUNTIME=$B/hakoniwa-robot-runtime
-ROBOT_ARM=$B/hakoniwa-robot-arm
-MUJOCO_ROBOTS=$B/hakoniwa-mujoco-robots
-SENSOR_ADAPTER=$B/hakoniwa-sensor-adapter
-REGISTRY=$B/hakoniwa-pdu-registry
-RPC=$B/hakoniwa-pdu-rpc
-PREFIX=$B/hakoniwa-business-pack/work/foundation/install       # Foundation
-SO101_MODEL=$B/hakoniwa-business-pack/work/model-forge/so101/install
-PYTHON=$PREFIX/python/bin/python3
-WORK=$B/my-servoj                              # 自分の作業の場所
+B=/path/to/checkouts
+RUNTIME="$B/hakoniwa-robot-runtime"
+ROBOT_ARM="$B/hakoniwa-robot-arm"
+MUJOCO_ROBOTS="$B/hakoniwa-mujoco-robots"
+SENSOR_ADAPTER="$B/hakoniwa-sensor-adapter"
+REGISTRY="$B/hakoniwa-pdu-registry"
+RPC="$B/hakoniwa-pdu-rpc"
+PREFIX=/path/to/foundation/install
+SO101_MODEL=/path/to/model-forge/so101/install
+MUJOCO_PRECOMPILED=/path/to/extracted/mujoco
+PYTHON=/path/to/venv/bin/python3
+WORK="$B/my-servoj"
+DEMO="$RUNTIME/examples/service_plugins/servoj_like"
+JOBS=4
+export PYTHONDONTWRITEBYTECODE=1
 mkdir -p "$WORK"
 ```
 
-**できあがり**：Python から `ArmService/ServoJ/SO101` を呼ぶと、すぐ `res = 0` が返り、そのあと SO-101 の関節が目標へ動きます。
+## 1. 型を決める
 
-## 1. 型を決める（ServoJ.srv）
-
-要求と応答を、ROS の `.srv` の形で書きます。配列は長さを決めます（固定長の PDU にするため）。
+要求と応答を ROS の `.srv` の形で書きます。
+コメントは `#` から始まる別の行に書きます。
+要求の関節配列は SO-101 のマニフェストでアクチュエータが並ぶ順です。
 
 ```bash
 mkdir -p "$WORK/my_robot_srvs/srv"
-cat > "$WORK/my_robot_srvs/srv/ServoJ.srv" <<'EOF'
+cat > "$WORK/my_robot_srvs/srv/ServoJ.srv" <<'SRV'
 # joint: 関節の目標 [rad]
 float64[6] joint
 # t: 目標に着くまでの時間 [s]
@@ -60,157 +53,163 @@ float64 t
 ---
 # res: 0 = 受け付けた
 int32 res
-EOF
+SRV
 ```
 
-- **コメントは、行の頭に `#` を置いた別の行に書いてください。** 欄の行の後ろに書くと、手順 2.1 の変換の道具が `ValueError: Invalid field line` で止まります。
-- パッケージ名と型名は、自分のものにします。Hakoniwa の既存の名前（`hako_srv_msgs` など）は使いません。
+## 2. PDU の型を用意する
 
-## 2. PDU の型を手元で作る
-
-自分の型だけを生成します。hakoniwa-pdu-registry の追跡されるファイル（`pdu/`、`config/`）は変わりません。
-
-### 2.1 .srv を Hakoniwa の .msg に変える
-
-2 節の `python3` は、ホストの Python です（Foundation の `$PYTHON` ではありません）。要るのは 2.3 の PyYAML だけです。
+生成済みの ServoJ の型が手元にあれば、そのパスを設定して 2.4 節の確認へ進みます。
+`PDU_TYPES` は `my_robot_srvs_msgs/pdu_ctype_ServoJRequestPacket.h` を含む型のルートです。
+`PDU_PY` は `servoj_pdu/` の親ディレクトリです。
 
 ```bash
-cd "$REGISTRY"
-python3 -m generators.generate_hako_service_msgs.main \
-  "$WORK/my_robot_srvs/srv/ServoJ.srv" --out "$WORK/my-pdu-src"
+PDU_TYPES=/path/to/generated/types
+PDU_PY=/path/to/generated/python-parent
 ```
 
-`$WORK/my-pdu-src/srv_msgs/msg/` に、`ServoJRequest.msg`、`ServoJRequestPacket.msg`、`ServoJResponse.msg`、`ServoJResponsePacket.msg` の 4 つができます（フォルダの名前は、いつも `srv_msgs` になります）。
+### 2.1 `.srv` を Hakoniwa の `.msg` に変える
 
-### 2.2 ROS のパッケージの形にして、手元の git に入れる
+新しい型を生成する場合は、2.1〜2.3 節を実行します。
+Jinja2 が使えるホストの `python3` と、C コンパイラを用意します。
 
 ```bash
-cd "$WORK/my-pdu-src"
-mv srv_msgs my_robot_srvs_msgs
-cat > my_robot_srvs_msgs/package.xml <<'EOF'
-<?xml version="1.0"?>
-<package format="3">
-  <name>my_robot_srvs_msgs</name>
-  <version>0.0.0</version>
-  <description>ServoJ packet definitions.</description>
-  <maintainer email="you@example.com">Your Name</maintainer>
-  <license>MIT</license>
-</package>
-EOF
-git init -q
-git add -A
-git -c user.name="Your Name" -c user.email=you@example.com commit -q -m "ServoJ PDU types"
-SRC_REF=$(git rev-parse HEAD)
+(
+  cd "$REGISTRY"
+  python3 -m generators.generate_hako_service_msgs.main \
+    "$WORK/my_robot_srvs/srv/ServoJ.srv" --out "$WORK/my-pdu-src"
+)
 ```
 
-### 2.3 生成する
+`$WORK/my-pdu-src/srv_msgs/msg/` に `ServoJRequest`、`ServoJResponse` と両方の `Packet` の `.msg` ができます。
 
-「どこから取るか」の設定は、registry の外に置けます。
+### 2.2 パッケージ名と生成する型を指定する
+
+生成した `srv_msgs` フォルダを、使いたいパッケージ名に変えます。
+パケットの 2 型を指定すると、生成器が参照先の型も一緒に生成します。
 
 ```bash
-cat > "$WORK/my_robot_srvs_msgs.yaml" <<EOF
-schema_version: 1
-source:
-  type: git
-  repository: file://$WORK/my-pdu-src
-  ref: $SRC_REF
-packages:
-  - my_robot_srvs_msgs
-EOF
-
-cd "$REGISTRY"
-rm -rf .cache/my-pdu      # 前の生成の残りを消す（古い型が混ざらないように）
-python3 -c 'import yaml' 2>/dev/null || {
-  python3 -m venv "$WORK/venv-fetch" && "$WORK/venv-fetch/bin/pip" install -q -r tools/requirements-fetch.txt
-  export PATH="$WORK/venv-fetch/bin:$PATH"
-}
-python3 tools/generate_from_sources.py \
-  --sources "$WORK/my_robot_srvs_msgs.yaml" \
-  --output-dir .cache/my-pdu \
-  my_robot_srvs_msgs/ServoJRequestPacket \
-  my_robot_srvs_msgs/ServoJResponsePacket
-# 道具が registry の中に取ってきた .msg の写し（git に追跡されない）を片付ける
-rm -rf "$REGISTRY/output_msgs/my_robot_srvs_msgs"
-git status --short -- pdu/ config/                    # 何も出なければ、registry は変わっていない
+mv "$WORK/my-pdu-src/srv_msgs" "$WORK/my-pdu-src/my_robot_srvs_msgs"
+cat > "$WORK/selected-types.txt" <<'TYPES'
+my_robot_srvs_msgs/ServoJRequestPacket
+my_robot_srvs_msgs/ServoJResponsePacket
+TYPES
+cat > "$WORK/search-paths.txt" <<PATHS
+$REGISTRY/idl
+$WORK/my-pdu-src
+PATHS
 ```
 
-- このコマンドは、ホスト（Docker の外）で動かします。生成は、道具が中で Docker を使って行います。
-- Docker が見えるのは registry の中だけなので、出力先は registry の中の `.cache/...` です。
-- PyYAML がシステムの Python に入っていて、pip が `externally-managed-environment` で断る場合は、上のように venv を使います。
+### 2.3 C と Python の型を生成する
 
-### 2.4 出てきたもの
+生成先は `$WORK/my-pdu` です。
 
 ```bash
-cat "$REGISTRY/.cache/my-pdu/pdu_size/my_robot_srvs_msgs/ServoJRequestPacket.txt"    # 328
-cat "$REGISTRY/.cache/my-pdu/pdu_size/my_robot_srvs_msgs/ServoJResponsePacket.txt"   # 272
-PDU_TYPES=$REGISTRY/.cache/my-pdu/types
-```
+(
+  cd "$REGISTRY"
+  python3 -m generators.generate_hako_pdu_msgs.main "$WORK/selected-types.txt" \
+    --search-path-file "$WORK/search-paths.txt" --output-dir "$WORK/my-pdu" --incremental
+)
+PDU_TYPES="$WORK/my-pdu/types"
+printf '要求 %s bytes\n' "$(cat "$WORK/my-pdu/pdu_size/my_robot_srvs_msgs/ServoJRequestPacket.txt")"
+printf '応答 %s bytes\n' "$(cat "$WORK/my-pdu/pdu_size/my_robot_srvs_msgs/ServoJResponsePacket.txt")"
 
-**Python で使う形にする**：生成された Python の変換は、1 つ上のフォルダの `pdu_utils` と `binary_io` を相対で読みます。親のパッケージを 1 つ作って、次の形に写します。
-
-```bash
-PDU_PY=$WORK/local-python
+PDU_PY="$WORK/local-python"
 mkdir -p "$PDU_PY/servoj_pdu"
-cd "$PDU_PY/servoj_pdu"
-touch __init__.py
-cp "$REGISTRY/pdu/python/binary_io.py" "$REGISTRY/pdu/python/pdu_utils.py" .
-cp -r "$REGISTRY/.cache/my-pdu/python/my_robot_srvs_msgs" "$REGISTRY/.cache/my-pdu/python/hako_srv_msgs" .
-touch my_robot_srvs_msgs/__init__.py hako_srv_msgs/__init__.py
+(
+  cd "$PDU_PY/servoj_pdu"
+  touch __init__.py
+  cp "$REGISTRY/pdu/python/binary_io.py" "$REGISTRY/pdu/python/pdu_utils.py" .
+  cp -r "$WORK/my-pdu/python/my_robot_srvs_msgs" "$WORK/my-pdu/python/hako_srv_msgs" .
+  touch my_robot_srvs_msgs/__init__.py hako_srv_msgs/__init__.py
+)
+```
+
+ServoJ のパケットサイズは要求が 328 バイト、応答が 272 バイトです。
+
+### 2.4 型を確認する
+
+```bash
+test -f "$PDU_TYPES/my_robot_srvs_msgs/pdu_ctype_ServoJRequestPacket.h"
+test -f "$PDU_TYPES/my_robot_srvs_msgs/pdu_ctype_ServoJResponsePacket.h"
 PYTHONPATH="$PDU_PY" "$PYTHON" -c \
   'from servoj_pdu.my_robot_srvs_msgs import pdu_conv_ServoJRequestPacket; print("ok")'
 ```
 
-## 3. プラグインを書く
+## 3. プラグインと宣言を書く
 
-プラグインは、公開ヘッダー `include/hakoniwa/robot_runtime/plugin/service_plugin.h` の関数の表（`HakoServicePluginV1`）を実装した、C/C++ のファイル 1 つです。Robot Runtime のソースを変える必要はありません。
-
-**一番の近道は、サンプルを写して直すことです。**
+公開ヘッダー [service_plugin.h](../include/hakoniwa/robot_runtime/plugin/service_plugin.h) の
+`HakoServicePluginV1` を C または C++ で実装します。
+まずはサンプルの 3 ファイルを作業ディレクトリに写します。
 
 ```bash
 mkdir -p "$WORK/plugin"
-cp "$RUNTIME/examples/service_plugins/servoj_like/servoj_like.cpp" \
-   "$RUNTIME/examples/service_plugins/servoj_like/CMakeLists.txt" "$WORK/plugin/"
+cp "$DEMO/servoj_like.cpp" "$DEMO/CMakeLists.txt" "$DEMO/my_servoj.plugin.json" "$WORK/plugin/"
 ```
 
-表の関数と、ServoJ のようなサービスでやること（サンプルの中身）：
+`HAKO_ROBOT_PLUGIN_ENTRY` が公開する入口から、種類、ABI の版、表のサイズと各関数が渡ります。
+Runtime は `pdu_robot` ごとにインスタンスを 1 つ作り、サービスには `create` に渡した順で番号を振ります。
+フックはシミュレーションのスレッドで同期して動き、渡されたポインタはフックが戻るまで使えます。
 
-| 関数 | いつ | サンプルでやること |
-|---|---|---|
-| `create(args, error, size)` | 起動のとき 1 回 | `args->joint_names`（マニフェストの、その腕のアクチュエータの名前。マニフェストの順）から、6 つの関節の位置を探して覚える。足りなければ `error` に書いて `nullptr` |
-| `on_request(inst, packet, size)` | 要求が来たとき | パケットのメタデータを確かめ、`Hako_ServoJRequest` を読む。`t` と関節の範囲を確かめ、よければ目標を覚えて `1`。おかしければ `0`（INVALID で応える） |
-| `on_step(inst, tick, states, server_state, commands)` | 要求を受け付けたステップ | 今の関節の角度と時刻を「動きの始まり」として覚え、**すぐ `HAKO_SERVICE_STEP_OK`** を返す（0 ステップで応える）。取り消し中（`CANCELING`）なら止めて `CANCELED` |
-| `on_response(inst, tick, states, reply)` | 応える直前（物理の後） | 応答の中身（`res = 0`）を書く。**頭（`reply->header`）は読むだけで、書き換えない。** メタデータの `heap_off`・`total_size` を、応答の全体に合わせる。中身の欄は毎回すべて書く |
-| `update(inst, tick, states, …, commands, …)`（任意） | **毎刻み**（要求がない間も） | 動きの途中なら、始まりから目標までを `t` 秒かけて直線で結んだ位置を、6 つの関節に指令する。手動の操作に優先を奪われたら（`tick->selected` が 0）、やめる |
-| `reset(inst)` | リセットのとき | 動きを止める |
-| `destroy(inst)` | 終わりのとき | 片付ける |
-| `on_cancel(inst)`（任意） | 受け付けたあとの取り消し | サンプルでは使わない（`nullptr`） |
+| 関数 | サンプルでやること |
+| --- | --- |
+| `create` | アクチュエータが 6 つあることを確認し、各関節の範囲を写して、プラグイン自身の制御データを作ります。 |
+| `on_request` | 要求パケットを読み、時間と目標角を確かめて、受け付けるときは目標を保存して `1` を返します。 |
+| `on_step` | 開始角と時刻を覚え、要求のスロットに `OK` を書き、毎刻み位置指令を出します。 |
+| `on_response` | 物理を進めた後に呼ばれ、Core が用意した応答パケットに `res = 0` を書きます。 |
+| `reset` / `destroy` | 動きを止める処理と、制御データを解放する処理です。 |
 
-- **「すぐ応え、動きは続く」**のは、`on_step` ですぐ `OK` を返し、動き（指令）は `update` が毎刻み出す、という分け方で作ります。
-- 表は、入口の関数 `hako_robot_runtime_plugin_v1()` が返します。表の頭には、種類 `HAKO_PLUGIN_KIND_SERVICE`、ABI の版 `HAKO_SERVICE_PLUGIN_ABI_VERSION`、表の大きさを入れます（サンプルの最後を参照）。
-- 関数は、シミュレーションのスレッドから順に呼ばれます。待たずにすぐ戻ってください。
+`create` が受け取る `actuators[i].minimum` と `maximum` は、アクチュエータ設定の `spec.limit` から来ます。
+各関節の範囲、要求の目標、状態の角度、出力の指令は、渡されたアクチュエータ順の同じ添字を使います。
+SO-101 の例は `shoulder_pan`、`shoulder_lift`、`elbow_flex`、`wrist_flex`、`wrist_roll`、`gripper` の順です。
 
-## 4. プラグインを作る
+`on_step` は要求がないときも、毎回の物理ステップでロボットごとに 1 回呼ばれます。
+処理中の各サービスに対応するスロットに結果を設定します。
+サンプルは 1 つのスロットを持ち、`DOING` で `OK`、`CANCELING` で動きを止めて `CANCELED` を設定します。
+応答が済んでスロットが `IDLE` になっても、位置指令は開始角から目標へ補間し、到達後は目標を出し続けます。
+Arbiter がほかの指令を選んだら（`tick->selected` が 0）、指令を止めます。
+任意の `on_cancel` フックはサンプルでは空です。
+
+応答バッファはメタデータから始まるパケット全体です。
+`hako_service_packet_base_offset` でパケット本体の位置を読み、バッファに収まることを確認します。
+サンプルは Core が用意した `base_off` とサービス応答ヘッダーを保ちます。
+固定長応答に合わせて `heap_off` と `total_size` を設定し、パケットの `body` に `res` を書きます。
+
+`my_servoj.plugin.json` の `service_types` には扱える RPC 型を並べます。
+
+```json
+{
+  "service_types": ["my_robot_srvs_msgs/ServoJ"]
+}
+```
+
+`plant_operations` にはプラグインが出す Plant 操作を並べます。
+指定できる操作は `surface_friction`、`body_motion`、`humanoid_motion` です。
+ServoJ が出すのは関節指令だけなので、この項目は省略します。
+
+## 4. プラグインをビルドする
 
 ```bash
 cmake -S "$WORK/plugin" -B "$WORK/build-plugin" -DCMAKE_BUILD_TYPE=Release \
   -DHAKO_RUNTIME_INCLUDE_DIR="$RUNTIME/include" \
   -DHAKO_SERVOJ_PDU_TYPES="$PDU_TYPES" \
   -DHAKO_PDU_REGISTRY_TYPES="$REGISTRY/pdu/types"
-cmake --build "$WORK/build-plugin" --parallel 4
-PLUGIN=$WORK/build-plugin/libmy_servoj.so
-ls -l "$PLUGIN"
+cmake --build "$WORK/build-plugin" --parallel "$JOBS"
+PLUGIN="$WORK/build-plugin/libmy_servoj.so"
+ls -l "$PLUGIN" "$WORK/build-plugin/libmy_servoj.plugin.json"
 ```
 
-- サンプルの CMake は、Robot Runtime の**公開ヘッダーだけ**を使います。Robot Runtime をビルドし直す必要はありません。
-- macOS でも、ファイル名は `.so` になります（CMake の MODULE ライブラリのため）。
+サンプルは CMake の MODULE を使うので、Linux と macOS でライブラリは `libmy_servoj.so` です。
+CMake はライブラリの拡張子を `.plugin.json` に替えた名前で、その隣に宣言をコピーします。
+ライブラリと宣言は同じディレクトリに置いて配布します。
 
-## 5. マニフェストと service.json を書く
+## 5. マニフェストと `service.json` を書く
 
-**サンプルの `run.py`（6.2）を使う場合、ここは手で書かなくてかまいません。** `run.py` が、実行のたびに、この 2 つを自動で書きます。この節は、何が書かれるのかを知るため、また自分の腕で手で書くときのために読んでください。
+6.2 節の `run.py` は両方のファイルを毎回作ります。
+手で設定するときは、この節と `run.py` の `prepare()` を参照します。
 
 ### 5.1 マニフェスト
 
-腕のマニフェスト（SO-101 なら robot-arm の `recipes/so101/asset-manifest.json`）を写し、`services` を足します。`library` には、手順 4 のプラグインを書きます（相対パスなら、マニフェストのある場所から解かれます）。
+Robot Arm の `recipes/so101/asset-manifest.json` の `services` に次の行を足します。
 
 ```json
 "services": [
@@ -220,10 +219,13 @@ ls -l "$PLUGIN"
 ]
 ```
 
-- `priority` は、Arbiter の優先の順です。SO-101 の例では、手動 20 ＞ **このプラグイン 16** ＞ 軌道 10 です。
-- ServoJ のようなサービスは、ロックステップにしません（`lockstep: false`）。
+`plugin.library` は手順 4 の共有ライブラリです。
+相対パスで書くと、マニフェストのディレクトリから解決されます。
+同じ `pdu_robot` のプラグイン行を増やすと、1 台のロボットが複数のサービスを持ちます。
+その行の `plugin.library`、`plugin.config`、`priority` はそろえます。
+ServoJ はロックステップを無効にし、優先度は手動の 20 と軌道の 10 の間の 16 にします。
 
-### 5.2 service.json（core-pro と、Python のクライアントが読む）
+### 5.2 Core の `service.json`
 
 ```json
 {
@@ -241,28 +243,35 @@ ls -l "$PLUGIN"
 }
 ```
 
-- **大きさの向き**：`server` には**要求**の大きさ（328 ＋ 8 ＝ 336）、`client` には**応答**の大きさ（272 ＋ 8 ＝ 280）を入れます。逆にしても読み込めてしまい、最初の呼び出しで `status=3, result_code=1` で失敗します。
-- `maxClients` は 1 です（core-pro のサーバは、1 度に 1 クライアントの番しか読まない。hakoniwalab/hakoniwa-core-pro#115）。
-- `clients[].name` は Python の `client_name` と、`nodeId` は Python の `node_id` と同じにします。
-- `coreConfig` は core-pro の設定です（例：`{"shm_type":"mmap","core_mmap_path":"/abs/path/to/mmap","asset_timeout_usec":600000000}`）。環境変数 `HAKO_CONFIG_PATH` にも、同じファイルを指定します。
-
-サンプルの `run.py` は、5.1 と 5.2 を実行のたびに自動で書きます。手で書くときの見本として、`run.py` の `prepare()` も見てください。
+マニフェストと `service.json` の `name` をそろえます。
+`service.json` の `type` は RPC の型で、宣言 JSON の `service_types` に含めます。
+Runtime は起動時にこの型と、宣言した Plant 操作を使えるかどうかを確かめます。
+宣言ファイルが無い場合や、宣言と設定が合わない場合は起動が止まります。
+`server.baseSize` は要求の 328 ＋ 8 バイト、`client.baseSize` は応答の 272 ＋ 8 バイトです。
+クライアントの `client_name` と `node_id` は、それぞれ `clients[].name` と `nodeId` に合わせます。
+`coreConfig` と `HAKO_CONFIG_PATH` には同じ Core 設定ファイルを指定します。
 
 ## 6. 動かして呼ぶ
 
-### 6.1 腕（robot-arm）と、Python 用の pdu-rpc をビルドする（最初の 1 回）
+### 6.1 PDU RPC と Robot Arm をビルドする
+
+Linux では Foundation の `libshakoc.so`、macOS では `libshakoc.dylib` をリンクします。
+センサありのビルドでは GLFW を使うため、画面なしで動かす場合も `HAKO_ARM_ENABLE_VIEWER=ON` にします。
+macOS では、`include/mujoco/` と `lib/mujoco.framework/` を含む MuJoCo の展開先を `MUJOCO_PRECOMPILED` に指定します。
 
 ```bash
-SHLIB=so; SEARCH_PREFIX="$PREFIX"
+SHLIB=so
+SEARCH_PREFIX="$PREFIX"
 if [[ $(uname -s) == Darwin ]]; then
   SHLIB=dylib
   SEARCH_PREFIX="$PREFIX;$(brew --prefix glfw)"
+  cmake -E copy_directory "$MUJOCO_PRECOMPILED" "$WORK/build-arm/_deps/mujoco_precompiled-src"
 fi
 
 cmake -S "$RPC" -B "$WORK/build-rpc" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$PREFIX" -DHAKONIWA_PDU_REGISTRY_DIR="$REGISTRY" \
   -DHAKO_PDU_RPC_ENABLE_SHM=ON -DHAKO_PDU_RPC_BUILD_TESTS=OFF
-cmake --build "$WORK/build-rpc" --target hakoniwa_pdu_rpc_shared --parallel 4
+cmake --build "$WORK/build-rpc" --target hakoniwa_pdu_rpc_shared --parallel "$JOBS"
 
 cmake -S "$ROBOT_ARM" -B "$WORK/build-arm" -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="$SEARCH_PREFIX" \
@@ -270,67 +279,46 @@ cmake -S "$ROBOT_ARM" -B "$WORK/build-arm" -DCMAKE_BUILD_TYPE=Release \
   -DHAKONIWA_FOUNDATION_PREFIX="$PREFIX" -DHAKO_ROBOT_ARM_CONTROLLER_PLUGIN=ON \
   -DHAKO_ARM_ENABLE_VIEWER=ON -DHAKO_ROBOT_ARM_ENABLE_SENSOR=ON \
   -DHAKO_ROBOT_ARM_SENSOR_IMPLEMENTATIONS=reference \
-  -DHAKO_ROBOT_ARM_SENSOR_ADAPTER_ROOT="$SENSOR_ADAPTER"
-cmake --build "$WORK/build-arm" --target robot-arm-hakoniwa-asset --parallel 4
+  -DHAKO_ROBOT_ARM_SENSOR_ADAPTER_ROOT="$SENSOR_ADAPTER" \
+  "-DCMAKE_CXX_STANDARD_LIBRARIES=\"$PREFIX/lib/libshakoc.$SHLIB\"" \
+  -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+  -DFETCHCONTENT_SOURCE_DIR_MUJOCO_PRECOMPILED="$MUJOCO_PRECOMPILED"
+cmake --build "$WORK/build-arm" --target robot-arm-hakoniwa-asset --parallel "$JOBS"
 ```
-
-- hakoniwa-pdu-rpc は、main の hakoniwalab/hakoniwa-pdu-rpc#91 以降を使ってください。それより前のものは、macOS で `hako_asset_service_initialize(): pro_data is null` で止まります（core-pro のライブラリが 2 つの写しになるため）。
-- プラグインを読み込む機能は、`HAKO_ROBOT_ARM_CONTROLLER_PLUGIN=ON` で入ります。
-- センサありの構成は、画面を使わないときも `HAKO_ARM_ENABLE_VIEWER=ON` でビルドします（GLFW のため）。起動のときに `--no-viewer` を付ければ、画面なしで動きます。
-- robot-arm のアプリは、`--rpc-service-config <service.json>` でサービスの定義を受け取ります（hakoniwalab/hakoniwa-robot-arm#19 以降）。
 
 ### 6.2 動かす
 
-サンプルの `run.py` が、5.1・5.2 を書き、腕を起動し、クライアントの登録を待って `hako-cmd start` し、`client.py` で 5 回呼んで、止めるまでを、1 回で行います。
+`run.py` はマニフェストと設定を書き、腕とクライアントを起動します。
+両方が登録されたら `hako-cmd start` で始め、5 回呼び終えると止めます。
+実行ごとに新しいディレクトリを指定します。
 
 ```bash
-# 変数のまとめ（同じシェルで続けているなら、そのままでよい）
-PDU_PY=$WORK/local-python
-PLUGIN=$WORK/build-plugin/libmy_servoj.so
-SHLIB=so; [[ $(uname -s) == Darwin ]] && SHLIB=dylib
-
 export ROBOT_ARM PREFIX SO101_MODEL PLUGIN
 export ARM_ASSET="$WORK/build-arm/bin/robot-arm-hakoniwa-asset"
 export HAKO_PDU_RPC_LIBRARY="$WORK/build-rpc/src/libhakoniwa_pdu_rpc.$SHLIB"
 export PYTHONPATH="$RPC/python:$PDU_PY:$REGISTRY${PYTHONPATH:+:$PYTHONPATH}"
 if [[ $SHLIB == dylib ]]; then
-  # build-rpc を先に：Foundation にも SHM のない libhakoniwa_pdu_rpc.dylib があり、
-  # macOS は名前だけで探すため、先にあるほうが使われてしまう
   export DYLD_LIBRARY_PATH="$WORK/build-rpc/src:$PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 else
   export LD_LIBRARY_PATH="$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
-DEMO=$RUNTIME/examples/service_plugins/servoj_like
 
-"$PYTHON" "$DEMO/run.py" "$WORK/run-$(date +%Y%m%d-%H%M%S)" --no-viewer   # 画面なし（まずこちらで）
-# "$PYTHON" "$DEMO/run.py" "$WORK/run-$(date +%Y%m%d-%H%M%S)"             # ビューアあり（ウィンドウが開く）
+"$PYTHON" "$DEMO/run.py" "$WORK/run-$(date +%Y%m%d-%H%M%S)" --no-viewer
 ```
 
-1 回およそ 10 秒です。core-pro の INFO の行に混じって、最後のほうに次の 5 行が出ます。`Warning: Log message truncated to fit 256 byte limit.` は何度も出ますが、core-pro のログが長いだけなので、気にしなくてかまいません。
+macOS では SHM 対応の PDU RPC を使えるよう、`DYLD_LIBRARY_PATH` の先頭を `build-rpc/src` にしています。
+デスクトップで MuJoCo ウィンドウを開くには、別の実行ディレクトリを指定し、`--no-viewer` を外します。
 
-期待される出力：
+クライアントは応答を受けてから実測角を読み、目標の 0.01 rad 以内に 0.2 秒とどまるまで待ちます。
+Linux での出力例は次の 5 行です。
 
 ```text
-res=0 shoulder_pan reached=+0.500000 rad (goal=+0.50)
-res=0 shoulder_pan reached=-0.500000 rad (goal=-0.50)
-res=0 shoulder_pan reached=+0.000000 rad (goal=+0.00)
-res=0 elbow_flex reached=+0.800326 rad (goal=+0.80)
-res=0 elbow_flex reached=+0.000453 rad (goal=+0.00)
+res=0 shoulder_pan reached=+0.500001 rad (goal=+0.50)
+res=0 shoulder_pan reached=-0.500001 rad (goal=-0.50)
+res=0 shoulder_pan reached=+0.000001 rad (goal=+0.00)
+res=0 elbow_flex reached=+0.800327 rad (goal=+0.80)
+res=0 elbow_flex reached=+0.000454 rad (goal=+0.00)
 ```
 
-- 実行の場所は、毎回新しくしてください（core-pro の mmap を使い回すと、前のロックが残って起動が止まります）。
-- 自分のクライアントを書くときは、`client.py` が見本です。要は、`RpcClient(..., endpoint_config_path=None)` → `make_typed_client(..., package="servoj_pdu.my_robot_srvs_msgs")` → `client.start()` → `hako-cmd start` を待つ → `create_request()`（`.joint`、`.t`）→ `call()`（`.res`）です。`create_request()` は要求の中身を、`call()` は応答の中身を返します。
-
-## 付録 A. 自分の腕に足すとき
-
-- `create` で、`args->joint_names` から自分の腕の関節を探してください（サンプルは SO-101 の 6 つの名前と範囲を書いています）。
-- 関節の数が違う場合は、手順 1 の `float64[6]` の長さも合わせます。
-- 範囲（`minimum`・`maximum`）は、マニフェストのアクチュエータの範囲と合わせてください。
-
-## 付録 B. Foundation を手で作る場合の落とし穴
-
-Business Pack の Foundation を使えば、次のことは要りません。
-
-- core-pro：`HAKO_PYTHON_EXECUTABLE`・`HAKO_PYTHON_INSTALL_DIR` を自分の venv に向ける（でないと、システムの dist-packages に入れようとして失敗する）。
-- pdu-endpoint：core-pro 込み（`HAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=ON`）で作る。システムに古い core-pro があると、それを拾ってリンクで失敗するので、`-DHAKONIWA_assets_LIB=$PREFIX/lib/libassets.so -DHAKONIWA_shakoc_LIB=$PREFIX/lib/libshakoc.so` を明示する。
-- hakoniwa-mujoco-robots：`git submodule update --init thirdparty/nolman thirdparty/hakoniwa-mbody-registry`。
+自分のクライアントを書くときは [client.py](../examples/service_plugins/servoj_like/client.py) を参照してください。
+`create_request()` で要求の `joint` と `t` を設定し、`call()` が返す応答の `res` を読みます。

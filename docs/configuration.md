@@ -162,6 +162,34 @@ Applicationだけが `HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1` を定義し、セ
 - **車の摩擦**：`AckermannStep` の要求の `tire_friction` が 0 より大きいとき、その車の 4 輪の摩擦を、そのステップの最初の刻みからその値にします。0 以下なら変えません（hakoniwa-pdu-registry `428115b` 以降、`hakoniwa-pdu` 1.7.1 以降）。
 - 要るもの：hakoniwa-core-pro は #123 を含む版（途中の知らせで要求が終わらない）。
 
+#### 共有ライブラリのサービスプラグイン
+
+```json
+"services": [
+  { "name": "ArmService/ServoJ/SO101", "type": "plugin", "pdu_robot": "SO101",
+    "plugin": { "library": "libmy_servoj.so" }, "lockstep": false, "priority": 16 }
+]
+```
+
+`plugin.library` の相対パスはマニフェストのディレクトリから解決します。
+同じ `pdu_robot` のプラグイン行は、1 台のロボットのサービスになります。
+その行の `plugin.library`、`plugin.config`、`priority` はそろえます。
+各サービスの番号は、そのロボットの行が並ぶ順です。
+
+共有ライブラリと同じ場所に、拡張子を `.plugin.json` に替えた宣言ファイルを置きます。
+`libmy_servoj.so` や `libmy_servoj.dylib` なら、宣言ファイルは `libmy_servoj.plugin.json` です。
+
+```json
+{
+  "service_types": ["my_robot_srvs_msgs/ServoJ"]
+}
+```
+
+`service_types` は、Core の `service.json` で各サービスの `type` に指定する RPC 型の配列です。
+Plant 操作を出すプラグインは、`plant_operations` に `surface_friction`、`body_motion`、`humanoid_motion` のうち使うものを並べます。
+宣言が無い場合、対応する RPC 型が無い場合、または Plant が宣言された操作を扱えない場合は起動が止まります。
+実装と設定の手順は [howto-add-async-service.md](howto-add-async-service.md) を参照してください。
+
 ## 3. Component Config — `components[].config` の内容
 
 <a id="4-scalar-joint-actuator-config"></a>
