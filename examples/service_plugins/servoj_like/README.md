@@ -4,8 +4,9 @@ The arm pans to `+0.5`, `-0.5`, and `0 rad`, then bends its elbow to `+0.8 rad`
 and straightens it. Each motion takes 1.5 simulated seconds. The client prints
 `res=0` and the measured angle after the joint stays within `0.01 rad` of its goal.
 
-Linux verification covered the sensor and GLFW build and all five motions with
-`--no-viewer`. The viewer window and macOS steps are untested.
+Verified on Linux (sensor and GLFW build, all five motions with `--no-viewer`)
+and on macOS (Apple Silicon: all five motions headless 3/3 and with the MuJoCo
+viewer, 2026-11-26).
 
 ## Build
 
@@ -48,9 +49,16 @@ cmake -S "$DEMO" -B "$WORK/build-plugin" -DCMAKE_BUILD_TYPE=Release \
   -DHAKO_SERVOJ_PDU_TYPES="$PDU_TYPES" -DHAKO_PDU_REGISTRY_TYPES="$REGISTRY/pdu/types"
 cmake --build "$WORK/build-plugin" --parallel "$JOBS"
 
+RPC_LINK=()
+if [[ $SHLIB == dylib ]]; then
+  # macOS: take every Core function from libshakoc. Otherwise the service
+  # functions bind to libassets and the asset functions to libshakoc, two copies
+  # with separate state ("hako_asset_service_initialize(): pro_data is null").
+  RPC_LINK=("-DCMAKE_SHARED_LINKER_FLAGS=$PREFIX/lib/libshakoc.dylib")
+fi
 cmake -S "$RPC" -B "$WORK/build-rpc" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$PREFIX" -DHAKONIWA_PDU_REGISTRY_DIR="$REGISTRY" \
-  -DHAKO_PDU_RPC_ENABLE_SHM=ON -DHAKO_PDU_RPC_BUILD_TESTS=OFF
+  -DHAKO_PDU_RPC_ENABLE_SHM=ON -DHAKO_PDU_RPC_BUILD_TESTS=OFF "${RPC_LINK[@]}"
 cmake --build "$WORK/build-rpc" --target hakoniwa_pdu_rpc_shared --parallel "$JOBS"
 
 cmake -S "$ROBOT_ARM" -B "$WORK/build-arm" -DCMAKE_BUILD_TYPE=Release \
@@ -77,7 +85,10 @@ export PLUGIN="$WORK/build-plugin/libmy_servoj.so"
 export HAKO_PDU_RPC_LIBRARY="$WORK/build-rpc/src/libhakoniwa_pdu_rpc.$SHLIB"
 export PYTHONPATH="$RPC/python:$PDU_PY:$REGISTRY${PYTHONPATH:+:$PYTHONPATH}"
 if [[ $SHLIB == dylib ]]; then
-  export DYLD_LIBRARY_PATH="$PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  # build-rpc first: the Foundation has its own libhakoniwa_pdu_rpc.dylib without
+  # the shm client, and dyld resolves it by leaf name through DYLD_LIBRARY_PATH
+  # even for the absolute HAKO_PDU_RPC_LIBRARY ("failed to create RPC client").
+  export DYLD_LIBRARY_PATH="$WORK/build-rpc/src:$PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 else
   export LD_LIBRARY_PATH="$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
