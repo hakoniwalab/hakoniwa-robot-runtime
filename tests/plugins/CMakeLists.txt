@@ -103,24 +103,23 @@ else()
     message(WARNING "hakoniwa-sensor-adapter not found: the sensor variant of the test is skipped")
 endif()
 
-function(add_service_plugin name)
-    add_library(${name} MODULE service_fixture_plugin.c)
+function(add_robot_plugin name)
+    add_library(${name} MODULE robot_fixture_plugin.c)
     target_include_directories(${name} PRIVATE ${HAKO_RUNTIME_INCLUDE_DIR})
     set_target_properties(${name} PROPERTIES
         C_STANDARD 99 C_EXTENSIONS OFF C_VISIBILITY_PRESET hidden PREFIX "lib")
     target_compile_options(${name} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     target_compile_definitions(${name} PRIVATE ${ARGN})
 endfunction()
-add_service_plugin(service_fixture)
-add_service_plugin(service_bad_kind SERVICE_BAD_KIND)
-add_service_plugin(service_bad_abi SERVICE_BAD_ABI)
-add_service_plugin(service_small_table SERVICE_SMALL_TABLE)
-add_service_plugin(service_missing_step SERVICE_MISSING_STEP)
-add_service_plugin(service_no_optional SERVICE_NO_OPTIONAL)
-add_service_plugin(service_failing_update SERVICE_FAILING_UPDATE)
+add_robot_plugin(robot_fixture)
+add_robot_plugin(robot_bad_kind FIXTURE_BAD_KIND)
+add_robot_plugin(robot_bad_abi FIXTURE_BAD_ABI)
+add_robot_plugin(robot_small_table FIXTURE_SMALL_TABLE)
+add_robot_plugin(robot_missing_step FIXTURE_MISSING_STEP)
+add_robot_plugin(robot_no_cancel FIXTURE_NO_CANCEL)
+add_robot_plugin(robot_failing_step FIXTURE_FAILING_STEP)
 
-add_executable(hako-service-plugin-test
-    ${RUNTIME_ROOT}/tests/test_service_plugin.cpp
+set(ROBOT_PLUGIN_TEST_SOURCES
     ${HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES}
     ${HAKO_RUNTIME_CONTROLLER_PLUGIN_MANIFEST_SOURCES}
     ${HAKO_RUNTIME_ACTUATOR_MANIFEST_SOURCES}
@@ -129,16 +128,33 @@ add_executable(hako-service-plugin-test
     ${HAKO_RUNTIME_SCALAR_PDU_COMMAND_SOURCES}
     ${HAKO_RUNTIME_HOLD_CONTROLLER_SOURCES}
     ${HAKO_RUNTIME_ASYNC_PIPELINE_SOURCES})
-target_compile_features(hako-service-plugin-test PRIVATE cxx_std_20)
-target_compile_options(hako-service-plugin-test PRIVATE -Wall -Wextra)
-target_compile_definitions(hako-service-plugin-test PRIVATE
-    ${HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE}=1 ${HAKO_RUNTIME_LOCKSTEP_DEFINE}=1)
-target_include_directories(hako-service-plugin-test PRIVATE
-    ${HAKO_RUNTIME_INCLUDE_DIR} ${HAKO_RUNTIME_SRC_DIR})
-target_include_directories(hako-service-plugin-test SYSTEM PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
-target_link_libraries(hako-service-plugin-test PRIVATE ${CMAKE_DL_LIBS})
+
+function(add_robot_plugin_test name)
+    add_executable(${name} ${ROBOT_PLUGIN_TEST_SOURCES} ${ARGN})
+    target_compile_features(${name} PRIVATE cxx_std_20)
+    target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)
+    target_compile_definitions(${name} PRIVATE
+        ${HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE}=1 ${HAKO_RUNTIME_LOCKSTEP_DEFINE}=1)
+    target_include_directories(${name} PRIVATE ${HAKO_RUNTIME_INCLUDE_DIR} ${HAKO_RUNTIME_SRC_DIR})
+    target_include_directories(${name} SYSTEM PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+    target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
+endfunction()
+
+# The fixture is also compiled into the test as a builtin (HAKO_ROBOT_PLUGIN_BUILTIN).
+add_library(robot_fixture_builtin OBJECT robot_fixture_plugin.c)
+target_include_directories(robot_fixture_builtin PRIVATE ${HAKO_RUNTIME_INCLUDE_DIR})
+set_target_properties(robot_fixture_builtin PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+target_compile_options(robot_fixture_builtin PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_compile_definitions(robot_fixture_builtin PRIVATE HAKO_ROBOT_PLUGIN_BUILTIN)
+
+add_robot_plugin_test(hako-robot-plugin-test
+    ${RUNTIME_ROOT}/tests/test_robot_plugin.cpp $<TARGET_OBJECTS:robot_fixture_builtin>)
+add_test(NAME hako-robot-plugin-test COMMAND hako-robot-plugin-test
+    "$<TARGET_FILE:robot_fixture>" "$<TARGET_FILE:robot_bad_kind>" "$<TARGET_FILE:robot_bad_abi>"
+    "$<TARGET_FILE:robot_small_table>" "$<TARGET_FILE:robot_missing_step>"
+    "$<TARGET_FILE:robot_no_cancel>" "$<TARGET_FILE:robot_failing_step>")
+
+# The manifest side of a plugin service row.
+add_robot_plugin_test(hako-service-plugin-test ${RUNTIME_ROOT}/tests/test_service_plugin.cpp)
 add_test(NAME hako-service-plugin-test COMMAND hako-service-plugin-test
-    "$<TARGET_FILE:service_fixture>" "$<TARGET_FILE:hold_target>"
-    "$<TARGET_FILE:service_bad_kind>" "$<TARGET_FILE:service_bad_abi>"
-    "$<TARGET_FILE:service_small_table>" "$<TARGET_FILE:service_missing_step>"
-    "$<TARGET_FILE:service_no_optional>" "$<TARGET_FILE:service_failing_update>")
+    "$<TARGET_FILE:robot_fixture>" "$<TARGET_FILE:hold_target>")
