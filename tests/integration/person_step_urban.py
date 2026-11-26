@@ -396,17 +396,17 @@ def main(build, foundation, urban, mujoco_library, *, contract):
     if contract:
         check_manifest_contract(build, foundation, car, service, work)
         return
-    baseline = {}
+    runs = []
     for label in ("service-1", "service-2"):
         directory = work / label
         run_route(build, foundation, car, service, directory, label.split("-")[0],
                   check_gate=label == "service-1")
-        verify("urban-mixed", directory)
+        runs.append(directory)
         for filename in (*(f"{name}.bin" for name in (*CARS, PERSON)), "contacts.jsonl"):
             data = (directory / filename).read_bytes()
             assert data, (label, filename)
-            assert data == baseline.setdefault(filename, data), (label, filename)
             print(label, filename, len(data), hashlib.sha256(data).hexdigest(), flush=True)
+    verify("urban-mixed", *runs, repeat=True)
 
 
 if __name__ == "__main__":

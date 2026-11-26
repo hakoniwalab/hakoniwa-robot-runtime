@@ -285,12 +285,7 @@ else
     run_urban service-1
     run_urban service-2
     "$FOUNDATION/python/bin/python3" "$SOURCE_DIR/check_step_goldens.py" "urban-$MODE" \
-        "$WORK_DIR/service-1" "$WORK_DIR/service-2"
-    for vehicle in "${VEHICLES[@]}"; do
-        trace="state-$vehicle.bin"
-        cmp "$WORK_DIR/service-1/$trace" "$WORK_DIR/service-2/$trace"
-        echo "$vehicle sim_time_usec, pose and twist matched byte for byte over 80 steps in both runs"
-    done
+        "$WORK_DIR/service-1" "$WORK_DIR/service-2" --repeat
     if [[ "$MODE" == two ]] && cmp -s "$WORK_DIR/service-1/state-Car-1.bin" "$WORK_DIR/service-1/state-Car-2.bin"; then
         echo "Both vehicles produced the same trace despite distinct initial poses and commands" >&2
         exit 1
