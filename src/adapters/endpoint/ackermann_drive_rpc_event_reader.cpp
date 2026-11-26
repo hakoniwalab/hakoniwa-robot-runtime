@@ -1,15 +1,9 @@
 #include "adapters/endpoint/ackermann_step_packet.hpp"
 
-#include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
-
-#include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepResponsePacket.hpp"
-
 #include <array>
 #include <cstring>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 namespace {
@@ -170,61 +164,6 @@ HakoCpp_AckermannStepResponse ackermann_step_response_body(
     body.twist.angular.y = state.angular_velocity.y;
     body.twist.angular.z = state.angular_velocity.z;
     return body;
-}
-
-bool encode_legacy_ackermann_step_response(
-    const runner::AsyncRpcResponse& response, std::span<std::byte> packet,
-    std::string& error)
-{
-    AckermannStepState state;
-    if (!decode_ackermann_state(response.payload, state)) {
-        error = "invalid AckermannStep response state";
-        return false;
-    }
-    HakoCpp_AckermannStepResponsePacket encoded {};
-    auto converter = hako::pdu::msgs::hako_srv_msgs::AckermannStepResponsePacket {};
-    if (!converter.pdu2cpp(reinterpret_cast<char*>(packet.data()), encoded)) {
-        error = "failed to initialize AckermannStep response";
-        return false;
-    }
-    encoded.body = ackermann_step_response_body(response.step, state);
-    if (converter.cpp2pdu(
-            encoded, reinterpret_cast<char*>(packet.data()),
-            static_cast<int>(packet.size())) < 0) {
-        error = "failed to encode AckermannStep response";
-        return false;
-    }
-    return true;
-}
-
-std::shared_ptr<runner::hakoniwa::CoreAsyncRpcServiceChannel>
-make_ackermann_step_service_channel(
-    std::string vehicle_name,
-    std::string asset_name)
-{
-    const auto service_name = ackermann_step_service_name(vehicle_name);
-    auto decoder = [](std::span<const std::byte> packet,
-                       runner::AsyncRpcRequest& request,
-                       std::string& error) {
-        HakoCpp_AckermannStepRequestPacket decoded {};
-        if (!hako::pdu::msgs::hako_srv_msgs::AckermannStepRequestPacket {}.pdu2cpp(
-                const_cast<char*>(reinterpret_cast<const char*>(packet.data())), decoded)) {
-            error = "failed to decode AckermannStep request";
-            return false;
-        }
-        request.step = decoded.body.step;
-        request.payload = encode_ackermann_command({
-            decoded.body.drive.steering_angle,
-            decoded.body.drive.steering_angle_velocity,
-            decoded.body.drive.speed,
-            decoded.body.drive.acceleration,
-            decoded.body.drive.jerk,
-        });
-        return true;
-    };
-    return std::make_shared<runner::hakoniwa::CoreAsyncRpcServiceChannel>(
-        std::move(vehicle_name), std::move(asset_name), service_name,
-        std::move(decoder), encode_legacy_ackermann_step_response);
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

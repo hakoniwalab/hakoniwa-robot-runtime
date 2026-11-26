@@ -2,7 +2,7 @@
 
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/runtime_definition.hpp"
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #endif
 
@@ -66,7 +66,7 @@ public:
     [[nodiscard]] std::shared_ptr<::hakoniwa::sensor_adapter::IImageRenderer> create_image_renderer();
 #endif
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     /** Binds one `<person>/...` hakoniwa_person model to PersonStep. */
     void bind_person(std::string person_name, double initial_yaw_rad = 0.0);
     /** Keeps the latest body-frame command active until the next request. */

@@ -12,8 +12,4 @@ bool encode_person_step_response(
     std::string_view person_name, std::uint64_t step, const PersonStepState& state,
     std::span<std::byte> packet);
 
-bool encode_legacy_person_step_response(
-    std::string_view person_name, const runner::AsyncRpcResponse& response,
-    std::span<std::byte> packet, std::string& error);
-
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

@@ -1,15 +1,14 @@
 #pragma once
 
-#include "hakoniwa/robot_runtime/runner/async_rpc_input.hpp"
-#include "hakoniwa/robot_runtime/runner/hakoniwa/async_rpc_service_channel.hpp"
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/source/ackermann_drive_command_source.hpp"
 
-#include <memory>
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 
@@ -22,7 +21,7 @@ struct AckermannStepState {
     runtime::Vector3State angular_velocity;
 };
 
-/** IAckermannDriveEventReader fed by a complete AsyncRpcInput batch. */
+/** IAckermannDriveEventReader fed by the AckermannStep service. */
 class AckermannDriveRpcEventReader final
     : public runtime::IAckermannDriveEventReader {
 public:
@@ -55,11 +54,5 @@ private:
 /** `CarService/AckermannStep/<vehicle>`. */
 [[nodiscard]] std::string ackermann_step_service_name(
     std::string_view vehicle_name);
-
-/** One AckermannStep Core service server per vehicle. */
-[[nodiscard]] std::shared_ptr<runner::hakoniwa::CoreAsyncRpcServiceChannel>
-make_ackermann_step_service_channel(
-    std::string vehicle_name,
-    std::string asset_name);
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

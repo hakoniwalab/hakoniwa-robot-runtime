@@ -29,7 +29,8 @@ trap cleanup EXIT
 wait_log() {
     local file=$1 marker=$2 pid=$3
     for ((attempt = 0; attempt < 150; ++attempt)); do
-        grep -qFx -- "$marker" "$file" && return 0
+        # Core's background thread can append a log message before the newline.
+        grep -qF -- "$marker" "$file" && return 0
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.1
     done

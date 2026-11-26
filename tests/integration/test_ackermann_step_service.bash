@@ -202,23 +202,14 @@ PY
 }
 
 start_urban() {
-    local run=$1 route=$2 index
-    local rpc_args=(--rpc-service-config "$SERVICE_CONFIG")
-    local manifest="$WORK_DIR/car/urban-car-asset-manifest.json"
-    if [[ "$route" == service ]]; then
-        manifest="$WORK_DIR/car/urban-car-service-manifest.json"
-    else
-        # Reverse CLI order to exercise the old batch and new manifest order independently.
-        for ((index = ${#VEHICLES[@]} - 1; index >= 0; --index)); do
-            rpc_args+=(--ackermann-rpc-input "${VEHICLES[index]}")
-        done
-    fi
+    local run=$1
+    local manifest="$WORK_DIR/car/urban-car-service-manifest.json"
     begin_run "$run"
     "$BUILD_DIR/bin/urban-car-hakoniwa-asset" \
         --manifest "$manifest" \
         --asset-name AckermannUrban --no-viewer --external-conductor \
         --realtime-sync-cycle-msec 0 --physics-substeps 4 \
-        "${rpc_args[@]}" \
+        --rpc-service-config "$SERVICE_CONFIG" \
         >"$run/server.log" 2>&1 &
     SERVER_PID=$!
     PIDS+=("$SERVER_PID")
@@ -226,9 +217,9 @@ start_urban() {
 }
 
 run_urban() {
-    local run="$WORK_DIR/$1" route=$2 vehicle index
+    local run="$WORK_DIR/$1" vehicle index
     local client_pids=()
-    start_urban "$run" "$route"
+    start_urban "$run"
     for vehicle in "${VEHICLES[@]}"; do
         "$BUILD_DIR/hako-ackermann-step-urban-client" "$SERVICE_CONFIG" "$run/state-$vehicle.bin" "$vehicle" \
             >"$run/client-$vehicle.log" 2>&1 &
@@ -249,7 +240,7 @@ run_urban() {
 
 run_urban_startup() {
     local run="$WORK_DIR/startup" client_pid
-    start_urban "$run" service
+    start_urban "$run"
     "$BUILD_DIR/hako-ackermann-step-startup-client" \
         "$WORK_DIR/car/urban-car-pdudef.json" "$SERVICE_CONFIG" >"$run/client.log" 2>&1 &
     client_pid=$!
@@ -268,19 +259,17 @@ if [[ -z "$URBAN_DIR" ]]; then
         --pdu-config "$SOURCE_DIR/pdu_config.json" --output "$SERVICE_CONFIG" "${config_args[@]}"
     case "$MODE" in
         single)
-            run_route legacy hako-ackermann-rpc-integration-server A
             run_route service hako-ackermann-step-service-server
             ;;
         two)
-            run_route legacy hako-ackermann-rpc-integration-server
             run_route service hako-ackermann-step-service-server A B
-            diff -u "$WORK_DIR/legacy/responses-B.txt" "$WORK_DIR/service/responses-B.txt"
             cat "$WORK_DIR/service/responses-B.txt"
             ;;
         timeout) run_timeout; exit 0 ;;
         *) echo "Unknown mode: $MODE" >&2; exit 2 ;;
     esac
-    diff -u "$WORK_DIR/legacy/responses-A.txt" "$WORK_DIR/service/responses-A.txt"
+    "$FOUNDATION/python/bin/python3" "$SOURCE_DIR/check_step_goldens.py" "ackermann-$MODE" \
+        "$WORK_DIR/service"
     cat "$WORK_DIR/service/responses-A.txt"
 else
     case "$MODE" in
@@ -293,18 +282,16 @@ else
         run_urban_startup
         exit 0
     fi
-    run_urban legacy-1 legacy
-    run_urban legacy-2 legacy
-    run_urban service-1 service
-    run_urban service-2 service
+    run_urban service-1
+    run_urban service-2
+    "$FOUNDATION/python/bin/python3" "$SOURCE_DIR/check_step_goldens.py" "urban-$MODE" \
+        "$WORK_DIR/service-1" "$WORK_DIR/service-2"
     for vehicle in "${VEHICLES[@]}"; do
         trace="state-$vehicle.bin"
-        cmp "$WORK_DIR/legacy-1/$trace" "$WORK_DIR/legacy-2/$trace"
         cmp "$WORK_DIR/service-1/$trace" "$WORK_DIR/service-2/$trace"
-        cmp "$WORK_DIR/legacy-1/$trace" "$WORK_DIR/service-1/$trace"
-        echo "$vehicle sim_time_usec, pose and twist matched byte for byte over 80 steps in all four runs"
+        echo "$vehicle sim_time_usec, pose and twist matched byte for byte over 80 steps in both runs"
     done
-    if [[ "$MODE" == two ]] && cmp -s "$WORK_DIR/legacy-1/state-Car-1.bin" "$WORK_DIR/legacy-1/state-Car-2.bin"; then
+    if [[ "$MODE" == two ]] && cmp -s "$WORK_DIR/service-1/state-Car-1.bin" "$WORK_DIR/service-1/state-Car-2.bin"; then
         echo "Both vehicles produced the same trace despite distinct initial poses and commands" >&2
         exit 1
     fi

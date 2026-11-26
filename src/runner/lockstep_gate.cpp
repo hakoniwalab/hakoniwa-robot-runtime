@@ -55,14 +55,12 @@ void LockstepGate::start_run() noexcept
 
 bool LockstepGate::ready_to_step() noexcept
 {
-    initial_sync_inputs_ready_ = false;
     if (failed() || paused_) {
         return false;
     }
 
     try {
         bool all_ready = true;
-        bool initial_sync_inputs_ready = true;
         for (std::size_t i = 0; i < inputs_.size(); ++i) {
             const auto& [name, source] = inputs_[i];
             ready_[i] = source->lockstep_ready();
@@ -77,10 +75,8 @@ bool LockstepGate::ready_to_step() noexcept
                     return false;  // Preserve the untimed PDU polling order.
                 }
                 all_ready = false;
-                initial_sync_inputs_ready &= !source->lockstep_needs_initial_sync();
             }
         }
-        initial_sync_inputs_ready_ = initial_sync_inputs_ready;
         if (all_ready) {
             wait_started_.reset();
             first_step_ = false;

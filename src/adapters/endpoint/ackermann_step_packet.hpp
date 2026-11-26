@@ -8,8 +8,4 @@ namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 HakoCpp_AckermannStepResponse ackermann_step_response_body(
     std::uint64_t step, const AckermannStepState& state);
 
-bool encode_legacy_ackermann_step_response(
-    const runner::AsyncRpcResponse& response, std::span<std::byte> packet,
-    std::string& error);
-
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

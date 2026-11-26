@@ -1,7 +1,6 @@
 #include "adapters/endpoint/person_step_packet.hpp"
 
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_PersonStepRequestPacket.hpp"
 #define hako_convert_pdu2cpp_array_string_varray hako_convert_pdu2ros_array_string_varray
 #define hako_convert_cpp2pdu_array_string_varray hako_convert_ros2pdu_array_string_varray
 #include "hako_srv_msgs/pdu_cpptype_conv_PersonStepResponsePacket.hpp"
@@ -228,58 +227,6 @@ bool encode_person_step_response(
         std::fill(std::find(text, end, '\0'), end, '\0');
     }
     return true;
-}
-
-bool encode_legacy_person_step_response(
-    const std::string_view person_name, const runner::AsyncRpcResponse& response,
-    std::span<std::byte> packet, std::string& error)
-{
-    PersonStepState state;
-    if (!decode_person_state(response.payload, state)) {
-        error = "invalid PersonStep response state";
-        return false;
-    }
-    if (!encode_person_step_response(person_name, response.step, state, packet)) {
-        error = "failed to encode PersonStep response";
-        return false;
-    }
-    return true;
-}
-
-std::shared_ptr<runner::hakoniwa::CoreAsyncRpcServiceChannel>
-make_person_step_service_channel(
-    std::string person_name,
-    std::string asset_name)
-{
-    const auto service_name = person_step_service_name(person_name);
-    auto decoder = [](std::span<const std::byte> packet,
-                       runner::AsyncRpcRequest& request,
-                       std::string& error) {
-        HakoCpp_PersonStepRequestPacket decoded {};
-        if (!hako::pdu::msgs::hako_srv_msgs::PersonStepRequestPacket {}.pdu2cpp(
-                const_cast<char*>(reinterpret_cast<const char*>(packet.data())), decoded)) {
-            error = "failed to decode PersonStep request";
-            return false;
-        }
-        request.step = decoded.body.step;
-        request.payload = encode_person_command({
-            {decoded.body.cmd_vel.linear.x, decoded.body.cmd_vel.linear.y,
-                decoded.body.cmd_vel.linear.z},
-            {decoded.body.cmd_vel.angular.x, decoded.body.cmd_vel.angular.y,
-                decoded.body.cmd_vel.angular.z},
-            decoded.body.animation,
-            decoded.body.ride,
-        });
-        return true;
-    };
-    auto encoder = [person_name](const runner::AsyncRpcResponse& response,
-                                  std::span<std::byte> packet,
-                                  std::string& error) {
-        return encode_legacy_person_step_response(person_name, response, packet, error);
-    };
-    return std::make_shared<runner::hakoniwa::CoreAsyncRpcServiceChannel>(
-        std::move(person_name), std::move(asset_name), service_name,
-        std::move(decoder), std::move(encoder));
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

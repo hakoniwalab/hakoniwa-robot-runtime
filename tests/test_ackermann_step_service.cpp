@@ -145,13 +145,16 @@ void same_response_bytes()
     state.bodies.push_back({.body_id = kBody, .position = expected.position,
         .orientation = expected.orientation, .linear_velocity = expected.linear_velocity,
         .angular_velocity = expected.angular_velocity});
-    auto legacy = response_envelope();
-    auto service = legacy;
-    std::string error;
-    assert(encode_legacy_ackermann_step_response(
-        {41, encode_ackermann_state(expected)}, legacy, error));
+    auto reference = response_envelope();
+    HakoCpp_AckermannStepResponsePacket reference_packet {};
+    auto converter = hako::pdu::msgs::hako_srv_msgs::AckermannStepResponsePacket {};
+    assert(converter.pdu2cpp(reinterpret_cast<char*>(reference.data()), reference_packet));
+    reference_packet.body = ackermann_step_response_body(41, expected);
+    assert(converter.cpp2pdu(reference_packet, reinterpret_cast<char*>(reference.data()),
+        reference.size()) > 0);
+    auto service = response_envelope();
     assert(pipeline.service->on_response(state, {}, service));
-    assert(legacy == service);
+    assert(reference == service);
     HakoCpp_AckermannStepResponsePacket envelope {};
     assert(hako::pdu::msgs::hako_srv_msgs::AckermannStepResponsePacket {}.pdu2cpp(
         reinterpret_cast<char*>(service.data()), envelope));
@@ -159,7 +162,7 @@ void same_response_bytes()
     assert(hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader {}.cpp2pdu(
         envelope.header, reinterpret_cast<char*>(core_buffer.data()), core_buffer.size()) > 0);
     assert(pipeline.service->on_response(state, {}, core_buffer));
-    assert(legacy == core_buffer);
+    assert(reference == core_buffer);
     constexpr auto body_offset = HAKO_PDU_META_DATA_SIZE()
         + offsetof(Hako_AckermannStepResponsePacket, body);
     auto with_metadata = response_envelope();

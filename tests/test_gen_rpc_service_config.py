@@ -84,36 +84,5 @@ class RpcServiceConfigTest(unittest.TestCase):
                 [], "pdu.json", ["Alice", "Alice"]
             )
 
-    def test_runtime_arguments_match_generated_service_config(self) -> None:
-        self.assertEqual(
-            GENERATOR.build_runtime_args(
-                ["Car-1", "Car-2"], "/runtime/service.json"
-            ),
-            [
-                "--ackermann-rpc-input",
-                "Car-1",
-                "--ackermann-rpc-input",
-                "Car-2",
-                "--rpc-service-config",
-                "/runtime/service.json",
-            ],
-        )
-
-    def test_person_runtime_arguments(self) -> None:
-        self.assertEqual(
-            GENERATOR.build_runtime_args(
-                [], "/runtime/service.json", ["Alice", "Bob"]
-            ),
-            [
-                "--person-rpc-input",
-                "Alice",
-                "--person-rpc-input",
-                "Bob",
-                "--rpc-service-config",
-                "/runtime/service.json",
-            ],
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

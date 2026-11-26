@@ -84,7 +84,7 @@ struct QuaternionState {
     double w {1.0};
 };
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 /** One deterministic person contact edge, expressed in City World ENU. */
 struct PersonContactEvent {
     std::uint64_t id {0};

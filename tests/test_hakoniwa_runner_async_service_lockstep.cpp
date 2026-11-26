@@ -70,7 +70,7 @@ public:
         return sleeps.size() == stop_after_sleeps ? EINTR : 0;
     }
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     CoreActivity core_activity() noexcept override { return CoreActivity::running; }
 #endif
 

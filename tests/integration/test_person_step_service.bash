@@ -4,7 +4,6 @@ set -uo pipefail
 BUILD_DIR=$1
 FOUNDATION=$2
 SOURCE_DIR=$3
-MODE=${4:-legacy}
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/hako-person-rpc-integration.XXXXXX")
 export DYLD_LIBRARY_PATH="${FOUNDATION}/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
 export LD_LIBRARY_PATH="${FOUNDATION}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -21,8 +20,7 @@ SERVICE_CONFIG="${WORK_DIR}/person-service.json"
   --output "${SERVICE_CONFIG}" \
   --person A --person B >"${WORK_DIR}/generator.log" || exit 1
 run_route() {
-    local dir="$WORK_DIR/$1"
-    shift
+    local dir="$WORK_DIR/service"
     mkdir -p "$dir/mmap"
     export HAKO_CONFIG_PATH="$dir/cpp_core_config.json"
     cat > "$HAKO_CONFIG_PATH" <<JSON
@@ -31,7 +29,7 @@ JSON
     "${BUILD_DIR}/hako-async-rpc-integration-conductor" >"$dir/conductor.log" 2>&1 & PIDS+=("$!")
     wait_log "$dir/conductor.log" "CONDUCTOR started" || exit 1
     "${BUILD_DIR}/hako-person-rpc-integration-server" \
-        "${SOURCE_DIR}/pdu_config.json" "$SERVICE_CONFIG" "$@" \
+        "${SOURCE_DIR}/pdu_config.json" "$SERVICE_CONFIG" \
         >"$dir/server.log" 2>&1 & PIDS+=("$!")
     wait_log "$dir/server.log" "SERVER registered" || exit 1
     local channel
@@ -53,12 +51,6 @@ JSON
     wait 2>/dev/null || true
     PIDS=()
 }
-run_route legacy
-if [[ "$MODE" == compare ]]; then
-    run_route service --service
-    for channel in A B; do
-        diff -u "$WORK_DIR/legacy/responses-$channel.txt" "$WORK_DIR/service/responses-$channel.txt" || exit 1
-    done
-    echo "Both PersonStep clients received identical response lines on both routes"
-fi
-echo "PASS person-rpc-input"
+run_route
+"$FOUNDATION/python/bin/python3" "$SOURCE_DIR/check_step_goldens.py" person "$WORK_DIR/service" || exit 1
+echo "PASS person-step-service"

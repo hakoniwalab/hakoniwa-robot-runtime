@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include <chrono>
 #include <thread>
 #endif
@@ -15,7 +15,7 @@ namespace hakoniwa::robot_runtime::runner::detail {
 
 std::atomic<HakoniwaAssetDriver*> HakoniwaAssetDriver::active_instance_ {nullptr};
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 void IHakoniwaAssetDriverCallbacks::wait_for_input() noexcept
 {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -46,7 +46,7 @@ int HakoniwaAssetApi::sleep_no_wait(
     return hako_asset_usleep_no_wait(sleep_time_usec, is_force_stop);
 }
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 IHakoniwaAssetApi::CoreActivity core_activity_from_simulation_state(
     const int state) noexcept
 {
@@ -176,7 +176,7 @@ int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
         }
     }
     while (!callbacks_.should_stop()) {
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         // While lockstep input is incomplete sleep_no_wait() is intentionally
         // not called, so it cannot report Core stop/reset as EINTR.  Poll the
         // read-only state before the input clock instead.  Unknown is not a
@@ -186,7 +186,7 @@ int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
         }
 #endif
         if (!callbacks_.ready_to_step()) {
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
             callbacks_.wait_for_input();
 #endif
             continue;  // lockstep: wait for the input without advancing time
@@ -208,7 +208,7 @@ int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
             return sleep_result;
         }
     }
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     return callbacks_.stop_result();
 #else
     return 0;

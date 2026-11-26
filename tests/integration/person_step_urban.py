@@ -16,6 +16,8 @@ import traceback
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
+from check_step_goldens import verify
+
 
 DELTA_USEC = 1_000
 STEPS = 80
@@ -269,17 +271,13 @@ def run_route(build, foundation, car, service_config, run_dir, route, check_gate
     started = False
     try:
         launch("conductor", [build / "hako-async-rpc-integration-conductor"], "CONDUCTOR started")
-        manifest = {"legacy": MANIFEST, "service": SERVICE_MANIFEST, "async": ASYNC_MANIFEST}[route]
+        manifest = {"service": SERVICE_MANIFEST, "async": ASYNC_MANIFEST}[route]
         args = [
             build / "bin/urban-car-hakoniwa-asset", "--manifest", car / manifest,
             "--no-viewer", "--external-conductor", "--realtime-sync-cycle-msec", "0",
             "--physics-substeps", "4", "--rpc-service-config", service_config,
             "--person-contact-log", run_dir / "contacts.jsonl",
         ]
-        if route == "legacy":
-            for name in CARS:
-                args.extend(("--ackermann-rpc-input", name))
-            args.extend(("--person-rpc-input", PERSON))
         server, server_log = launch("server", args, "Starting Hakoniwa Runner:")
         client_process, client_log = launch("client", [
             sys.executable, __file__, "--client", car / "urban-car-pdudef.json",
@@ -325,18 +323,17 @@ def check_manifest_contract(build, foundation, car, service_config, work):
     validator = Draft202012Validator(schema)
     manifest = json.loads((car / SERVICE_MANIFEST).read_text())
     validator.validate(manifest)
-    legacy = json.loads((car / MANIFEST).read_text())
-    validator.validate(legacy)
+    base = json.loads((car / MANIFEST).read_text())
+    validator.validate(base)
     validator.validate(json.loads((car / ASYNC_MANIFEST).read_text()))
-    assert {key: value for key, value in manifest.items() if key != "services"} == legacy
+    assert {key: value for key, value in manifest.items() if key != "services"} == base
 
-    def rejected(label, replacement, reason, extra_args=()):
+    def rejected(label, replacement, reason):
         path = car / f"invalid-{label}.json"
         path.write_text(json.dumps(replacement))
         result = subprocess.run([
             build / "bin/urban-car-hakoniwa-asset", "--manifest", path,
             "--no-viewer", "--external-conductor", "--rpc-service-config", service_config,
-            *extra_args,
         ], capture_output=True, text=True, timeout=8)
         assert result.returncode != 0 and reason in result.stderr, (label, result.stderr)
         print(f"Rejected {label}: {reason}", flush=True)
@@ -345,12 +342,7 @@ def check_manifest_contract(build, foundation, car, service_config, work):
     invalid["services"][0]["lockstep"] = "true"
     assert not validator.is_valid(invalid)
     rejected("lockstep-string", invalid, "lockstep must be a boolean")
-    print("Runtime asset schema accepted old, lockstep and async manifests and rejected string lockstep")
-
-    rejected("legacy-car-conflict", manifest, "Car-1 is declared by both",
-             ("--ackermann-rpc-input", "Car-1"))
-    rejected("legacy-person-conflict", manifest, "Walker is declared by both",
-             ("--person-rpc-input", PERSON))
+    print("Runtime asset schema accepted base, lockstep and async manifests and rejected string lockstep")
 
     invalid = deepcopy(manifest)
     invalid["services"][0]["type"] = "unknown"
@@ -405,10 +397,11 @@ def main(build, foundation, urban, mujoco_library, *, contract):
         check_manifest_contract(build, foundation, car, service, work)
         return
     baseline = {}
-    for label in ("legacy-1", "legacy-2", "service-1", "service-2"):
+    for label in ("service-1", "service-2"):
         directory = work / label
         run_route(build, foundation, car, service, directory, label.split("-")[0],
                   check_gate=label == "service-1")
+        verify("urban-mixed", directory)
         for filename in (*(f"{name}.bin" for name in (*CARS, PERSON)), "contacts.jsonl"):
             data = (directory / filename).read_bytes()
             assert data, (label, filename)

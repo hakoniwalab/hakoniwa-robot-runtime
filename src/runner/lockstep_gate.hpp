@@ -35,8 +35,6 @@ public:
     [[nodiscard]] bool empty() const noexcept { return inputs_.empty(); }
     [[nodiscard]] bool uses_deadline() const noexcept { return uses_deadline_; }
     [[nodiscard]] bool sleep_before_first_step() const noexcept { return initial_sync_; }
-    /** Whether inputs using an initial synchronization were ready on the last check. */
-    [[nodiscard]] bool initial_sync_inputs_ready() const noexcept { return initial_sync_inputs_ready_; }
     [[nodiscard]] bool failed() const noexcept { return !failure_.empty(); }
     [[nodiscard]] const std::string& failure_reason() const noexcept { return failure_; }
 
@@ -50,7 +48,6 @@ private:
     std::optional<Clock::time_point> wait_started_;
     bool uses_deadline_ {false};
     bool initial_sync_ {false};
-    bool initial_sync_inputs_ready_ {false};
     bool first_step_ {true};
     bool paused_ {false};
     std::string failure_;

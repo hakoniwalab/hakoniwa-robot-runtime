@@ -316,13 +316,9 @@ void test_service_packet()
     REQUIRE(completed.outcome == runtime::AsyncServiceStepOutcome::Ok);
     REQUIRE(completed.commands.empty());
 
-    auto legacy = response_header();
-    auto actual = legacy;
-    std::string error;
-    REQUIRE(encode_legacy_person_step_response(
-        "A", {41, encode_person_state(state)}, legacy, error));
+    const auto clean_response = response_header();
+    auto actual = clean_response;
     REQUIRE(service.on_response({}, {}, actual));
-    REQUIRE(actual == legacy);
     HakoCpp_PersonStepResponsePacket decoded {};
     REQUIRE(hako::pdu::msgs::hako_srv_msgs::PersonStepResponsePacket {}.pdu2cpp(
         reinterpret_cast<char*>(actual.data()), decoded));
@@ -341,10 +337,16 @@ void test_service_packet()
     REQUIRE(std::ranges::equal(decoded.body.joints.position, state.joint_positions));
     // Core may reuse a response buffer with dynamic joint arrays from last step.
     state.joint_positions[0] = 0.9;
-    REQUIRE(encode_legacy_person_step_response(
-        "A", {41, encode_person_state(state)}, legacy, error));
+    auto fresh = clean_response;
+    REQUIRE(service.on_response({}, {}, fresh));
     REQUIRE(service.on_response({}, {}, actual));
-    REQUIRE(actual == legacy);
+    std::memcpy(&metadata, fresh.data(), sizeof(metadata));
+    HakoPduMetaDataType reused_metadata {};
+    std::memcpy(&reused_metadata, actual.data(), sizeof(reused_metadata));
+    REQUIRE(reused_metadata.total_size == metadata.total_size);
+    const auto body_offset = metadata.base_off + sizeof(Hako_ServiceResponseHeader);
+    REQUIRE(std::ranges::equal(std::span(actual).first(metadata.total_size).subspan(body_offset),
+        std::span(fresh).first(metadata.total_size).subspan(body_offset)));
 
     actual = response_header();
     std::memcpy(&metadata, actual.data(), sizeof(metadata));

@@ -1,15 +1,12 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
-#include "hakoniwa/robot_runtime/runner/async_rpc_input.hpp"
 #include "runner/hakoniwa/hakoniwa_asset_driver.hpp"
 
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "adapters/endpoint/person_step_service.hpp"
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
-#endif
 
 #include "hako_asset_service.h"
 
@@ -26,37 +23,6 @@ using namespace hakoniwa::robot_runtime;
 namespace {
 constexpr const char* kAsset = "PersonRpcServer";
 constexpr double dt = 0.001;
-
-class Callbacks final : public runner::detail::IHakoniwaAssetDriverCallbacks {
-public:
-    explicit Callbacks(std::shared_ptr<runner::AsyncRpcInput> input)
-        : input_(std::move(input)) {}
-    int on_initialize() noexcept override
-    {
-        if (!input_->prepare_channels()) return -1;
-        input_->lockstep_prepare();
-        std::cout << "SERVER ready channels=A,B" << std::endl;
-        return 0;
-    }
-    bool ready_to_step() noexcept override
-    {
-        return input_->lockstep_ready();
-    }
-    int on_step() noexcept override
-    {
-        if (!input_->apply_ready_requests() || !input_->complete_step()) {
-            std::cerr << "ERROR: " << input_->failure_reason() << std::endl;
-            return -1;
-        }
-        std::cout << "STEP count=" << ++steps_ << std::endl;
-        return 0;
-    }
-    int on_reset() noexcept override { input_->lockstep_prepare(); return 0; }
-    bool should_stop() const noexcept override { return false; }
-    int stop_result() const noexcept override { return 0; }
-    std::shared_ptr<runner::AsyncRpcInput> input_;
-    std::size_t steps_ {0};
-};
 
 struct Pose {
     double x {0.0};
@@ -101,7 +67,6 @@ int run(const char* pdu_config, const char* service_config,
     return driver.start() == 0 ? 0 : 1;
 }
 
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 using namespace runtime;
 
 class Plant final : public IActuatorPlant {
@@ -227,47 +192,12 @@ private:
     std::size_t steps_ {0};
     bool failed_ {false};
 };
-#endif
 } // namespace
 
 int main(int argc, char** argv)
 {
-    std::cout << std::unitbuf;
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    if (argc == 4 && std::string_view(argv[3]) == "--service") {
-        ServiceCallbacks callbacks;
-        return run(argv[1], argv[2], callbacks);
-    }
-#endif
     if (argc != 3) return 2;
-    std::map<std::string, Pose> poses {{"A", {}}, {"B", {}}};
-    auto input = std::make_shared<runner::AsyncRpcInput>(
-        std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> {
-            adapters::hakoniwa::make_person_step_service_channel("A", kAsset),
-            adapters::hakoniwa::make_person_step_service_channel("B", kAsset),
-        },
-        runner::AsyncRpcInputConfig {
-            std::chrono::seconds(5), std::chrono::seconds(30), {}},
-        [&poses](std::span<const runner::AsyncRpcRequest> requests,
-                 std::string& error) {
-            for (const auto& request : requests) {
-                adapters::hakoniwa::PersonStepCommand command;
-                if (!adapters::hakoniwa::decode_person_command(
-                        request.payload, command)) {
-                    error = "invalid command for " + request.channel;
-                    return false;
-                }
-                apply(poses.at(request.channel), command);
-            }
-            return true;
-        },
-        [&poses](const runner::AsyncRpcRequest& request,
-                 runner::AsyncRpcResponse& response, std::string&) {
-            const auto state = read(poses.at(request.channel), (request.step + 1) * 1000);
-            response.step = request.step;
-            response.payload = adapters::hakoniwa::encode_person_state(state);
-            return true;
-        });
-    Callbacks callbacks(input);
+    std::cout << std::unitbuf;
+    ServiceCallbacks callbacks;
     return run(argv[1], argv[2], callbacks);
 }
