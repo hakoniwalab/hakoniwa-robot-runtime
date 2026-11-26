@@ -60,7 +60,7 @@ int run(const char* pdu_config, const char* service_config,
     runner::detail::IHakoniwaAssetDriverCallbacks& callbacks)
 {
     runner::detail::HakoniwaAssetDriver driver(
-        {kAsset, pdu_config, 1000, HAKO_ASSET_MODEL_PLANT}, callbacks);
+        {kAsset, pdu_config, 1000, HAKO_ASSET_MODEL_PLANT, true}, callbacks);
     if (driver.register_asset() != 0
         || hako_asset_service_initialize(service_config) != 0) return 1;
     std::cout << "SERVER registered" << std::endl;

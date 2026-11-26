@@ -14,30 +14,24 @@
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_pdu_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/multi_dof_joint_state_pdu_writer.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #endif
-#endif
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "hako_msgs/pdu_cpptype_ContactEvent.hpp"
 #include "hako_msgs/pdu_cpptype_ContactEventArray.hpp"
 #include "hako_msgs/pdu_cpptype_conv_ContactEvent.hpp"
 #include "hako_msgs/pdu_cpptype_conv_ContactEventArray.hpp"
 #include "hakoniwa/pdu/type_endpoint.hpp"
 #include <nlohmann/json.hpp>
-#endif
 #include "runner/runner_factory.hpp"
 #include "runtime/runtime_factory.hpp"
 #include "runtime/runtime_factory_manifest.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "adapters/endpoint/ackermann_step_service.hpp"
 #include "adapters/endpoint/person_step_service.hpp"
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 #include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
@@ -65,13 +59,11 @@
 #endif
 
 #include <memory>
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include <cmath>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
-#endif
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -79,7 +71,6 @@
 
 namespace hakoniwa::robot_runtime::factory {
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 namespace {
 
 using ContactEndpoint = ::hakoniwa::pdu::TypedEndpoint<
@@ -219,7 +210,6 @@ private:
 };
 
 } // namespace
-#endif
 
 std::unique_ptr<runner::IRunner> ManifestFactory::create(
     const std::string& manifest_path,
@@ -252,13 +242,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
         ? manifest.name
         : std::move(config.asset_name);
 
-#if !defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) || !HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    if (!runtime_definition.services.empty()) {
-        throw std::invalid_argument("manifest services require a build with HAKO_ENABLE_ASYNC_SERVICE");
-    }
-#endif
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     std::unordered_set<std::string> rpc_requested;
     std::vector<std::string> people;
     for (const auto& service : runtime_definition.services) {
@@ -291,16 +275,13 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
     if (people.empty() && !config.person_contact_log_path.empty()) {
         throw std::invalid_argument("--person-contact-log requires a PersonStep input");
     }
-#endif
     auto resources_factory =
         [definition = std::move(runtime_definition),
          endpoint_path = manifest.endpoint_path,
          endpoint_name = std::move(config.endpoint_name),
          lockstep_keys = config.lockstep_inputs,
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
          rpc_requested = std::move(rpc_requested),
          people = std::move(people),
-#endif
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
          asset_name]() mutable
@@ -315,21 +296,16 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 
         std::vector<runner::LockstepGate::Input> lockstep_inputs;
         std::vector<std::string> lockstep_matched;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         std::unordered_map<std::string,
             std::shared_ptr<adapters::hakoniwa::AckermannDriveRpcEventReader>>
             rpc_readers;
-#endif
         try {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
             runtime::AckermannServiceFactory ackermann_service_factory;
             std::vector<runtime::AsyncServiceComponents> person_services;
             std::shared_ptr<runtime::IStatePublisher> person_state_publisher;
             std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
-#endif
             auto plant = std::make_shared<
                 adapters::mujoco::MujocoActuatorPlant>(definition);
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
             std::unordered_map<std::string,
                 std::shared_ptr<adapters::hakoniwa::AckermannStepFrictionInput>> service_friction;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
@@ -489,7 +465,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 person_state_publisher = std::make_shared<PersonStatePublisher>(
                     std::exchange(publish_people, {}));
             }
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
             // Sensor PDUs of the controller plugins: the plugins read the
             // bytes the sensor writers encode for the endpoint.
@@ -536,7 +511,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 ,
                 [&](const runtime::RuntimeAckermannControllerConfig& controller)
                     -> std::shared_ptr<runtime::IAckermannDriveEventReader> {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
                     if (rpc_requested.contains(controller.pdu_robot)) {
                         auto reader = std::make_shared<
                             adapters::hakoniwa::AckermannDriveRpcEventReader>();
@@ -547,7 +521,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         }
                         return std::shared_ptr<runtime::IAckermannDriveEventReader>(reader);
                     }
-#endif
                     auto reader = std::make_shared<
                         adapters::hakoniwa::AckermannDrivePduEventReader>(
                         *endpoint,
@@ -594,11 +567,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 },
                 [&](const runtime::RuntimeGeomFrictionConfig& friction)
                     -> std::shared_ptr<runtime::IFloat64EventReader> {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
                     if (friction.ackermann_step) {
                         return service_friction.at(friction.pdu_robot);
                     }
-#endif
                     auto reader = std::make_shared<
                         adapters::hakoniwa::Float64PduEventReader>(
                         *endpoint,
@@ -619,11 +590,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
                 , &plugin_pdu_channels
 #endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
                 , ackermann_service_factory
                 , std::move(person_services)
                 , std::move(person_state_publisher)
-#endif
                 );
 
             for (const auto& key : lockstep_keys) {
@@ -633,7 +602,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         "lockstep input " + key + " is not an Ackermann command or a geom friction input");
                 }
             }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
             if (rpc_readers.size() != rpc_requested.size()) {
                 for (const auto& vehicle : rpc_requested) {
                     if (!rpc_readers.contains(vehicle)) {
@@ -642,7 +610,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     }
                 }
             }
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
             if (!definition.sensors.empty()) {
                 auto stage = std::make_shared<adapters::mujoco::MujocoSensorStage>(
@@ -810,10 +777,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 std::move(plant),
                 std::move(endpoint),
                 std::move(lockstep_inputs),
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
                 service_server ? std::function<void()>([service_server] { service_server->prepare(); })
                     : std::function<void()>(),
-#endif
             };
         } catch (...) {
             endpoint->close();

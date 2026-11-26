@@ -1,6 +1,5 @@
 #pragma once
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 
 #include "runtime/service/async_service.hpp"
 
@@ -46,5 +45,3 @@ public:
 };
 
 } // namespace hakoniwa::robot_runtime::runtime
-
-#endif

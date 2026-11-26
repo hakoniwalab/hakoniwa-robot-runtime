@@ -5,7 +5,6 @@
 // publishers run once, after the last one. Control, arbitration and the plant
 // follow the physics step and run N times.
 //
-// Built only with HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE=1.
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 

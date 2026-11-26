@@ -1,6 +1,5 @@
 #pragma once
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 #include "runtime/service/async_service.hpp"
@@ -44,5 +43,3 @@ private:
 };
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa
-
-#endif

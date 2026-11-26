@@ -33,6 +33,11 @@ public:
         trace.push_back("sleep " + std::to_string(usec));
         return 0;
     }
+    CoreActivity core_activity() noexcept override
+    {
+        trace.push_back("core service timing check");
+        return CoreActivity::inactive;
+    }
 };
 
 class Callbacks final : public IHakoniwaAssetDriverCallbacks {
@@ -46,6 +51,8 @@ public:
     int on_initialize() noexcept override { trace.push_back("init"); return 0; }
     int on_step() noexcept override { trace.push_back("step"); ++steps; return 0; }
     int on_reset() noexcept override { return 0; }
+    void wait_for_input() noexcept override { trace.push_back("service input backoff"); }
+    int stop_result() const noexcept override { return -1; }
     [[nodiscard]] bool should_stop() const noexcept override { return steps >= max_steps; }
     [[nodiscard]] bool ready_to_step() noexcept override
     {

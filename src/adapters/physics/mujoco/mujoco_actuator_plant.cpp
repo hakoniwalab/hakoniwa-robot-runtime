@@ -132,7 +132,6 @@ public:
         int body_id {-1};
     };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     struct PersonVehicleBinding {
         std::string name;
         int body_id {-1};
@@ -195,7 +194,6 @@ public:
         std::optional<std::size_t> person_index;
         std::optional<std::size_t> vehicle_index;
     };
-#endif
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     struct LocalContactBody {
@@ -234,7 +232,6 @@ public:
         if (!initial_body_poses.empty()) {
             mj_forward(model, world->getData());
         }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         person_vehicles.reserve(definition.person_vehicles.size());
         for (const auto& config : definition.person_vehicles) {
             if (person_vehicle_by_name.contains(config.name)) {
@@ -263,7 +260,6 @@ public:
             person_vehicle_by_name.emplace(vehicle.name, person_vehicles.size());
             person_vehicles.push_back(std::move(vehicle));
         }
-#endif
         bindings.reserve(definition.actuators.size());
         for (const auto& config : definition.actuators) {
             if (binding_by_id.contains(config.component_id)) {
@@ -371,7 +367,6 @@ public:
 #endif
     }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     static std::string person_model_name(
         const mjModel* model,
         const std::string& person,
@@ -1143,7 +1138,6 @@ public:
         pending_person_contacts.clear();
         next_person_contact_id = 1;
     }
-#endif
 
     void apply_initial_body_poses()
     {
@@ -1517,7 +1511,6 @@ public:
     std::vector<Binding> bindings;
     std::vector<BodyBinding> body_bindings;
     std::unordered_map<std::string, std::size_t> binding_by_id;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     std::vector<PersonVehicleBinding> person_vehicles;
     std::unordered_map<std::string, std::size_t> person_vehicle_by_name;
     std::vector<PersonBinding> person_bindings;
@@ -1528,7 +1521,6 @@ public:
     std::vector<runtime::Vector3State> vehicle_contact_velocities;
     std::uint64_t next_person_contact_id {1};
     bool person_terrain_groups_configured {false};
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<MirrorBinding> mirror_bindings;
     std::unordered_map<std::string, std::size_t> mirror_binding_by_id;
@@ -1598,12 +1590,9 @@ runtime::RobotState MujocoActuatorPlant::step(
          ++index) {
         impl_->bindings[index].actuator->SetTarget(safe_values[index]);
     }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     impl_->apply_person_controls();
     impl_->capture_person_contact_velocities();
-#endif
     impl_->world->advanceTimeStep();
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     impl_->detect_person_contacts();
     // mj_step leaves position-dependent fields at the state used for the
     // integration. Refresh them before placing riders on the just-integrated
@@ -1614,7 +1603,6 @@ runtime::RobotState MujocoActuatorPlant::step(
     }
     impl_->update_person_rides();
     impl_->update_person_gaits();
-#endif
     return impl_->state();
 }
 
@@ -1654,9 +1642,7 @@ runtime::RobotState MujocoActuatorPlant::reset(
     data->time =
         static_cast<double>(simulation_time_usec) / 1'000'000.0;
     mj_forward(impl_->world->getModel(), data);
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     impl_->reset_people();
-#endif
     return impl_->state();
 }
 
@@ -1695,7 +1681,6 @@ std::shared_ptr<::hakoniwa::sensor_adapter::IImageRenderer> MujocoActuatorPlant:
 }
 #endif
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 void MujocoActuatorPlant::bind_person(
     std::string person_name,
     const double initial_yaw_rad)
@@ -1722,6 +1707,5 @@ MujocoActuatorPlant::take_person_contact_events()
 {
     return impl_->take_person_contact_events();
 }
-#endif
 
 } // namespace hakoniwa::robot_runtime::adapters::mujoco

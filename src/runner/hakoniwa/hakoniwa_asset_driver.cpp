@@ -6,21 +6,17 @@
 #include <stdexcept>
 #include <utility>
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include <chrono>
 #include <thread>
-#endif
 
 namespace hakoniwa::robot_runtime::runner::detail {
 
 std::atomic<HakoniwaAssetDriver*> HakoniwaAssetDriver::active_instance_ {nullptr};
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 void IHakoniwaAssetDriverCallbacks::wait_for_input() noexcept
 {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
-#endif
 
 int HakoniwaAssetApi::register_asset(
     const HakoniwaAssetDriverConfig& config,
@@ -46,7 +42,6 @@ int HakoniwaAssetApi::sleep_no_wait(
     return hako_asset_usleep_no_wait(sleep_time_usec, is_force_stop);
 }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 IHakoniwaAssetApi::CoreActivity core_activity_from_simulation_state(
     const int state) noexcept
 {
@@ -69,7 +64,6 @@ IHakoniwaAssetApi::CoreActivity HakoniwaAssetApi::core_activity() noexcept
 {
     return core_activity_from_simulation_state(hako_asset_simulation_state());
 }
-#endif
 
 HakoniwaAssetDriver::HakoniwaAssetDriver(
     HakoniwaAssetDriverConfig config,
@@ -176,19 +170,18 @@ int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
         }
     }
     while (!callbacks_.should_stop()) {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         // While lockstep input is incomplete sleep_no_wait() is intentionally
         // not called, so it cannot report Core stop/reset as EINTR.  Poll the
         // read-only state before the input clock instead.  Unknown is not a
         // stop signal: retain the timeout/error path for a failed state read.
-        if (api_->core_activity() == IHakoniwaAssetApi::CoreActivity::inactive) {
+        if (config_.uses_async_service_timing
+            && api_->core_activity() == IHakoniwaAssetApi::CoreActivity::inactive) {
             return 0;
         }
-#endif
         if (!callbacks_.ready_to_step()) {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-            callbacks_.wait_for_input();
-#endif
+            if (config_.uses_async_service_timing) {
+                callbacks_.wait_for_input();
+            }
             continue;  // lockstep: wait for the input without advancing time
         }
         const int step_result = callbacks_.on_step();
@@ -208,11 +201,7 @@ int HakoniwaAssetDriver::run_manual_timing_loop() noexcept
             return sleep_result;
         }
     }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    return callbacks_.stop_result();
-#else
-    return 0;
-#endif
+    return config_.uses_async_service_timing ? callbacks_.stop_result() : 0;
 }
 
 void HakoniwaAssetDriver::release_active_instance() noexcept

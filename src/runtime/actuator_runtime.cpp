@@ -279,14 +279,9 @@ void ActuatorRuntime::publish_state(
 
 RuntimeStepReport ActuatorRuntime::step(const bool publish)
 {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     return step_impl(publish, true);
-#else
-    return step_impl(publish);
-#endif
 }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 RuntimeStepReport ActuatorRuntime::step_hakoniwa(const std::uint32_t substeps)
 {
     if (substeps == 0) {
@@ -304,13 +299,10 @@ RuntimeStepReport ActuatorRuntime::step_hakoniwa(const std::uint32_t substeps)
     report.source_statuses = std::move(first_source_statuses);
     return report;
 }
-#endif
 
 RuntimeStepReport ActuatorRuntime::step_impl(
     const bool publish
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     , const bool poll_inputs
-#endif
     )
 {
     RuntimeStepReport report;
@@ -327,7 +319,6 @@ RuntimeStepReport ActuatorRuntime::step_impl(
     // Endpoint receive callbacks run asynchronously and stage the latest value;
     // poll_sources() only transfers that staged value into this Runtime step.
     ControllerInputMap inputs;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     if (poll_inputs) {
         inputs = poll_sources(context, report.source_statuses);
     } else {
@@ -336,9 +327,6 @@ RuntimeStepReport ActuatorRuntime::step_impl(
             inputs.emplace(source->id(), nullptr);
         }
     }
-#else
-    inputs = poll_sources(context, report.source_statuses);
-#endif
 
     // 4. Let every Controller generate its candidate ActuatorCommands.
     const auto outputs = update_controllers(

@@ -4,9 +4,7 @@
 #include "runner/realtime_pacer.hpp"
 
 #include "hako_conductor.h"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "hako_asset_service.h"
-#endif
 #include "hakoniwa/pdu/endpoint.hpp"
 
 #include <mujoco/mujoco.h>
@@ -151,7 +149,6 @@ public:
 
     int on_initialize() noexcept override
     {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         if (resources.prepare_async_services) {
             try {
                 resources.prepare_async_services();
@@ -160,7 +157,6 @@ public:
                 return -1;
             }
         }
-#endif
         step_gate->prepare();
         if (resources.endpoint == nullptr
             || resources.endpoint->post_start() != HAKO_PDU_ERR_OK) {
@@ -210,20 +206,11 @@ public:
                     return 0;
                 }
                 const auto substeps = std::max<std::uint32_t>(1, config.physics_substeps);
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
                 // Two rates: inputs are polled once, at the first physics step of
                 // this Hakoniwa step, and the state goes out after the last one;
                 // control and physics run in every physics step.
                 simulation_time_usec = resources.runtime->step_hakoniwa(substeps)
                     .next_step.simulation_time_usec;
-#else
-                // Inputs are taken at the first substep (none are new later: the
-                // controllers hold them); the state goes out after the last.
-                for (std::uint32_t substep = 0; substep < substeps; ++substep) {
-                    simulation_time_usec = resources.runtime->step(substep + 1 == substeps)
-                        .next_step.simulation_time_usec;
-                }
-#endif
                 refresh_view(false);
             }
             pacer.pace(
@@ -260,19 +247,15 @@ public:
         return !running.load();
     }
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     [[nodiscard]] int stop_result() const noexcept override
     {
         return last_error.empty() ? 0 : -1;
     }
-#endif
 
     HakoniwaRunnerResourcesFactory resources_factory;
     HakoniwaRunnerConfig config;
     RealtimePacer pacer;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     std::shared_ptr<detail::IHakoniwaAssetApi> asset_api;
-#endif
     HakoniwaRunnerResources resources;
     std::optional<LockstepGate> step_gate;
     std::unique_ptr<detail::HakoniwaAssetDriver> driver;
@@ -316,17 +299,12 @@ public:
 
 HakoniwaRunner::HakoniwaRunner(
     HakoniwaRunnerResourcesFactory resources_factory,
-    HakoniwaRunnerConfig config
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    , std::shared_ptr<detail::IHakoniwaAssetApi> asset_api
-#endif
-)
+    HakoniwaRunnerConfig config,
+    std::shared_ptr<detail::IHakoniwaAssetApi> asset_api)
     : impl_(std::make_unique<Impl>(
         std::move(resources_factory), std::move(config)))
 {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     impl_->asset_api = std::move(asset_api);
-#endif
 }
 
 HakoniwaRunner::~HakoniwaRunner()
@@ -369,11 +347,11 @@ int HakoniwaRunner::start()
                 impl_->config.pdu_definition_path,
                 delta_time_usec,
                 HAKO_ASSET_MODEL_PLANT,
+                static_cast<bool>(impl_->resources.prepare_async_services)
+                    || impl_->step_gate->uses_deadline(),
             },
-            *impl_
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-            , impl_->asset_api ? impl_->asset_api : std::make_shared<detail::HakoniwaAssetApi>()
-#endif
+            *impl_,
+            impl_->asset_api ? impl_->asset_api : std::make_shared<detail::HakoniwaAssetApi>()
         );
     } catch (const std::exception& error) {
         std::cerr << "[ERROR] Failed to prepare Hakoniwa Runner: "
@@ -396,7 +374,6 @@ int HakoniwaRunner::start()
         impl_->cleanup();
         return 1;
     }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     if (impl_->resources.prepare_async_services) {
         if (impl_->config.async_rpc_service_definition_path.empty()) {
             std::cerr << "[ERROR] Manifest services require a service definition path."
@@ -412,7 +389,6 @@ int HakoniwaRunner::start()
             return 1;
         }
     }
-#endif
     if (impl_->resources.endpoint->start() != HAKO_PDU_ERR_OK) {
         std::cerr << "[ERROR] Failed to start Runtime endpoint." << std::endl;
         impl_->cleanup();

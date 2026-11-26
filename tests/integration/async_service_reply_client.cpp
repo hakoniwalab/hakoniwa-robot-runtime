@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <thread>
@@ -37,7 +38,7 @@ constexpr std::array kLongCall {Call {10, 1, HAKO_SERVICE_API_RESULT_CODE_OK, 16
 constexpr std::array kCancelCall {Call {10, 1, HAKO_SERVICE_API_RESULT_CODE_CANCELED, 10}};
 constexpr Call kBusyProbe {80, 9, HAKO_SERVICE_API_RESULT_CODE_BUSY, 0};
 
-bool send(HakoServiceHandleType& handle, const Call& call, std::uint32_t& request_id)
+std::optional<int> send(HakoServiceHandleType& handle, const Call& call, std::uint32_t& request_id)
 {
     char* packet = nullptr;
     std::size_t size = 0;
@@ -46,13 +47,15 @@ bool send(HakoServiceHandleType& handle, const Call& call, std::uint32_t& reques
     if (hako_asset_service_client_get_request_buffer(
             &handle, &packet, &size, HAKO_SERVICE_CLIENT_API_OPCODE_REQUEST, -1) != 0
         || !converter.pdu2cpp(packet, request)) {
-        return false;
+        return std::nullopt;
     }
     request.body.a = call.target;
     request.body.b = call.addend;
     request_id = request.header.request_id;
-    return converter.cpp2pdu(request, packet, static_cast<int>(size)) >= 0
-        && hako_asset_service_client_call_request(&handle, packet, size, 30000) == 0;
+    if (converter.cpp2pdu(request, packet, static_cast<int>(size)) < 0) {
+        return std::nullopt;
+    }
+    return hako_asset_service_client_call_request(&handle, packet, size, 30000);
 }
 
 bool check_reply(HakoServiceHandleType& handle, const Call& call, std::uint32_t request_id)
@@ -145,11 +148,11 @@ int main(int argc, char** argv)
     std::uint32_t request_id = 0;
     hako_time_t local_time = 0;
     hako_time_t sent_at = 0;
-    bool followup_sent = false;
-    bool saw_busy = false;
+    bool followup_attempted = false;
+    bool busy_handled = false;
     for (;;) {
-        if (busy_case && followup_sent && !saw_busy) {
-            saw_busy = observe_busy(handle, request_id);
+        if (busy_case && followup_attempted && !busy_handled) {
+            busy_handled = observe_busy(handle, request_id);
         }
         const int event = hakoniwa_asset_get_event(kAsset);
         if (event == 1) {
@@ -176,7 +179,7 @@ int main(int argc, char** argv)
                     ? HAKO_SERVICE_CLIENT_API_REQUEST_CANCEL_DONE
                     : HAKO_SERVICE_CLIENT_API_RESPONSE_IN;
                 if (service_event == expected_event) {
-                    if (!check_reply(handle, calls[next], request_id) || (busy_case && !saw_busy)) {
+                    if (!check_reply(handle, calls[next], request_id) || (busy_case && !busy_handled)) {
                         std::cerr << "CLIENT ERROR: unexpected reply for request "
                                   << request_id << std::endl;
                         return 1;
@@ -190,19 +193,29 @@ int main(int argc, char** argv)
                     return 1;
                 }
             }
-            if (waiting && (busy_case || cancel_case) && !followup_sent
+            if (waiting && (busy_case || cancel_case) && !followup_attempted
                 && world_time >= sent_at + 2 * kDeltaUsec) {
-                std::uint32_t ignored_id = 0;
-                const bool sent = busy_case ? send(handle, kBusyProbe, ignored_id)
-                    : hako_asset_service_client_cancel_request(&handle) == 0;
-                if (!sent) {
-                    return 1;
+                if (busy_case) {
+                    std::uint32_t ignored_id = 0;
+                    const auto result = send(handle, kBusyProbe, ignored_id);
+                    if (!result || (*result != 0 && *result != -1)) {
+                        return 1;
+                    }
+                    // Core-pro #123 rejects a duplicate while the original is in flight.
+                    // For older Core builds, still check the observable BUSY reply.
+                    busy_handled = *result == -1;
+                    std::cout << (busy_handled ? "CLIENT rejected busy followup"
+                                               : "CLIENT sent busy followup") << std::endl;
+                } else {
+                    if (hako_asset_service_client_cancel_request(&handle) != 0) {
+                        return 1;
+                    }
+                    std::cout << "CLIENT sent cancel followup" << std::endl;
                 }
-                followup_sent = true;
-                std::cout << "CLIENT sent " << mode << " followup" << std::endl;
+                followup_attempted = true;
             }
             if (!waiting && next < calls.size()) {
-                if (!send(handle, calls[next], request_id)) {
+                if (send(handle, calls[next], request_id) != 0) {
                     return 1;
                 }
                 waiting = true;

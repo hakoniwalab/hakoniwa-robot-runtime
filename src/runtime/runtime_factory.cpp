@@ -44,11 +44,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
     , const PluginPduChannels* plugin_pdu_channels
 #endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     , const AckermannServiceFactory& ackermann_service_factory
     , std::vector<AsyncServiceComponents> person_services
     , std::shared_ptr<IStatePublisher> person_state_publisher
-#endif
     )
 {
     if (plant == nullptr) {
@@ -123,14 +121,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
         + 1);
     priorities.reserve(controllers.capacity());
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     // PersonStep applies commands directly to the plant's existing person
     // inputs. Keep their request order ahead of the other input sources.
     for (auto& service : person_services) {
         sources.push_back(std::move(service.source));
         controllers.push_back(std::move(service.controller));
     }
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     // Plant Directive Controllers are kept apart from `controllers` so their
     // output never reaches the Arbiter.
@@ -381,7 +377,6 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
                 + config.component_id);
         }
         const std::string source_id = "ackermann-pdu:" + config.component_id;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         auto service = ackermann_service_factory
             ? ackermann_service_factory(config) : std::nullopt;
         if (service) {
@@ -391,7 +386,6 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
             controllers.push_back(std::move(service->controller));
             publishers.push_back(std::move(service->publisher));
         }
-#endif
         sources.push_back(std::make_shared<AckermannDriveCommandSource>(
             source_id, config.input_timeout_usec, std::move(reader)));
         controllers.push_back(std::make_shared<AckermannController>(config));
@@ -399,9 +393,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #else
     (void)ackermann_reader_factory;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     (void)ackermann_service_factory;
-#endif
 #endif
 
     publishers.reserve(publishers.size() + definition.state_outputs.size()
@@ -473,14 +465,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #endif
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     if (person_state_publisher) {
         publishers.push_back(std::move(person_state_publisher));
     }
     for (auto& service : person_services) {
         publishers.push_back(std::move(service.publisher));
     }
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     // Poll the service request before the friction reader in this same substep.
     for (auto& source : service_friction_sources) {

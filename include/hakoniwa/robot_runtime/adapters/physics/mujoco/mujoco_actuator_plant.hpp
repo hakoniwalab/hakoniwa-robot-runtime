@@ -2,9 +2,7 @@
 
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/runtime_definition.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
-#endif
 
 #include <array>
 #include <memory>
@@ -66,7 +64,6 @@ public:
     [[nodiscard]] std::shared_ptr<::hakoniwa::sensor_adapter::IImageRenderer> create_image_renderer();
 #endif
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     /** Binds one `<person>/...` hakoniwa_person model to PersonStep. */
     void bind_person(std::string person_name, double initial_yaw_rad = 0.0);
     /** Keeps the latest body-frame command active until the next request. */
@@ -79,7 +76,6 @@ public:
     /** Drains contact edges produced since the previous call. */
     [[nodiscard]] std::vector<runtime::PersonContactEvent>
         take_person_contact_events();
-#endif
 
 private:
     class Impl;

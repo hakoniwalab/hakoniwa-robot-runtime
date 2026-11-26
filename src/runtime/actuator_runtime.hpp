@@ -63,7 +63,6 @@ public:
      */
     [[nodiscard]] RuntimeStepReport step(bool publish = true);
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     /**
      * One Hakoniwa step: `substeps` physics steps. The command sources are
      * polled only in the first one and the publishers run only after the last
@@ -72,7 +71,6 @@ public:
      * @throws std::invalid_argument when substeps is 0 (nothing runs).
      */
     [[nodiscard]] RuntimeStepReport step_hakoniwa(std::uint32_t substeps);
-#endif
 
     /**
      * Resets component/physical state and sets the Plant's actual simulation time.
@@ -115,9 +113,7 @@ private:
 
     [[nodiscard]] RuntimeStepReport step_impl(
         bool publish
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         , bool poll_inputs
-#endif
         );
     [[nodiscard]] RobotState read_current_state() const;
     [[nodiscard]] RuntimeStepContext prepare_step_context(

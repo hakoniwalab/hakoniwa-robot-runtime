@@ -84,7 +84,6 @@ struct QuaternionState {
     double w {1.0};
 };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 /** One deterministic person contact edge, expressed in City World ENU. */
 struct PersonContactEvent {
     std::uint64_t id {0};
@@ -96,7 +95,6 @@ struct PersonContactEvent {
     double relative_speed_mps {0.0};
     bool started {false};
 };
-#endif
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 struct EulerState {

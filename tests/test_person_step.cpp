@@ -1,7 +1,6 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "adapters/endpoint/person_step_service.hpp"
 #include "adapters/endpoint/person_step_packet.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_PersonStepRequestPacket.hpp"
@@ -12,7 +11,6 @@
 #undef hako_convert_cpp2pdu_array_string_varray
 
 #include <cstring>
-#endif
 
 #include <mujoco/mujoco.h>
 
@@ -244,7 +242,6 @@ void test_codec()
     REQUIRE(state_decoded.joint_positions[2] == 0.4);
 }
 
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 using Packet = std::array<std::byte, 2048>;
 
 Packet request_packet(std::uint64_t step,
@@ -360,7 +357,6 @@ void test_service_packet()
     std::memcpy(&metadata, actual.data(), sizeof(metadata));
     REQUIRE(metadata.epoch == 7);
 }
-#endif
 
 void test_motion_and_gait()
 {
@@ -466,7 +462,6 @@ void test_gestures_and_sitting(bool use_service = false)
 
     const auto apply = [&](const std::string& person,
                            const adapters::hakoniwa::PersonStepCommand& input) {
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
         if (use_service) {
             std::uint32_t code = 0;
             adapters::hakoniwa::PersonStepService service(person,
@@ -477,9 +472,6 @@ void test_gestures_and_sitting(bool use_service = false)
             REQUIRE(service.on_request(request_packet(0, input)));
             return code;
         }
-#else
-        (void)use_service;
-#endif
         return plant.apply_person_command(person, input);
     };
     const auto steps = [&](const int count) {
@@ -941,13 +933,11 @@ void test_person_contact_events()
 
 int main(int argc, char** argv)
 {
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     if (argc == 2 && std::string_view(argv[1]) == "--service") {
         test_service_packet();
         test_gestures_and_sitting(true);
         return 0;
     }
-#endif
     (void)argc;
     (void)argv;
     test_codec();

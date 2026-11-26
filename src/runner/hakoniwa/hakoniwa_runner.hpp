@@ -14,11 +14,9 @@
 
 namespace hakoniwa::robot_runtime::runner {
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 namespace detail {
 class IHakoniwaAssetApi;
 }
-#endif
 
 struct HakoniwaRunnerResources {
     std::unique_ptr<runtime::ActuatorRuntime> runtime;
@@ -26,9 +24,7 @@ struct HakoniwaRunnerResources {
     std::unique_ptr<::hakoniwa::pdu::Endpoint> endpoint;
     /** Inputs each step waits for (lockstep mode; empty otherwise). */
     std::vector<LockstepGate::Input> lockstep_inputs;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     std::function<void()> prepare_async_services;
-#endif
 };
 
 using HakoniwaRunnerResourcesFactory =
@@ -59,11 +55,8 @@ class HakoniwaRunner final : public IRunner {
 public:
     HakoniwaRunner(
         HakoniwaRunnerResourcesFactory resources_factory,
-        HakoniwaRunnerConfig config
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-        , std::shared_ptr<detail::IHakoniwaAssetApi> asset_api = {}
-#endif
-    );
+        HakoniwaRunnerConfig config,
+        std::shared_ptr<detail::IHakoniwaAssetApi> asset_api = {});
     ~HakoniwaRunner() override;
 
     HakoniwaRunner(const HakoniwaRunner&) = delete;

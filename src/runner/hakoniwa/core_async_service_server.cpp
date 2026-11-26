@@ -1,6 +1,5 @@
 #include "runner/hakoniwa/core_async_service_server.hpp"
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 
 #include "hako_asset_service.h"
 
@@ -135,5 +134,3 @@ bool CoreAsyncServiceServer::reply(
 }
 
 } // namespace hakoniwa::robot_runtime::runner::hakoniwa
-
-#endif

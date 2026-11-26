@@ -1,6 +1,5 @@
 #include "adapters/endpoint/ackermann_step_service.hpp"
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 
 #include "adapters/endpoint/ackermann_step_packet.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
@@ -125,5 +124,3 @@ void AckermannStepService::reset()
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa
-
-#endif

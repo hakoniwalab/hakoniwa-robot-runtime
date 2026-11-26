@@ -212,7 +212,7 @@ int main(int argc, char** argv)
     }
     Callbacks callbacks(argv[3][0] == '1' ? 1 : 5);
     HakoniwaAssetDriver driver(
-        HakoniwaAssetDriverConfig {kAsset, argv[1], kDeltaUsec, HAKO_ASSET_MODEL_PLANT}, callbacks);
+        HakoniwaAssetDriverConfig {kAsset, argv[1], kDeltaUsec, HAKO_ASSET_MODEL_PLANT, true}, callbacks);
     if (driver.register_asset() != 0 || hako_asset_service_initialize(argv[2]) != 0) {
         return 1;
     }

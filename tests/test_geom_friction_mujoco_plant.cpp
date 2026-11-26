@@ -2,13 +2,11 @@
 
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 #include "adapters/endpoint/ackermann_step_service.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
 #include "runtime/controller/geom_friction_controller.hpp"
 
 #include <array>
-#endif
 
 #include <mujoco/mujoco.h>
 
@@ -170,7 +168,6 @@ void test_directive_friction_takes_effect_in_contacts()
     assert(low_distance > default_distance + 0.3);
 }
 
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 void test_ackermann_step_friction_applies_to_all_wheels_before_physics()
 {
     using namespace adapters::hakoniwa;
@@ -220,7 +217,6 @@ void test_ackermann_step_friction_applies_to_all_wheels_before_physics()
         }
     }
 }
-#endif
 
 } // namespace
 
@@ -230,9 +226,7 @@ int main()
     test_unknown_geom_is_a_configuration_error();
     test_directive_and_reset();
     test_directive_friction_takes_effect_in_contacts();
-#if HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     test_ackermann_step_friction_applies_to_all_wheels_before_physics();
-#endif
     fs::remove(model_path);
     return 0;
 }

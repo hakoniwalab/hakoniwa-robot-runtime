@@ -140,7 +140,7 @@ int main(int argc, char** argv)
     }
     Callbacks callbacks;
     hakoniwa::robot_runtime::runner::detail::HakoniwaAssetDriver driver(
-        {kAsset, argv[1], kDeltaUsec, HAKO_ASSET_MODEL_PLANT}, callbacks);
+        {kAsset, argv[1], kDeltaUsec, HAKO_ASSET_MODEL_PLANT, true}, callbacks);
     if (driver.register_asset() != 0 || hako_asset_service_initialize(argv[2]) != 0) {
         return 1;
     }

@@ -1,6 +1,5 @@
 #include "runtime/service/async_service_pipeline.hpp"
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
 
 #include <exception>
 #include <stdexcept>
@@ -311,5 +310,3 @@ ComponentStatus AsyncServiceResponsePublisher::publish(
 void AsyncServiceResponsePublisher::reset() noexcept {}
 
 } // namespace hakoniwa::robot_runtime::runtime
-
-#endif
