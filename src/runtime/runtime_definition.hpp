@@ -169,7 +169,6 @@ struct RuntimeAckermannControllerConfig {
     RuntimeAckermannActuatorBindings actuators;
 };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 struct RuntimeMirrorContactBodyBinding {
     std::string body_id;
     std::string mjcf_freejoint;
@@ -187,6 +186,7 @@ struct RuntimeMirrorBodyConfig {
     std::vector<RuntimeMirrorContactBodyBinding> contact_bodies;
 };
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 struct RuntimeImpulseCollisionOutputConfig {
     std::string component_id;
     std::string config_path;
@@ -198,8 +198,9 @@ struct RuntimeImpulseCollisionOutputConfig {
     double relative_normal_speed_threshold_mps {0.2};
     std::uint64_t cooldown_usec {100'000};
 };
+#endif
 
-/** Plant Directive controller that sets the sliding friction of named geoms. */
+/** Binding for the sliding friction of named geoms. */
 struct RuntimeGeomFrictionConfig {
     std::string component_id;
     std::string config_path;
@@ -212,7 +213,6 @@ struct RuntimeGeomFrictionConfig {
     std::vector<std::string> geoms;
     bool ackermann_step {false};
 };
-#endif
 
 /**
  * Resolved Runtime-local definition produced from the declarative manifest.
@@ -313,11 +313,11 @@ struct RuntimeDefinition {
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
     std::vector<RuntimePluginControllerConfig> plugin_controllers;
 #endif
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<RuntimeMirrorBodyConfig> mirror_bodies;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<RuntimeImpulseCollisionOutputConfig> impulse_collision_outputs;
-    std::vector<RuntimeGeomFrictionConfig> geom_frictions;
 #endif
+    std::vector<RuntimeGeomFrictionConfig> geom_frictions;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
     std::vector<RuntimeSensorConfig> sensors;
     std::vector<RuntimeSensorOutputConfig> sensor_outputs;

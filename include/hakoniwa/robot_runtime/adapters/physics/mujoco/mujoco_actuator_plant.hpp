@@ -2,7 +2,6 @@
 
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/runtime_definition.hpp"
-#include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 
 #include <array>
 #include <memory>
@@ -37,10 +36,8 @@ public:
     [[nodiscard]] runtime::RobotState read_state() const override;
     [[nodiscard]] runtime::RobotState step(
         const std::vector<runtime::ActuatorCommand>& commands) override;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    void apply_directives(
-        const runtime::PlantDirectiveList& directives) override;
-#endif
+    [[nodiscard]] runtime::PlantCapabilities capabilities() const noexcept override;
+    void apply_operations(const runtime::PlantOperations& operations) override;
     [[nodiscard]] runtime::RobotState reset(
         std::uint64_t simulation_time_usec = 0) override;
 
@@ -66,13 +63,6 @@ public:
 
     /** Binds one `<person>/...` hakoniwa_person model to PersonStep. */
     void bind_person(std::string person_name, double initial_yaw_rad = 0.0);
-    /** Keeps the latest body-frame command active until the next request. */
-    [[nodiscard]] std::uint32_t apply_person_command(
-        const std::string& person_name,
-        const adapters::hakoniwa::PersonStepCommand& command);
-    [[nodiscard]] adapters::hakoniwa::PersonStepState person_state(
-        const std::string& person_name,
-        std::uint32_t result_code = 0) const;
     /** Drains contact edges produced since the previous call. */
     [[nodiscard]] std::vector<runtime::PersonContactEvent>
         take_person_contact_events();

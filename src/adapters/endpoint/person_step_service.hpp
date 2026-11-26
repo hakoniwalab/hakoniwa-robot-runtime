@@ -1,17 +1,14 @@
 #pragma once
 
-#include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #include "runtime/service/robot_services.hpp"
 
-#include <functional>
+#include <optional>
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 
 class PersonStepService final : public runtime::IRobotServices {
 public:
-    using ApplyCommand = std::function<std::uint32_t(const PersonStepCommand&)>;
-    using ReadState = std::function<PersonStepState(std::uint32_t)>;
-    PersonStepService(std::string person, ApplyCommand apply_command, ReadState read_state);
+    explicit PersonStepService(std::string person);
 
     bool on_request(std::size_t, std::span<const std::byte> request) override;
     runtime::RobotStepResult on_step(
@@ -23,10 +20,8 @@ public:
 
 private:
     std::string person_;
-    ApplyCommand apply_command_;
-    ReadState read_state_;
+    std::optional<runtime::HumanoidMotionOperation> motion_;
     std::uint64_t step_ {0};
-    std::uint32_t result_code_ {0};
 };
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

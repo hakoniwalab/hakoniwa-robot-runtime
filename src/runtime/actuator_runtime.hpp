@@ -2,15 +2,13 @@
 
 #include "runtime/arbiter/command_arbiter.hpp"
 #include "runtime/controller/controller.hpp"
+#include "runtime/controller/directive_controller.hpp"
 #include "runtime/plant/actuator_plant.hpp"
 #include "runtime/publisher/state_publisher.hpp"
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 #include "runtime/sensor/sensor_stage.hpp"
 #endif
 #include "runtime/source/command_source.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-#include "runtime/controller/directive_controller.hpp"
-#endif
 
 #include <memory>
 #include <optional>
@@ -28,20 +26,17 @@ struct RuntimeStepReport {
     std::vector<ComponentStatus> controller_statuses;
     ArbitrationResult arbitration;
     std::vector<ComponentStatus> publisher_statuses;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<ComponentStatus> directive_controller_statuses;
-    /** Mixed Plant Directives of this step; never part of `arbitration`. */
-    PlantDirectiveList plant_directives;
-#endif
+    /** Non-arbitrated Plant operations collected for this physics step. */
+    PlantOperations plant_operations;
 };
 
 /**
  * Orchestrates the five Runtime responsibilities for exactly one simulation
  * step: CommandSource -> Controller -> Arbiter -> Plant -> Publisher.
  *
- * With the opt-in Plant Directive path, non-arbitrated directive Controllers
- * run next to the arbitrated Controllers and their directives are handed to
- * the Plant via apply_directives() right before step().
+ * Plant operations from both kinds of Controller are applied right before
+ * the physics step.
  */
 class ActuatorRuntime final {
 public:
@@ -50,11 +45,8 @@ public:
         std::vector<std::shared_ptr<IController>> controllers,
         std::shared_ptr<ICommandArbiter> arbiter,
         std::shared_ptr<IActuatorPlant> plant,
-        std::vector<std::shared_ptr<IStatePublisher>> publishers
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-        , std::vector<std::shared_ptr<IDirectiveController>> directive_controllers = {}
-#endif
-        );
+        std::vector<std::shared_ptr<IStatePublisher>> publishers,
+        std::vector<std::shared_ptr<IDirectiveController>> directive_controllers = {});
 
     /**
      * Runs exactly one Source -> Controller -> Arbiter -> Plant -> Publish step.
@@ -127,17 +119,12 @@ private:
         const RuntimeStepContext& context,
         std::vector<ComponentStatus>& statuses);
     [[nodiscard]] RobotState step_plant(
-        const std::vector<ActuatorCommand>& commands
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-        , const PlantDirectiveList& directives
-#endif
-        );
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    [[nodiscard]] PlantDirectiveList update_directive_controllers(
+        const std::vector<ActuatorCommand>& commands,
+        const PlantOperations& operations);
+    void update_directive_controllers(
         const ControllerInputMap& inputs,
         const RuntimeStepContext& context,
-        std::vector<ComponentStatus>& statuses);
-#endif
+        RuntimeStepReport& report);
     [[nodiscard]] RuntimeStepContext complete_step(
         const RobotState& next_state,
         const ArbitrationResult& arbitration);
@@ -151,9 +138,7 @@ private:
     std::shared_ptr<ICommandArbiter> arbiter_;
     std::shared_ptr<IActuatorPlant> plant_;
     std::vector<std::shared_ptr<IStatePublisher>> publishers_;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     std::vector<std::shared_ptr<IDirectiveController>> directive_controllers_;
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
     std::shared_ptr<ISensorStage> sensor_stage_;
 #endif

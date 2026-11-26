@@ -11,7 +11,7 @@
 namespace hakoniwa::robot_runtime::runtime {
 
 /**
- * Converts Mirror input into a MirrorBodyDirective. As a Plant Directive
+ * Converts Mirror input into a BodyMotionOperation. As a directive
  * controller it never produces an arbitration candidate.
  */
 class MirrorBodyController final : public IDirectiveController {

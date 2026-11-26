@@ -216,14 +216,14 @@ DirectiveControllerOutput MirrorBodyController::update(
     return {
         controller_id_,
         {controller_id_, ComponentState::Ready, {}},
-        {std::make_shared<const MirrorBodyDirective>(MirrorBodyCommand {
+        {.body_motions = {{
             mirror_id_,
             sample.position,
             sample.orientation,
             linear,
             angular,
             context.simulation_time_usec,
-        })},
+        }}},
     };
 }
 

@@ -43,6 +43,9 @@ public:
     std::vector<std::vector<ActuatorCommand>> applied;
     bool advance_position {false};
 
+    PlantCapabilities capabilities() const noexcept override { return {}; }
+    void apply_operations(const PlantOperations&) override {}
+
     std::uint64_t delta_time_usec() const noexcept override { return kDelta; }
 
     RobotState read_state() const override

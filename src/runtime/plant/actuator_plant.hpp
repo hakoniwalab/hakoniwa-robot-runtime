@@ -1,9 +1,6 @@
 #pragma once
 
 #include "runtime/types.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-#include "runtime/plant/plant_directive.hpp"
-#endif
 
 #include <cstdint>
 #include <vector>
@@ -42,22 +39,10 @@ public:
     [[nodiscard]] virtual RobotState step(
         const std::vector<ActuatorCommand>& commands) = 0;
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    /**
-     * Applies the structurally separate Plant Directive path.
-     *
-     * ActuatorRuntime calls this once per step after arbitration and right
-     * before step(commands), so directive effects (for example a Mirror pose or
-     * a geom friction change) are in place before physics advances. The list
-     * mixes directive kinds; each backend applier picks only its own kind with
-     * directives_of<T>() and ignores unknown kinds. The default is a no-op so
-     * Plant implementations without directive support stay source-compatible.
-     */
-    virtual void apply_directives(const PlantDirectiveList& directives)
-    {
-        (void)directives;
-    }
-#endif
+    [[nodiscard]] virtual PlantCapabilities capabilities() const noexcept = 0;
+
+    /** Applies the non-arbitrated operations immediately before step(). */
+    virtual void apply_operations(const PlantOperations& operations) = 0;
 
     /**
      * Resets physical state while setting the backend's actual simulation time.

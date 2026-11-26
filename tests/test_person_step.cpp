@@ -52,6 +52,26 @@ void require(
 
 #define REQUIRE(expression) require((expression), #expression, __LINE__)
 
+runtime::HumanoidState humanoid_state(
+    const adapters::mujoco::MujocoActuatorPlant& plant, const std::string& name)
+{
+    const auto state = plant.read_state();
+    const auto person = std::ranges::find(state.humanoids, name, &runtime::HumanoidState::name);
+    if (person == state.humanoids.end()) {
+        throw std::runtime_error("person is not bound: " + name);
+    }
+    return *person;
+}
+
+std::uint32_t apply_humanoid_motion(adapters::mujoco::MujocoActuatorPlant& plant,
+    const std::string& person, const adapters::hakoniwa::PersonStepCommand& input)
+{
+    plant.apply_operations({.humanoid_motions = {{
+        person, input.linear_velocity, input.angular_velocity, input.animation, input.ride,
+    }}});
+    return humanoid_state(plant, person).last_motion_result;
+}
+
 void add_person(
     std::ostream& model,
     const std::string& name,
@@ -161,7 +181,7 @@ runtime::Vector3State rotate_vector(
 }
 
 runtime::Vector3State visual_hip(
-    const adapters::hakoniwa::PersonStepState& state,
+    const runtime::HumanoidState& state,
     const double hip_height)
 {
     const auto offset = rotate_vector(
@@ -282,25 +302,32 @@ void test_service_packet()
         7, 1'012'345, {1.5, -2.0, 3.0}, {0.1, 0.2, -0.3, 0.9},
         {4.0, -5.0, 6.0}, {0.4, -0.5, 0.6}, {0.1, -0.2, 0.3, -0.4, 0.5, -0.6},
     };
-    unsigned applied = 0;
-    PersonStepService robot("A",
-        [&](const PersonStepCommand& input) {
+    std::size_t applied = 0;
+    PersonStepService robot("A");
+    test_support::SingleRobotServiceCalls service(robot);
+    runtime::RobotServiceSlot slot {runtime::AsyncServiceState::Doing};
+    const auto step = [&]() {
+        auto result = robot.on_step({}, {}, std::span(&slot, 1));
+        for (const auto& input : result.operations.humanoid_motions) {
             REQUIRE(input.linear_velocity.x == 1.25);
             REQUIRE(input.linear_velocity.y == -0.5);
             REQUIRE(input.angular_velocity.z == 0.25);
             REQUIRE(input.animation == "sit_talk");
             REQUIRE(input.ride == "Car-1/driver");
             ++applied;
-            return state.result_code;
-        },
-        [&](std::uint32_t result_code) {
-            REQUIRE(result_code == state.result_code);
-            return state;
-        });
-    test_support::SingleRobotServiceCalls service(robot);
+        }
+        return result;
+    };
+    runtime::RobotState snapshot;
+    snapshot.sample_time_usec = state.simulation_time_usec;
+    snapshot.humanoids.push_back({
+        "A", state.position, state.orientation, state.linear_velocity,
+        state.angular_velocity, state.joint_positions, state.result_code,
+    });
     const auto request = request_packet(
         41, command(1.25, -0.5, 0.25, "sit_talk", "Car-1/driver"));
     REQUIRE(service.on_request(request));
+    (void)step();
     auto python = request;
     HakoPduMetaDataType metadata {};
     std::memcpy(&metadata, python.data(), sizeof(metadata));
@@ -310,20 +337,22 @@ void test_service_packet()
     std::memcpy(python.data(), &metadata, sizeof(metadata));
     REQUIRE(service.on_request(std::span(python).first(metadata.total_size)));
     REQUIRE(!service.on_request(std::span(python).first(metadata.total_size - 1)));
+    const auto completed = step();
     REQUIRE(applied == 2);
-    const auto completed = service.on_step({}, runtime::AsyncServiceState::Doing, {});
-    REQUIRE(completed.outcome == runtime::AsyncServiceStepOutcome::Ok);
+    REQUIRE(slot.result == runtime::AsyncServiceStepOutcome::Ok);
     REQUIRE(completed.commands.empty());
 
     const auto clean_response = response_header();
     auto actual = clean_response;
-    REQUIRE(service.on_response({}, {}, actual));
+    REQUIRE(service.on_response(snapshot, {}, actual));
     HakoCpp_PersonStepResponsePacket decoded {};
     REQUIRE(hako::pdu::msgs::hako_srv_msgs::PersonStepResponsePacket {}.pdu2cpp(
         reinterpret_cast<char*>(actual.data()), decoded));
     REQUIRE(decoded.header.request_id == 19);
     REQUIRE(decoded.header.result_code == 3);
     REQUIRE(decoded.body.step == 41);
+    const auto result_code = decoded.body.result_code;
+    REQUIRE(result_code == state.result_code);
     REQUIRE(decoded.body.result_code == 7);
     REQUIRE(decoded.body.sim_time_usec == 1'012'345);
     REQUIRE(decoded.body.pose.translation.y == -2.0);
@@ -336,9 +365,10 @@ void test_service_packet()
     REQUIRE(std::ranges::equal(decoded.body.joints.position, state.joint_positions));
     // Core may reuse a response buffer with dynamic joint arrays from last step.
     state.joint_positions[0] = 0.9;
+    snapshot.humanoids.front().joint_positions = state.joint_positions;
     auto fresh = clean_response;
-    REQUIRE(service.on_response({}, {}, fresh));
-    REQUIRE(service.on_response({}, {}, actual));
+    REQUIRE(service.on_response(snapshot, {}, fresh));
+    REQUIRE(service.on_response(snapshot, {}, actual));
     std::memcpy(&metadata, fresh.data(), sizeof(metadata));
     HakoPduMetaDataType reused_metadata {};
     std::memcpy(&reused_metadata, actual.data(), sizeof(reused_metadata));
@@ -352,7 +382,7 @@ void test_service_packet()
     metadata.epoch = 7;
     std::memcpy(actual.data(), &metadata, sizeof(metadata));
     const auto header = actual;
-    REQUIRE(service.on_response({}, {}, actual));
+    REQUIRE(service.on_response(snapshot, {}, actual));
     constexpr auto header_offset = HAKO_PDU_META_DATA_SIZE();
     REQUIRE(std::memcmp(actual.data() + header_offset, header.data() + header_offset,
         sizeof(Hako_ServiceResponseHeader)) == 0);
@@ -369,11 +399,11 @@ void test_motion_and_gait()
     plant.bind_person("A");
     plant.bind_person("B");
 
-    REQUIRE(plant.apply_person_command("A", command(1.0, 0.0, 0.0)) == 0);
-    REQUIRE(plant.apply_person_command("B", command(0.0, 0.0, 0.5)) == 0);
+    REQUIRE(apply_humanoid_motion(plant, "A", command(1.0, 0.0, 0.0)) == 0);
+    REQUIRE(apply_humanoid_motion(plant, "B", command(0.0, 0.0, 0.5)) == 0);
     for (int step = 0; step < 100; ++step) (void)plant.step({});
-    const auto a = plant.person_state("A");
-    const auto b = plant.person_state("B");
+    const auto a = humanoid_state(plant, "A");
+    const auto b = humanoid_state(plant, "B");
     std::cerr << "PERSON_RPC_DIAGNOSTIC first_second"
               << " a.position=(" << a.position.x << ',' << a.position.y
               << ',' << a.position.z << ')'
@@ -396,26 +426,26 @@ void test_motion_and_gait()
     REQUIRE(turn >= 0);
     plant.data()->qpos[plant.model()->jnt_qposadr[turn]] = pi / 2.0;
     mj_forward(plant.model(), plant.data());
-    REQUIRE(plant.apply_person_command("A", command(1.0, 0.0, 0.0)) == 0);
-    REQUIRE(plant.apply_person_command("B", command(0.0, 0.0, 0.0)) == 0);
+    REQUIRE(apply_humanoid_motion(plant, "A", command(1.0, 0.0, 0.0)) == 0);
+    REQUIRE(apply_humanoid_motion(plant, "B", command(0.0, 0.0, 0.0)) == 0);
     for (int step = 0; step < 100; ++step) (void)plant.step({});
-    const auto rotated = plant.person_state("A");
+    const auto rotated = humanoid_state(plant, "A");
     REQUIRE(rotated.position.y > 0.95);
     REQUIRE(std::fabs(rotated.position.x) < 0.1);
 
     // Stage 1 rejects ride without replacing the active walking command.
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 0.0, 0.0, "idle", "Car-1/driver")) != 0);
-    const auto before = plant.person_state("A").position.y;
+    const auto before = humanoid_state(plant, "A").position.y;
     for (int step = 0; step < 20; ++step) (void)plant.step({});
-    REQUIRE(plant.person_state("A").position.y > before + 0.1);
+    REQUIRE(humanoid_state(plant, "A").position.y > before + 0.1);
 
     // The velocity target remains active, but contact prevents tunnelling
     // through the fixed obstacle (stage-1 collision option a).
     (void)plant.reset();
-    REQUIRE(plant.apply_person_command("A", command(1.0, 0.0, 0.0)) == 0);
+    REQUIRE(apply_humanoid_motion(plant, "A", command(1.0, 0.0, 0.0)) == 0);
     for (int step = 0; step < 600; ++step) (void)plant.step({});
-    const auto blocked = plant.person_state("A");
+    const auto blocked = humanoid_state(plant, "A");
     REQUIRE(blocked.position.x > 3.0);
     REQUIRE(blocked.position.x < 3.75);
 
@@ -430,11 +460,11 @@ void test_initial_world_yaw()
         adapters::mujoco::MujocoActuatorPlant plant(definition);
         plant.bind_person("A", yaw);
         REQUIRE(std::fabs(
-            quaternion_yaw(plant.person_state("A").orientation) - yaw)
+            quaternion_yaw(humanoid_state(plant, "A").orientation) - yaw)
             < 1.0e-9);
         (void)plant.reset();
         REQUIRE(std::fabs(
-            quaternion_yaw(plant.person_state("A").orientation) - yaw)
+            quaternion_yaw(humanoid_state(plant, "A").orientation) - yaw)
             < 1.0e-9);
     }
 
@@ -444,10 +474,10 @@ void test_initial_world_yaw()
     definition.model_path = temporary_model.path.string();
     adapters::mujoco::MujocoActuatorPlant plant(definition);
     plant.bind_person("A", -pi / 2.0);
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(1.2, 0.0, 0.0, "walk")) == 0);
     for (int step = 0; step < 100; ++step) (void)plant.step({});
-    const auto east = plant.person_state("A");
+    const auto east = humanoid_state(plant, "A");
     REQUIRE(east.position.y < -1.1);
     REQUIRE(std::fabs(east.position.x) < 0.1);
     REQUIRE(std::fabs(quaternion_yaw(east.orientation) + pi / 2.0) < 0.01);
@@ -465,17 +495,14 @@ void test_gestures_and_sitting(bool use_service = false)
     const auto apply = [&](const std::string& person,
                            const adapters::hakoniwa::PersonStepCommand& input) {
         if (use_service) {
-            std::uint32_t code = 0;
-            adapters::hakoniwa::PersonStepService robot(person,
-                [&](const auto& decoded) {
-                    return code = plant.apply_person_command(person, decoded);
-                },
-                [&](std::uint32_t result) { return plant.person_state(person, result); });
+            adapters::hakoniwa::PersonStepService robot(person);
             test_support::SingleRobotServiceCalls service(robot);
             REQUIRE(service.on_request(request_packet(0, input)));
-            return code;
+            runtime::RobotServiceSlot slot {runtime::AsyncServiceState::Doing};
+            plant.apply_operations(robot.on_step(plant.read_state(), {}, std::span(&slot, 1)).operations);
+            return humanoid_state(plant, person).last_motion_result;
         }
-        return plant.apply_person_command(person, input);
+        return apply_humanoid_motion(plant, person, input);
     };
     const auto steps = [&](const int count) {
         for (int step = 0; step < count; ++step) (void)plant.step({});
@@ -498,28 +525,28 @@ void test_gestures_and_sitting(bool use_service = false)
     }
     animation("unknown-animation", 1.0);
     steps(10);
-    const auto automatic = plant.person_state("A");
+    const auto automatic = humanoid_state(plant, "A");
     REQUIRE(std::fabs(automatic.joint_positions[2]) > 1.0e-3
         || std::fabs(automatic.joint_positions[3]) > 1.0e-3);
 
     reset();
     animation("wave");
     steps(200);
-    const auto wave = plant.person_state("A");
+    const auto wave = humanoid_state(plant, "A");
     REQUIRE(wave.joint_positions[1] >= radians(-168.0));
     REQUIRE(wave.joint_positions[1] <= radians(-132.0));
 
     reset();
     animation("idle");
     steps(1);
-    const double hip_before = plant.person_state("A").joint_positions[2];
+    const double hip_before = humanoid_state(plant, "A").joint_positions[2];
     animation("sit");
     steps(1);
-    const double hip_after = plant.person_state("A").joint_positions[2];
+    const double hip_after = humanoid_state(plant, "A").joint_positions[2];
     REQUIRE(std::fabs(hip_after - hip_before) <= radians(2.4) + 1.0e-9);
 
     steps(49);
-    const auto sit = plant.person_state("A");
+    const auto sit = humanoid_state(plant, "A");
     REQUIRE(std::fabs(sit.joint_positions[0] - radians(-25.0)) < radians(1.0));
     REQUIRE(std::fabs(sit.joint_positions[1] - radians(-25.0)) < radians(1.0));
     REQUIRE(std::fabs(sit.joint_positions[2] - radians(-90.0)) < radians(1.0));
@@ -549,7 +576,7 @@ void test_gestures_and_sitting(bool use_service = false)
     // A seated non-rider is out of collision and crosses the fixed box.
     animation("sit", 1.0);
     steps(600);
-    REQUIRE(plant.person_state("A").position.x > 4.5);
+    REQUIRE(humanoid_state(plant, "A").position.x > 4.5);
 
     // Standing restores both lift and the model's original collision masks.
     animation("walk");
@@ -562,21 +589,21 @@ void test_gestures_and_sitting(bool use_service = false)
     reset();
     animation("sit_drive");
     steps(50);
-    const auto drive = plant.person_state("A");
+    const auto drive = humanoid_state(plant, "A");
     REQUIRE(std::fabs(drive.joint_positions[0] - radians(-65.0)) < radians(1.0));
     REQUIRE(std::fabs(drive.joint_positions[1] - radians(-65.0)) < radians(1.0));
 
     reset();
     animation("sit_alert");
     steps(50);
-    const auto alert = plant.person_state("A");
+    const auto alert = humanoid_state(plant, "A");
     REQUIRE(std::fabs(alert.joint_positions[0] - radians(-65.0)) < radians(1.0));
     REQUIRE(std::fabs(alert.joint_positions[1] - radians(-65.0)) < radians(1.0));
 
     reset();
     animation("sit_startled");
     steps(50);
-    const auto startled = plant.person_state("A");
+    const auto startled = humanoid_state(plant, "A");
     REQUIRE(std::fabs(startled.joint_positions[0] - radians(-85.0))
         < radians(1.0));
     REQUIRE(std::fabs(startled.joint_positions[1] - radians(-85.0))
@@ -585,7 +612,7 @@ void test_gestures_and_sitting(bool use_service = false)
     reset();
     animation("sit_drowsy");
     steps(200);
-    const auto drowsy = plant.person_state("A");
+    const auto drowsy = humanoid_state(plant, "A");
     REQUIRE(drowsy.joint_positions[0] >= radians(-19.0) - 1.0e-9);
     REQUIRE(drowsy.joint_positions[0] <= radians(-11.0) + 1.0e-9);
     REQUIRE(drowsy.joint_positions[1] >= radians(-19.0) - 1.0e-9);
@@ -594,7 +621,7 @@ void test_gestures_and_sitting(bool use_service = false)
     reset();
     animation("talk");
     steps(200);
-    const auto talk = plant.person_state("A");
+    const auto talk = humanoid_state(plant, "A");
     REQUIRE(talk.joint_positions[1] >= radians(-49.0) - 1.0e-9);
     REQUIRE(talk.joint_positions[1] <= radians(-21.0) + 1.0e-9);
     REQUIRE(talk.joint_positions[0] >= radians(-29.0) - 1.0e-9);
@@ -603,7 +630,7 @@ void test_gestures_and_sitting(bool use_service = false)
     reset();
     animation("sit_talk");
     steps(200);
-    const auto sit_talk = plant.person_state("A");
+    const auto sit_talk = humanoid_state(plant, "A");
     REQUIRE(std::fabs(sit_talk.joint_positions[2] - radians(-90.0))
         < radians(1.0));
     REQUIRE(std::fabs(sit_talk.joint_positions[4] - radians(90.0))
@@ -641,10 +668,10 @@ void test_vehicle_ride_and_posture()
 
     // Omitting the seat name selects driver. The response's visual hip is
     // exactly on the body-frame seat after the same physics step.
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 0.0, 0.0, "sit", "Car-1")) == 0);
     (void)plant.step({});
-    auto state = plant.person_state("A");
+    auto state = humanoid_state(plant, "A");
     auto hip = visual_hip(state, 0.66);
     const int vehicle_body = plant.model()->jnt_bodyid[vehicle_joint];
     REQUIRE(std::fabs(hip.x - (plant.data()->xpos[3 * vehicle_body] + 0.3)) < 1.0e-6);
@@ -658,7 +685,7 @@ void test_vehicle_ride_and_posture()
     for (int step = 0; step < 100; ++step) {
         plant.data()->qvel[vehicle_qvel] = 5.0;
         (void)plant.step({});
-        state = plant.person_state("A");
+        state = humanoid_state(plant, "A");
         hip = visual_hip(state, 0.66);
         REQUIRE(std::fabs(
             hip.x - (plant.data()->xpos[3 * vehicle_body] + 0.3)) < 0.001);
@@ -676,7 +703,7 @@ void test_vehicle_ride_and_posture()
     plant.data()->qpos[vehicle_qpos + 6] = std::sin(pi / 4.0);
     mj_forward(plant.model(), plant.data());
     (void)plant.step({});
-    state = plant.person_state("A");
+    state = humanoid_state(plant, "A");
     hip = visual_hip(state, 0.66);
     REQUIRE(std::fabs(
         hip.x - (plant.data()->xpos[3 * vehicle_body] - 0.4)) < 0.001);
@@ -691,17 +718,17 @@ void test_vehicle_ride_and_posture()
     plant.data()->qpos[vehicle_qpos + 6] = std::sin(rainbow_yaw / 2.0);
     mj_forward(plant.model(), plant.data());
     (void)plant.step({});
-    state = plant.person_state("A");
+    state = humanoid_state(plant, "A");
     REQUIRE(std::fabs(quaternion_yaw(state.orientation) - rainbow_yaw) < 0.001);
 
     // Whole-body posture is visual-only and approaches its target at 90 deg/s.
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 0.0, 0.0, "sit_drowsy", "Car-1/driver")) == 0);
     (void)plant.step({});
-    state = plant.person_state("A");
+    state = humanoid_state(plant, "A");
     REQUIRE(std::fabs(quaternion_pitch(state.orientation)) <= radians(0.9) + 1.0e-6);
     for (int step = 0; step < 199; ++step) (void)plant.step({});
-    state = plant.person_state("A");
+    state = humanoid_state(plant, "A");
     REQUIRE(quaternion_pitch(state.orientation) >= radians(16.0) - 1.0e-6);
     REQUIRE(quaternion_pitch(state.orientation) <= radians(28.0) + 1.0e-6);
     REQUIRE(std::fabs(quaternion_roll(state.orientation)) <= radians(5.0) + 1.0e-6);
@@ -713,29 +740,29 @@ void test_vehicle_ride_and_posture()
     plant.data()->qpos[vehicle_qpos] = 0.0;
     plant.data()->qpos[vehicle_qpos + 1] = 0.0;
     mj_forward(plant.model(), plant.data());
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 0.0, 0.0, "idle", "")) == 0);
     (void)plant.step({});
-    state = plant.person_state("A");
+    state = humanoid_state(plant, "A");
     REQUIRE(std::fabs(state.position.x - 0.3) < 0.001);
     REQUIRE(std::fabs(state.position.y - 1.15) < 0.001);
     REQUIRE(std::fabs(state.position.z) < 0.02);
     REQUIRE(plant.model()->geom_contype[collision] == 1);
     REQUIRE(plant.model()->geom_conaffinity[collision] == 3);
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(1.0, 0.0, 0.0, "walk")) == 0);
     for (int step = 0; step < 600; ++step) (void)plant.step({});
-    REQUIRE(plant.person_state("A").position.x < 3.75);
+    REQUIRE(humanoid_state(plant, "A").position.x < 3.75);
 
     // Unknown vehicle/seat requests do not replace the accepted standing state.
     (void)plant.reset();
-    const auto standing = plant.person_state("A");
-    REQUIRE(plant.apply_person_command(
+    const auto standing = humanoid_state(plant, "A");
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 0.0, 0.0, "sit", "Missing/driver")) != 0);
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 0.0, 0.0, "sit", "Car-1/missing")) != 0);
     (void)plant.step({});
-    const auto rejected = plant.person_state("A");
+    const auto rejected = humanoid_state(plant, "A");
     REQUIRE(std::fabs(rejected.position.x - standing.position.x) < 0.001);
     REQUIRE(std::fabs(rejected.position.y - standing.position.y) < 0.001);
     REQUIRE(plant.model()->geom_contype[collision] == 1);
@@ -757,7 +784,7 @@ std::vector<runtime::PersonContactEvent> static_contact_scenario()
         definition_with_vehicle(temporary_model.path));
     plant.bind_person("A");
     plant.bind_person("B");
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(1.0, 0.0, 0.0, "walk")) == 0);
     std::vector<runtime::PersonContactEvent> events;
     for (int step = 0; step < 600; ++step) {
@@ -783,7 +810,7 @@ std::vector<runtime::PersonContactEvent> static_contact_scenario()
     const auto started_id = started->id;
     const auto started_time = started->time_sec;
 
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(-1.0, 0.0, 0.0, "walk")) == 0);
     for (int step = 0; step < 80; ++step) {
         (void)plant.step({});
@@ -837,7 +864,7 @@ void test_person_contact_events()
     plant.data()->qpos[vehicle_qpos] = -2.0;
     plant.data()->qpos[vehicle_qpos + 1] = 0.0;
     mj_forward(plant.model(), plant.data());
-    const auto person_before = plant.person_state("A").position;
+    const auto person_before = humanoid_state(plant, "A").position;
     std::vector<runtime::PersonContactEvent> events;
     for (int step = 0; step < 80; ++step) {
         plant.data()->qvel[vehicle_qvel] = 5.0;
@@ -860,15 +887,15 @@ void test_person_contact_events()
     REQUIRE(vehicle_contact->relative_speed_mps > 4.0);
     REQUIRE(vehicle_contact->relative_speed_mps < 5.1);
     REQUIRE(std::fabs(
-        plant.person_state("A").position.x - person_before.x) < 0.02);
+        humanoid_state(plant, "A").position.x - person_before.x) < 0.02);
 
     // Person-person contact produces a directed event for both people.
     (void)plant.reset();
     plant.model()->geom_contype[vehicle_geom] = 0;
     plant.model()->geom_conaffinity[vehicle_geom] = 0;
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 1.0, 0.0, "walk")) == 0);
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "B", command(0.0, -1.0, 0.0, "walk")) == 0);
     events.clear();
     for (int step = 0; step < 150; ++step) {
@@ -887,7 +914,7 @@ void test_person_contact_events()
     // Separating for less than 0.3 s and touching again does not create a
     // second started edge for the same pair.
     (void)plant.reset();
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(1.0, 0.0, 0.0, "walk")) == 0);
     events.clear();
     for (int step = 0; step < 500; ++step) {
@@ -898,13 +925,13 @@ void test_person_contact_events()
                     && event.started && event.position.y > 3.5;
             })) break;
     }
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(-1.0, 0.0, 0.0, "walk")) == 0);
     for (int step = 0; step < 10; ++step) {
         (void)plant.step({});
         append_contact_events(plant, events);
     }
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(1.0, 0.0, 0.0, "walk")) == 0);
     for (int step = 0; step < 20; ++step) {
         (void)plant.step({});
@@ -920,7 +947,7 @@ void test_person_contact_events()
     (void)plant.reset();
     plant.model()->geom_contype[vehicle_geom] = 1;
     plant.model()->geom_conaffinity[vehicle_geom] = 1;
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply_humanoid_motion(plant,
         "A", command(0.0, 0.0, 0.0, "sit", "Car-1/driver")) == 0);
     events.clear();
     for (int step = 0; step < 20; ++step) {

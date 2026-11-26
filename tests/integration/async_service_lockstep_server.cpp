@@ -32,6 +32,9 @@ constexpr std::array kJoints {"joint-a", "joint-b"};
 
 class Plant final : public IActuatorPlant {
 public:
+    PlantCapabilities capabilities() const noexcept override { return {}; }
+    void apply_operations(const PlantOperations&) override {}
+
     std::uint64_t delta_time_usec() const noexcept override { return kDeltaUsec; }
 
     RobotState read_state() const override

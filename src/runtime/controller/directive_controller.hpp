@@ -1,8 +1,6 @@
 #pragma once
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-
-#include "runtime/plant/plant_directive.hpp"
+#include "runtime/plant/plant_operations.hpp"
 #include "runtime/source/command_source.hpp"
 
 #include <memory>
@@ -14,16 +12,15 @@ namespace hakoniwa::robot_runtime::runtime {
 struct DirectiveControllerOutput {
     std::string controller_id;
     ComponentStatus status;
-    PlantDirectiveList directives;
+    PlantOperations operations;
 };
 
 /**
- * Non-arbitrated Controller on the Plant Directive path.
+ * Controller that produces only Plant operations.
  *
  * It turns the input of its bound CommandSource into backend-independent
- * IPlantDirectives. Its output type differs from ControllerOutput, so the
- * directives structurally cannot enter the Arbiter. A null input means that
- * the bound source had no new sample this step.
+ * Plant operations. A null input means that the bound source had no new
+ * sample this step.
  *
  * Calls are serialized by ActuatorRuntime; implementations need not be
  * thread-safe.
@@ -41,5 +38,3 @@ public:
 };
 
 } // namespace hakoniwa::robot_runtime::runtime
-
-#endif

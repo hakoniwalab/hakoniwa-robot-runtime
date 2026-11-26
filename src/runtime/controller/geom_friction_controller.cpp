@@ -73,8 +73,7 @@ DirectiveControllerOutput GeomFrictionController::update(
     return {
         controller_id_,
         {controller_id_, ComponentState::Ready, {}},
-        {std::make_shared<const GeomFrictionDirective>(
-            geom_names_, friction, context.simulation_time_usec)},
+        {.surface_frictions = {{geom_names_, friction, context.simulation_time_usec}}},
     };
 }
 

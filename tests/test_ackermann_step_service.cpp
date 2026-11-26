@@ -68,6 +68,9 @@ Packet response_envelope()
 class Plant final : public IActuatorPlant {
 public:
     std::vector<std::vector<ActuatorCommand>> commands;
+    PlantCapabilities capabilities() const noexcept override { return {}; }
+    void apply_operations(const PlantOperations&) override {}
+
     std::uint64_t delta_time_usec() const noexcept override { return kDelta; }
     RobotState read_state() const override { return {.sample_time_usec = time_}; }
     RobotState step(const std::vector<ActuatorCommand>& applied) override

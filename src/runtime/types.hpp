@@ -1,5 +1,7 @@
 #pragma once
 
+#include "runtime/plant/plant_operations.hpp"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -71,12 +73,6 @@ struct ActuatorState {
     std::uint64_t simulation_time_usec {0};
 };
 
-struct Vector3State {
-    double x {0.0};
-    double y {0.0};
-    double z {0.0};
-};
-
 struct QuaternionState {
     double x {0.0};
     double y {0.0};
@@ -96,28 +92,12 @@ struct PersonContactEvent {
     bool started {false};
 };
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-struct EulerState {
-    double roll {0.0};
-    double pitch {0.0};
-    double yaw {0.0};
-};
-
 enum class MirrorVelocityFrame {
     World,
     Body,
 };
 
-/** Backend-independent state command for one externally owned Mirror body. */
-struct MirrorBodyCommand {
-    std::string mirror_id;
-    Vector3State position;
-    EulerState orientation;
-    Vector3State linear_velocity;
-    Vector3State angular_velocity;
-    std::uint64_t created_at_usec {0};
-};
-
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 /** One post-physics contact between a Mirror and a local physical body. */
 struct MirrorContactState {
     std::string mirror_id;
@@ -143,6 +123,16 @@ struct BodyState {
     Vector3State linear_velocity;
     Vector3State angular_velocity;
     std::uint64_t simulation_time_usec {0};
+};
+
+struct HumanoidState {
+    std::string name;
+    Vector3State position;
+    QuaternionState orientation;
+    Vector3State linear_velocity;
+    Vector3State angular_velocity;
+    std::array<double, 6> joint_positions {};
+    std::uint32_t last_motion_result {0};
 };
 
 /** Physical-state snapshot observed at the Plant's `sample_time_usec`. */
@@ -292,6 +282,7 @@ struct RobotState {
     /** Filled by the sensor stage after the physics step. */
     std::vector<SensorReading> sensor_readings;
 #endif
+    std::vector<HumanoidState> humanoids;
 };
 
 /** Inclusive scalar command limits in the unit selected by command type. */
@@ -337,6 +328,7 @@ struct ControllerOutput {
     std::string controller_id;
     ComponentStatus status;
     std::vector<ActuatorCommand> commands;
+    PlantOperations operations {};
 };
 
 struct ArbitrationResult {
