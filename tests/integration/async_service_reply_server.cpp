@@ -3,6 +3,7 @@
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#include "support/single_service_robot.hpp"
 
 #include "hako_asset_service.h"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <memory>
 
+namespace test_support = hakoniwa::robot_runtime::test_support;
 using namespace hakoniwa::robot_runtime::runtime;
 using namespace hakoniwa::robot_runtime::runner::detail;
 using hakoniwa::robot_runtime::runner::hakoniwa::CoreAsyncServiceServer;
@@ -58,7 +60,7 @@ private:
     double position_ {0};
 };
 
-class SumService final : public IAsyncService {
+class SumService final : public test_support::OneService {
 public:
     explicit SumService(int required_steps) : required_steps_(required_steps) {}
 
@@ -77,7 +79,7 @@ public:
         return true;
     }
 
-    AsyncServiceStepResult on_step(
+    test_support::OneServiceStepResult on_step(
         const RobotState&, AsyncServiceState state, const RuntimeStepContext& context) override
     {
         if (doing_steps_ == 0) {
@@ -147,9 +149,12 @@ public:
         }
         try {
             auto server = std::make_shared<CoreAsyncServiceServer>();
-            auto source = std::make_shared<AsyncServiceCommandSource>(
-                kSource, id, server, std::make_shared<SumService>(required_steps_));
-            auto controller = std::make_shared<AsyncServiceController>(kController, source);
+            auto robot = std::make_shared<test_support::SingleServiceRobot>(
+                std::make_shared<SumService>(required_steps_));
+            auto service_source = std::make_shared<AsyncServiceCommandSource>(
+                std::string(kSource) + "/0", id, server, robot, 0);
+            auto source = std::make_shared<RobotServiceSource>(kSource, std::vector {service_source});
+            auto controller = std::make_shared<RobotServiceController>(kController, source, robot);
             runtime_ = std::make_unique<ActuatorRuntime>(
                 std::vector<std::shared_ptr<ICommandSource>> {source},
                 std::vector<std::shared_ptr<IController>> {controller},
@@ -157,7 +162,7 @@ public:
                     std::vector<ControllerPriority> {{kController, 10, {}}}),
                 std::make_shared<Plant>(),
                 std::vector<std::shared_ptr<IStatePublisher>> {
-                    std::make_shared<AsyncServiceResponsePublisher>("sum-response", source)});
+                    std::make_shared<AsyncServiceResponsePublisher>("sum-response", service_source)});
             return 0;
         } catch (const std::exception& error) {
             return fail(error.what());

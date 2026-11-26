@@ -42,6 +42,11 @@ AckermannStepService::AckermannStepService(
     }
 }
 
+bool AckermannStepService::on_request(std::size_t service, std::span<const std::byte> request)
+{
+    return service == 0 && on_request(request);
+}
+
 bool AckermannStepService::on_request(std::span<const std::byte> request)
 {
     constexpr auto body_offset = offsetof(Hako_AckermannStepRequestPacket, body);
@@ -73,15 +78,18 @@ bool AckermannStepService::on_request(std::span<const std::byte> request)
     return true;
 }
 
-runtime::AsyncServiceStepResult AckermannStepService::on_step(
-    const runtime::RobotState&, runtime::AsyncServiceState,
-    const runtime::RuntimeStepContext&)
+runtime::RobotStepResult AckermannStepService::on_step(
+    const runtime::RobotState&, const runtime::RuntimeStepContext&,
+    std::span<runtime::RobotServiceSlot> slots)
 {
-    return {runtime::AsyncServiceStepOutcome::Ok, {}};
+    if (slots[0].state != runtime::AsyncServiceState::Idle) {
+        slots[0].result = runtime::AsyncServiceStepOutcome::Ok;
+    }
+    return {};
 }
 
 bool AckermannStepService::on_response(
-    const runtime::RobotState& state, const runtime::RuntimeStepContext&,
+    std::size_t, const runtime::RobotState& state, const runtime::RuntimeStepContext&,
     std::span<std::byte> packet)
 {
     const auto body = std::find_if(state.bodies.begin(), state.bodies.end(),

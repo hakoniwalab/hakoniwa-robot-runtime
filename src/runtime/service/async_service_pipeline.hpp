@@ -4,7 +4,7 @@
 #include "hakoniwa/robot_runtime/runner/lockstep_input.hpp"
 #include "runtime/controller/controller.hpp"
 #include "runtime/publisher/state_publisher.hpp"
-#include "runtime/service/async_service.hpp"
+#include "runtime/service/robot_services.hpp"
 #include "runtime/service/async_service_server.hpp"
 
 #include <optional>
@@ -15,8 +15,7 @@ class AsyncServiceCommandSource final : public ICommandSource, public runner::IL
 public:
     AsyncServiceCommandSource(
         std::string id, int service_id, std::shared_ptr<IAsyncServiceServer> server,
-        std::shared_ptr<IAsyncService> service,
-        bool lockstep = false);
+        std::shared_ptr<IRobotServices> robot, std::size_t service_index, bool lockstep = false);
 
     std::string_view id() const noexcept override;
     CommandSourcePollResult poll(const RuntimeStepContext& context) override;
@@ -30,13 +29,14 @@ public:
     bool lockstep_needs_initial_sync() const noexcept override { return false; }
 
 private:
-    friend class AsyncServiceController;
+    friend class RobotServiceController;
     friend class AsyncServiceResponsePublisher;
 
     std::string id_;
     int service_id_;
     std::shared_ptr<IAsyncServiceServer> server_;
-    std::shared_ptr<IAsyncService> service_;
+    std::shared_ptr<IRobotServices> robot_;
+    std::size_t service_index_;
     bool lockstep_;
     std::optional<std::vector<std::byte>> staged_request_;
     std::string lockstep_failure_;
@@ -45,10 +45,26 @@ private:
     std::uint64_t sequence_ {0};
 };
 
-class AsyncServiceController final : public IController {
+class RobotServiceSource final : public ICommandSource {
 public:
-    AsyncServiceController(
-        std::string id, std::shared_ptr<AsyncServiceCommandSource> source);
+    RobotServiceSource(std::string id, std::vector<std::shared_ptr<AsyncServiceCommandSource>> services);
+
+    std::string_view id() const noexcept override;
+    CommandSourcePollResult poll(const RuntimeStepContext& context) override;
+    void reset() noexcept override;
+
+private:
+    friend class RobotServiceController;
+
+    std::string id_;
+    std::vector<std::shared_ptr<AsyncServiceCommandSource>> services_;
+    std::uint64_t sequence_ {0};
+};
+
+class RobotServiceController final : public IController {
+public:
+    RobotServiceController(
+        std::string id, std::shared_ptr<RobotServiceSource> source, std::shared_ptr<IRobotServices> robot);
 
     std::string_view id() const noexcept override;
     std::string_view source_id() const noexcept override;
@@ -61,7 +77,9 @@ public:
 
 private:
     std::string id_;
-    std::shared_ptr<AsyncServiceCommandSource> source_;
+    std::shared_ptr<RobotServiceSource> source_;
+    std::shared_ptr<IRobotServices> robot_;
+    std::vector<RobotServiceSlot> slots_;
 };
 
 class AsyncServiceResponsePublisher final : public IStatePublisher {

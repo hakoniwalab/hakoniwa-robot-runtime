@@ -45,7 +45,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     , const PluginPduChannels* plugin_pdu_channels
 #endif
     , const AckermannServiceFactory& ackermann_service_factory
-    , std::vector<AsyncServiceComponents> additional_services
+    , std::vector<RobotServiceComponents> additional_services
     , std::shared_ptr<IStatePublisher> person_state_publisher
     )
 {
@@ -387,7 +387,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
             // before the drive source takes the command in this substep.
             sources.push_back(std::move(service->source));
             controllers.push_back(std::move(service->controller));
-            publishers.push_back(std::move(service->publisher));
+            for (auto& publisher : service->publishers) {
+                publishers.push_back(std::move(publisher));
+            }
         }
         sources.push_back(std::make_shared<AckermannDriveCommandSource>(
             source_id, config.input_timeout_usec, std::move(reader)));
@@ -472,7 +474,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         publishers.push_back(std::move(person_state_publisher));
     }
     for (auto& service : additional_services) {
-        publishers.push_back(std::move(service.publisher));
+        for (auto& publisher : service.publishers) {
+            publishers.push_back(std::move(publisher));
+        }
     }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     // Poll the service request before the friction reader in this same substep.

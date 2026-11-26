@@ -3,6 +3,7 @@
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/controller/hold_controller.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#include "support/single_service_robot.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -12,6 +13,7 @@
 #include <utility>
 
 using namespace hakoniwa::robot_runtime::runtime;
+namespace test_support = hakoniwa::robot_runtime::test_support;
 
 namespace {
 
@@ -170,7 +172,7 @@ private:
     Trace& trace_;
 };
 
-class FakeService : public IAsyncService {
+class FakeService : public test_support::OneService {
 public:
     explicit FakeService(Trace& trace) : trace_(trace) {}
 
@@ -195,7 +197,7 @@ public:
         return accept;
     }
 
-    AsyncServiceStepResult on_step(
+    test_support::OneServiceStepResult on_step(
         const RobotState& state, AsyncServiceState server_state,
         const RuntimeStepContext& context) override
     {
@@ -270,10 +272,14 @@ struct Fixture {
     std::shared_ptr<FakePlant> plant = std::make_shared<FakePlant>(trace);
     std::shared_ptr<FakeServer> server = std::make_shared<FakeServer>(trace, *plant);
     std::shared_ptr<FakeService> service;
-    std::shared_ptr<AsyncServiceCommandSource> source =
-        std::make_shared<AsyncServiceCommandSource>(kSource, kServiceId, server, service);
-    std::shared_ptr<AsyncServiceController> controller =
-        std::make_shared<AsyncServiceController>(kController, source);
+    std::shared_ptr<test_support::SingleServiceRobot> robot =
+        std::make_shared<test_support::SingleServiceRobot>(service);
+    std::shared_ptr<AsyncServiceCommandSource> service_source =
+        std::make_shared<AsyncServiceCommandSource>(std::string(kSource) + "/0", kServiceId, server, robot, 0);
+    std::shared_ptr<RobotServiceSource> source =
+        std::make_shared<RobotServiceSource>(kSource, std::vector {service_source});
+    std::shared_ptr<RobotServiceController> controller =
+        std::make_shared<RobotServiceController>(kController, source, robot);
     ActuatorRuntime runtime {
         {source, std::make_shared<ObserveServicePoll>(trace)},
         {controller, std::make_shared<HoldController>(
@@ -283,7 +289,7 @@ struct Fixture {
         }),
         plant,
         {std::make_shared<AsyncServiceResponsePublisher>(
-            "service-response", source)},
+            "service-response", service_source)},
     };
 };
 

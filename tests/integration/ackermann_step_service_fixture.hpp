@@ -96,13 +96,14 @@ public:
             const auto& name = service_names[index];
             auto reader = std::make_shared<AckermannDriveRpcEventReader>();
             auto service = std::make_shared<AckermannStepService>(reader, vehicle);
-            auto source = std::make_shared<AsyncServiceCommandSource>(
-                name, static_cast<int>(index), server_, std::move(service), true);
+            auto service_source = std::make_shared<AsyncServiceCommandSource>(
+                name + "/0", static_cast<int>(index), server_, service, 0, true);
+            auto source = std::make_shared<RobotServiceSource>(name, std::vector {service_source});
             vehicles.push_back({vehicle, std::move(reader)});
-            gate_inputs.push_back({name, source});
+            gate_inputs.push_back({name, service_source});
             sources.push_back(source);
-            controllers.push_back(std::make_shared<AsyncServiceController>(name + ":controller", source));
-            publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":reply", source));
+            controllers.push_back(std::make_shared<RobotServiceController>(name + ":controller", source, service));
+            publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":reply", service_source));
         }
         if (step_permission) {
             gate_inputs.push_back({"test step permission", std::move(step_permission)});

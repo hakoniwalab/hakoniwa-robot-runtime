@@ -7,6 +7,7 @@
 #include "runtime/actuator_runtime.hpp"
 #include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#include "support/single_robot_service_calls.hpp"
 
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepResponsePacket.hpp"
@@ -119,15 +120,19 @@ struct ServicePipeline {
     std::shared_ptr<AckermannDriveRpcEventReader> reader =
         std::make_shared<AckermannDriveRpcEventReader>();
     std::shared_ptr<Server> server = std::make_shared<Server>();
-    std::shared_ptr<AckermannStepService> service =
+    std::shared_ptr<AckermannStepService> robot =
         std::make_shared<AckermannStepService>(reader, kBody);
-    std::shared_ptr<AsyncServiceCommandSource> source =
-        std::make_shared<AsyncServiceCommandSource>(kService, 0, server, service, true);
-    std::shared_ptr<AsyncServiceController> controller =
-        std::make_shared<AsyncServiceController>("service", source);
+    std::unique_ptr<test_support::SingleRobotServiceCalls> service =
+        std::make_unique<test_support::SingleRobotServiceCalls>(*robot);
+    std::shared_ptr<AsyncServiceCommandSource> service_source =
+        std::make_shared<AsyncServiceCommandSource>(std::string(kService) + "/0", 0, server, robot, 0, true);
+    std::shared_ptr<RobotServiceSource> source =
+        std::make_shared<RobotServiceSource>(kService, std::vector {service_source});
+    std::shared_ptr<RobotServiceController> controller =
+        std::make_shared<RobotServiceController>("service", source, robot);
     std::shared_ptr<AsyncServiceResponsePublisher> publisher =
-        std::make_shared<AsyncServiceResponsePublisher>("reply", source);
-    runner::LockstepGate gate {{{kService, source}}, {}};
+        std::make_shared<AsyncServiceResponsePublisher>("reply", service_source);
+    runner::LockstepGate gate {{{kService, service_source}}, {}};
 };
 
 void same_response_bytes()

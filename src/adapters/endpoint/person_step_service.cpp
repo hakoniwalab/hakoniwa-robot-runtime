@@ -29,7 +29,7 @@ PersonStepService::PersonStepService(std::string person, ApplyCommand apply_comm
     }
 }
 
-bool PersonStepService::on_request(std::span<const std::byte> request)
+bool PersonStepService::on_request(std::size_t, std::span<const std::byte> request)
 {
     constexpr auto body_offset = offsetof(Hako_PersonStepRequestPacket, body);
     // Python stops at the last wire field instead of rounding the packet up.
@@ -50,15 +50,18 @@ bool PersonStepService::on_request(std::span<const std::byte> request)
     return true;
 }
 
-runtime::AsyncServiceStepResult PersonStepService::on_step(
-    const runtime::RobotState&, runtime::AsyncServiceState,
-    const runtime::RuntimeStepContext&)
+runtime::RobotStepResult PersonStepService::on_step(
+    const runtime::RobotState&, const runtime::RuntimeStepContext&,
+    std::span<runtime::RobotServiceSlot> slots)
 {
-    return {runtime::AsyncServiceStepOutcome::Ok, {}};
+    if (slots[0].state != runtime::AsyncServiceState::Idle) {
+        slots[0].result = runtime::AsyncServiceStepOutcome::Ok;
+    }
+    return {};
 }
 
 bool PersonStepService::on_response(
-    const runtime::RobotState&, const runtime::RuntimeStepContext&, std::span<std::byte> packet)
+    std::size_t, const runtime::RobotState&, const runtime::RuntimeStepContext&, std::span<std::byte> packet)
 {
     return encode_person_step_response(person_, step_, read_state_(result_code_), packet);
 }

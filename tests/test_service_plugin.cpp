@@ -184,15 +184,15 @@ void test_pipeline(RuntimeServiceConfig config, bool lockstep)
         std::move(library), config.name, config.plugin_config_json,
         std::vector<std::string>{"joint"}, 1'000'000, 1, 2);
     auto server = std::make_shared<Server>();
-    auto source = std::make_shared<AsyncServiceCommandSource>(config.name, 0, server, service, lockstep);
-    auto rpc = std::make_shared<AsyncServiceController>(config.name + ":controller", source);
-    auto controller = std::make_shared<ServicePluginController>(rpc, service);
+    auto source = std::make_shared<AsyncServiceCommandSource>(config.name + "/0", 0, server, service, 0, lockstep);
+    auto robot_source = std::make_shared<RobotServiceSource>(config.name, std::vector {source});
+    auto controller = std::make_shared<RobotServiceController>(config.name + ":controller", robot_source, service);
     auto publisher = std::make_shared<AsyncServiceResponsePublisher>(config.name + ":reply", source);
     auto plant = std::make_shared<Plant>();
     auto manual = std::make_shared<Manual>();
     auto arbiter = std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority>{
         {std::string(controller->id()), config.priority, {}}, {"manual", 20, {}}});
-    ActuatorRuntime runtime({source}, {controller, manual}, arbiter, plant, {publisher});
+    ActuatorRuntime runtime({robot_source}, {controller, manual}, arbiter, plant, {publisher});
     (void)runtime.reset(0);
     const auto step = [&]() { (void)runtime.step(); };
 
@@ -235,11 +235,41 @@ void test_pipeline(RuntimeServiceConfig config, bool lockstep)
     assert(server->result == AsyncServiceResultCode::Invalid && !server->wrote_reply);
 }
 
+// A failing periodic update is reported, not dropped: Error alone, Degraded beside RPC commands.
+void test_failing_update(RuntimeServiceConfig config, const char* path)
+{
+    auto library = plugin::PluginLibrary::open(path, HAKO_PLUGIN_KIND_SERVICE);
+    auto service = std::make_shared<ServicePlugin>(
+        std::move(library), config.name, config.plugin_config_json,
+        std::vector<std::string>{"joint"}, 1'000'000, 1, 2);
+    auto server = std::make_shared<Server>();
+    auto source = std::make_shared<AsyncServiceCommandSource>(config.name + "/0", 0, server, service, 0);
+    auto robot_source = std::make_shared<RobotServiceSource>(config.name, std::vector {source});
+    auto controller = std::make_shared<RobotServiceController>(config.name + ":controller", robot_source, service);
+    auto publisher = std::make_shared<AsyncServiceResponsePublisher>(config.name + ":reply", source);
+    auto plant = std::make_shared<Plant>();
+    auto manual = std::make_shared<Manual>();
+    auto arbiter = std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority>{
+        {std::string(controller->id()), config.priority, {}}, {"manual", 20, {}}});
+    ActuatorRuntime runtime({robot_source}, {controller, manual}, arbiter, plant, {publisher});
+    (void)runtime.reset(0);
+
+    auto report = runtime.step();
+    assert(report.controller_statuses[0].state == ComponentState::Error);
+    assert(report.controller_statuses[0].detail.find("fixture update failed") != std::string::npos);
+
+    server->request = std::byte{0};
+    report = runtime.step();
+    assert(report.controller_statuses[0].state == ComponentState::Degraded);
+    assert(report.controller_statuses[0].detail.find("fixture update failed") != std::string::npos);
+    assert(plant->position == 7.0 && server->result == AsyncServiceResultCode::Ok);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
-    assert(argc == 8);
+    assert(argc == 9);
     const auto config = parse_manifest(argv[1], argv[2]);
     expect_load_error(argv[3], "needs a service plugin");
     expect_load_error(argv[4], "service ABI version");
@@ -249,4 +279,5 @@ int main(int argc, char** argv)
     assert(!optional->service_table().update && !optional->service_table().on_cancel);
     test_pipeline(config, false);
     test_pipeline(config, true);
+    test_failing_update(config, argv[8]);
 }

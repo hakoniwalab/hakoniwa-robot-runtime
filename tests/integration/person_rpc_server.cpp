@@ -124,12 +124,13 @@ public:
                 [plant, person](std::uint32_t) {
                     return read(plant->people.at(person).pose, plant->read_state().sample_time_usec);
                 });
-            auto source = std::make_shared<AsyncServiceCommandSource>(
-                name, id++, server_, std::move(service), true);
-            gate_inputs.push_back({name, source});
+            auto service_source = std::make_shared<AsyncServiceCommandSource>(
+                name + "/0", id++, server_, service, 0, true);
+            auto source = std::make_shared<RobotServiceSource>(name, std::vector {service_source});
+            gate_inputs.push_back({name, service_source});
             sources.push_back(source);
-            controllers.push_back(std::make_shared<AsyncServiceController>(name + ":controller", source));
-            publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":response", source));
+            controllers.push_back(std::make_shared<RobotServiceController>(name + ":controller", source, service));
+            publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":response", service_source));
         }
         gate_ = std::make_unique<runner::LockstepGate>(
             std::move(gate_inputs), runner::LockstepGate::Config {});

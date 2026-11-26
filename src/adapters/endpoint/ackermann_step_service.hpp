@@ -2,7 +2,7 @@
 
 
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
-#include "runtime/service/async_service.hpp"
+#include "runtime/service/robot_services.hpp"
 #include "runtime/source/scalar_pdu_command_source.hpp"
 
 #include <utility>
@@ -20,18 +20,19 @@ private:
     std::optional<double> pending_;
 };
 
-class AckermannStepService final : public runtime::IAsyncService {
+class AckermannStepService final : public runtime::IRobotServices {
 public:
     AckermannStepService(
         std::shared_ptr<AckermannDriveRpcEventReader> reader, std::string body_id,
         std::shared_ptr<AckermannStepFrictionInput> friction = {});
 
-    bool on_request(std::span<const std::byte> request) override;
-    runtime::AsyncServiceStepResult on_step(
-        const runtime::RobotState&, runtime::AsyncServiceState,
-        const runtime::RuntimeStepContext&) override;
+    bool on_request(std::size_t service, std::span<const std::byte> request) override;
+    bool on_request(std::span<const std::byte> request);
+    runtime::RobotStepResult on_step(
+        const runtime::RobotState&, const runtime::RuntimeStepContext&,
+        std::span<runtime::RobotServiceSlot> slots) override;
     bool on_response(
-        const runtime::RobotState& state, const runtime::RuntimeStepContext&,
+        std::size_t, const runtime::RobotState& state, const runtime::RuntimeStepContext&,
         std::span<std::byte> packet) override;
     void reset() override;
 

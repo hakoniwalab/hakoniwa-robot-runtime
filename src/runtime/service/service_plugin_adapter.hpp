@@ -1,13 +1,12 @@
 #pragma once
 
 #include "plugin/plugin_library.hpp"
-#include "runtime/controller/controller.hpp"
-#include "runtime/service/async_service.hpp"
+#include "runtime/service/robot_services.hpp"
 
 namespace hakoniwa::robot_runtime::runtime {
 
-/** The service and optional controller share this single plugin instance. */
-class ServicePlugin final : public IAsyncService {
+/** Adapts a single-service C ABI v1 plugin to the robot interface. */
+class ServicePlugin final : public IRobotServices {
 public:
     ServicePlugin(std::shared_ptr<plugin::PluginLibrary> library, std::string service_name,
         const std::string& config_json, std::vector<std::string> actuator_ids,
@@ -17,22 +16,21 @@ public:
     ServicePlugin(const ServicePlugin&) = delete;
     ServicePlugin& operator=(const ServicePlugin&) = delete;
 
-    bool on_request(std::span<const std::byte> request) override;
-    AsyncServiceStepResult on_step(const RobotState& state, AsyncServiceState server_state,
-        const RuntimeStepContext& context) override;
-    bool on_response(const RobotState& state, const RuntimeStepContext& context,
+    bool on_request(std::size_t, std::span<const std::byte> request) override;
+    RobotStepResult on_step(const RobotState& state, const RuntimeStepContext& context,
+        std::span<RobotServiceSlot> slots) override;
+    bool on_response(std::size_t, const RobotState& state, const RuntimeStepContext& context,
         std::span<std::byte> packet) override;
-    void on_cancel() override;
+    void on_cancel(std::size_t) override;
     void reset() override;
-
-    bool has_update() const noexcept;
-    ControllerOutput update(const RobotState& state, const RuntimeStepContext& context);
 
 private:
     bool copy_states(const RobotState& state);
     HakoJointCommandsV1 prepare_commands();
     bool collect_commands(const RuntimeStepContext& context, std::vector<ActuatorCommand>& output) const;
     HakoTickV1 tick(const RuntimeStepContext& context, bool& first_call) const;
+    std::string append_periodic_commands(const RobotState& state, const RuntimeStepContext& context,
+        std::vector<ActuatorCommand>& output);
 
     std::shared_ptr<plugin::PluginLibrary> library_;
     const HakoServicePluginV1& table_;
@@ -47,23 +45,6 @@ private:
     bool first_response_ {true};
     bool first_update_ {true};
     void* instance_ {nullptr};
-};
-
-/** Adds the periodic update to a service's existing controller candidate. */
-class ServicePluginController final : public IController {
-public:
-    ServicePluginController(std::shared_ptr<IController> rpc, std::shared_ptr<ServicePlugin> plugin);
-    std::string_view id() const noexcept override { return rpc_->id(); }
-    std::string_view source_id() const noexcept override { return rpc_->source_id(); }
-    bool accepts(const IControllerInput& input) const noexcept override { return rpc_->accepts(input); }
-    bool error_stops_run() const noexcept override { return rpc_->error_stops_run(); }
-    void reset(const RobotState& state) override { rpc_->reset(state); }
-    ControllerOutput update(std::shared_ptr<const IControllerInput> input, const RobotState& state,
-        const RuntimeStepContext& context) override;
-
-private:
-    std::shared_ptr<IController> rpc_;
-    std::shared_ptr<ServicePlugin> plugin_;
 };
 
 } // namespace hakoniwa::robot_runtime::runtime

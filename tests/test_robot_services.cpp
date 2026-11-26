@@ -14,6 +14,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -127,6 +128,7 @@ public:
     std::map<std::size_t, AsyncServiceStepOutcome> finish;  // result to set when a slot is not Idle
     bool command_when_idle {false};
     bool result_on_idle {false};  // also set finish[] on Idle slots (the controller must ignore it)
+    std::string step_error;       // a robot-level failure reported by on_step
     std::vector<std::size_t> requests;
     std::vector<std::size_t> cancels;
     std::vector<std::size_t> responses;
@@ -161,6 +163,7 @@ public:
         }
         steps.push_back(std::move(call));
         RobotStepResult result;
+        result.error = step_error;
         if (active || command_when_idle) {
             // The robot never sets source_id; the controller does.
             result.commands.push_back({kJoint, ActuatorCommandType::Velocity, kRobotVelocity, {},
@@ -351,6 +354,42 @@ void result_on_an_idle_slot_is_ignored()
     assert(f.robot->responses.empty());
 }
 
+// A robot failure without commands is a controller error that keeps its reason.
+void robot_error_without_commands_is_an_error()
+{
+    Fixture f;
+    f.robot->step_error = "periodic hook failed";
+    const auto report = f.runtime->step_hakoniwa(1);
+    assert(report.controller_statuses[0].state == ComponentState::Error);
+    assert(report.controller_statuses[0].detail == "periodic hook failed");
+    assert_hold_command(f.plant->applied.back());
+}
+
+// A robot failure with commands degrades the controller; the commands still apply.
+void robot_error_with_commands_is_degraded()
+{
+    Fixture f;
+    f.robot->step_error = "periodic hook failed";
+    f.robot->command_when_idle = true;
+    const auto report = f.runtime->step_hakoniwa(1);
+    assert(report.controller_statuses[0].state == ComponentState::Degraded);
+    assert(report.controller_statuses[0].detail == "periodic hook failed");
+    assert_robot_command(f.plant->applied.back());
+}
+
+// A service error outranks a robot failure, as the RPC error did before.
+void service_error_outranks_robot_error()
+{
+    Fixture f;
+    f.core(kStopId).request = kRequest;
+    (void)f.runtime->step_hakoniwa(1);
+    f.core(kStopId).state = Idle;
+    f.robot->step_error = "periodic hook failed";
+    const auto report = f.runtime->step_hakoniwa(1);
+    assert(report.controller_statuses[0].state == ComponentState::Error);
+    assert(report.controller_statuses[0].detail != "periodic hook failed");
+}
+
 // Any lockstep service makes a controller error stop the run.
 void lockstep_service_makes_errors_stop_the_run()
 {
@@ -402,6 +441,9 @@ int main()
     cancel_is_routed_by_service_index();
     rejected_request_skips_the_slot_and_the_response();
     result_on_an_idle_slot_is_ignored();
+    robot_error_without_commands_is_an_error();
+    robot_error_with_commands_is_degraded();
+    service_error_outranks_robot_error();
     lockstep_service_makes_errors_stop_the_run();
     reset_resets_the_robot_once_and_every_service();
     server_state_mismatch_is_a_controller_error();
