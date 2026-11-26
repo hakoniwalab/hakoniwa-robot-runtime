@@ -49,16 +49,11 @@ cmake -S "$DEMO" -B "$WORK/build-plugin" -DCMAKE_BUILD_TYPE=Release \
   -DHAKO_SERVOJ_PDU_TYPES="$PDU_TYPES" -DHAKO_PDU_REGISTRY_TYPES="$REGISTRY/pdu/types"
 cmake --build "$WORK/build-plugin" --parallel "$JOBS"
 
-RPC_LINK=()
-if [[ $SHLIB == dylib ]]; then
-  # macOS: take every Core function from libshakoc. Otherwise the service
-  # functions bind to libassets and the asset functions to libshakoc, two copies
-  # with separate state ("hako_asset_service_initialize(): pro_data is null").
-  RPC_LINK=("-DCMAKE_SHARED_LINKER_FLAGS=$PREFIX/lib/libshakoc.dylib")
-fi
+# hakoniwa-pdu-rpc main from #91 on links SHM RPC against libshakoc only, so
+# no extra linker flag is needed on macOS.
 cmake -S "$RPC" -B "$WORK/build-rpc" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$PREFIX" -DHAKONIWA_PDU_REGISTRY_DIR="$REGISTRY" \
-  -DHAKO_PDU_RPC_ENABLE_SHM=ON -DHAKO_PDU_RPC_BUILD_TESTS=OFF "${RPC_LINK[@]}"
+  -DHAKO_PDU_RPC_ENABLE_SHM=ON -DHAKO_PDU_RPC_BUILD_TESTS=OFF
 cmake --build "$WORK/build-rpc" --target hakoniwa_pdu_rpc_shared --parallel "$JOBS"
 
 cmake -S "$ROBOT_ARM" -B "$WORK/build-arm" -DCMAKE_BUILD_TYPE=Release \
