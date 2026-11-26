@@ -33,7 +33,6 @@
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-#include "hako_srv_msgs/pdu_ctype_ServiceResponseHeader.h"
 #include "runtime/service/service_plugin_adapter.hpp"
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
@@ -213,6 +212,31 @@ private:
     std::function<bool(const runtime::RobotState&, std::string&)> write_;
 };
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+struct ServicePluginRobot {
+    std::shared_ptr<plugin::PluginLibrary> library;
+    std::vector<std::size_t> service_indices;
+};
+
+std::unordered_map<std::string, std::string> read_rpc_service_types(const std::string& path)
+{
+    std::ifstream stream(path);
+    if (!stream) {
+        throw std::invalid_argument("failed to open RPC service config: " + path);
+    }
+    try {
+        const auto config = nlohmann::json::parse(stream);
+        std::unordered_map<std::string, std::string> types;
+        for (const auto& service : config.at("services")) {
+            types.emplace(service.at("name").get<std::string>(), service.at("type").get<std::string>());
+        }
+        return types;
+    } catch (const nlohmann::json::exception& error) {
+        throw std::invalid_argument("failed to read RPC service types from " + path + ": " + error.what());
+    }
+}
+#endif
+
 } // namespace
 
 std::unique_ptr<runner::IRunner> ManifestFactory::create(
@@ -250,13 +274,19 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
     std::unordered_set<std::string> rpc_requested;
     std::vector<std::string> people;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-    std::unordered_map<std::string, std::shared_ptr<plugin::PluginLibrary>> service_plugins;
+    std::vector<ServicePluginRobot> plugin_robots;
+    std::unordered_map<std::string, std::size_t> plugin_robot_indices;
 #endif
-    for (const auto& service : runtime_definition.services) {
+    for (std::size_t index = 0; index < runtime_definition.services.size(); ++index) {
+        const auto& service = runtime_definition.services[index];
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
         if (service.type == runtime::RuntimeServiceType::Plugin) {
-            service_plugins.emplace(service.name,
-                plugin::PluginLibrary::open(service.plugin_library, HAKO_PLUGIN_KIND_SERVICE));
+            const auto [robot, inserted] = plugin_robot_indices.emplace(service.pdu_robot, plugin_robots.size());
+            if (inserted) {
+                plugin_robots.push_back({
+                    plugin::PluginLibrary::open(service.plugin_library, HAKO_PLUGIN_KIND_SERVICE), {}});
+            }
+            plugin_robots[robot->second].service_indices.push_back(index);
             continue;
         }
 #endif
@@ -286,6 +316,21 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
     if (has_services != has_service_definition) {
         throw std::invalid_argument("Manifest services must be paired with --rpc-service-config");
     }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    std::unordered_map<std::string, std::string> rpc_service_types;
+    if (!plugin_robots.empty()) {
+        rpc_service_types = read_rpc_service_types(config.async_rpc_service_definition_path);
+        for (const auto& robot : plugin_robots) {
+            for (const auto index : robot.service_indices) {
+                const auto& name = runtime_definition.services[index].name;
+                const auto type = rpc_service_types.find(name);
+                if (type == rpc_service_types.end() || type->second.empty()) {
+                    throw std::invalid_argument("RPC service config must provide a type for plugin service " + name);
+                }
+            }
+        }
+    }
+#endif
     if (people.empty() && !config.person_contact_log_path.empty()) {
         throw std::invalid_argument("--person-contact-log requires a PersonStep input");
     }
@@ -297,7 +342,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
          rpc_requested = std::move(rpc_requested),
          people = std::move(people),
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-         service_plugins = std::move(service_plugins),
+         plugin_robots = std::move(plugin_robots),
+         rpc_service_types = std::move(rpc_service_types),
 #endif
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
@@ -362,14 +408,20 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 service_server = std::make_shared<runner::hakoniwa::CoreAsyncServiceServer>(
                     asset_name, std::move(service_names));
             }
-            const auto make_service_components = [&](
-                std::size_t index, std::shared_ptr<runtime::IRobotServices> robot) {
+            const auto make_service_source = [&](std::size_t index,
+                const std::shared_ptr<runtime::IRobotServices>& robot, std::size_t local_index, std::string id) {
                 const auto& config = definition.services[index];
                 auto service_source = std::make_shared<runtime::AsyncServiceCommandSource>(
-                    config.name + "/0", static_cast<int>(index), service_server, robot, 0, config.lockstep);
+                    std::move(id), static_cast<int>(index), service_server, robot, local_index, config.lockstep);
                 if (config.lockstep) {
                     lockstep_inputs.push_back({config.name, service_source});
                 }
+                return service_source;
+            };
+            const auto make_service_components = [&](
+                std::size_t index, std::shared_ptr<runtime::IRobotServices> robot) {
+                const auto& config = definition.services[index];
+                auto service_source = make_service_source(index, robot, 0, config.name + "/0");
                 auto source = std::make_shared<runtime::RobotServiceSource>(config.name,
                     std::vector {service_source});
                 return runtime::RobotServiceComponents {
@@ -477,24 +529,40 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     std::exchange(publish_people, {}));
             }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-            for (std::size_t index = 0; index < definition.services.size(); ++index) {
-                const auto& service = definition.services[index];
-                if (service.type != runtime::RuntimeServiceType::Plugin) {
-                    continue;
-                }
-                std::vector<std::string> actuator_ids;
+            for (const auto& robot : plugin_robots) {
+                const auto& first = definition.services[robot.service_indices.front()];
+                runtime::ServicePluginConfig plugin_config;
+                plugin_config.robot = first.pdu_robot;
+                plugin_config.config_json = first.plugin_config_json;
+                plugin_config.physics_step_ns = plant->delta_time_usec() * 1000;
                 for (const auto& actuator : definition.actuators) {
-                    if (actuator.pdu_robot == service.pdu_robot) {
-                        actuator_ids.push_back(actuator.component_id);
+                    if (actuator.pdu_robot == first.pdu_robot) {
+                        plugin_config.actuators.push_back({
+                            actuator.component_id, actuator.command_type, actuator.limits});
                     }
                 }
-                auto instance = std::make_shared<runtime::ServicePlugin>(
-                    service_plugins.at(service.name), service.name, service.plugin_config_json,
-                    std::move(actuator_ids), plant->delta_time_usec() * 1000,
-                    HAKO_PDU_META_DATA_SIZE(), sizeof(Hako_ServiceResponseHeader));
-                auto components = make_service_components(index, std::move(instance));
-                components.priority = service.priority;
-                additional_services.push_back(std::move(components));
+                for (const auto index : robot.service_indices) {
+                    const auto& service = definition.services[index];
+                    plugin_config.services.push_back({
+                        service.name, rpc_service_types.at(service.name), service.lockstep});
+                }
+                const std::shared_ptr<runtime::IRobotServices> instance = std::make_shared<runtime::ServicePlugin>(
+                    robot.library, std::move(plugin_config));
+                std::vector<std::shared_ptr<runtime::AsyncServiceCommandSource>> sources;
+                std::vector<std::shared_ptr<runtime::IStatePublisher>> publishers;
+                for (std::size_t local = 0; local < robot.service_indices.size(); ++local) {
+                    const auto index = robot.service_indices[local];
+                    const auto& service = definition.services[index];
+                    auto service_source = make_service_source(index, instance, local, service.name);
+                    publishers.push_back(std::make_shared<runtime::AsyncServiceResponsePublisher>(
+                        service.name + ":response", service_source));
+                    sources.push_back(std::move(service_source));
+                }
+                auto source = std::make_shared<runtime::RobotServiceSource>(first.pdu_robot, std::move(sources));
+                auto controller = std::make_shared<runtime::RobotServiceController>(
+                    first.pdu_robot + ":controller", source, instance);
+                additional_services.push_back({std::move(source), std::move(controller),
+                    std::move(publishers), first.priority});
             }
             // Sensor PDUs of the controller plugins: the plugins read the
             // bytes the sensor writers encode for the endpoint.

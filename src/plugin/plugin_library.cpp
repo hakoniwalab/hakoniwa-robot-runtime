@@ -1,7 +1,9 @@
 #include "plugin/plugin_library.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #ifdef _WIN32
@@ -28,9 +30,12 @@ std::string kind_name(const std::uint32_t kind)
 }
 
 /** True for the kinds this host can load. The data adapter is reserved. */
-bool kind_supported(const std::uint32_t kind)
+void require_supported_kind(const std::string& path, const std::uint32_t kind)
 {
-    return kind == HAKO_PLUGIN_KIND_CONTROLLER || kind == HAKO_PLUGIN_KIND_SERVICE;
+    if (kind != HAKO_PLUGIN_KIND_CONTROLLER && kind != HAKO_PLUGIN_KIND_SERVICE) {
+        throw std::runtime_error(
+            "Robot Runtime plugin " + path + ": this host cannot load " + kind_name(kind) + " plugins");
+    }
 }
 
 } // namespace
@@ -39,13 +44,27 @@ std::shared_ptr<PluginLibrary> PluginLibrary::open(
     const std::string& path,
     const std::uint32_t expected_kind)
 {
-    if (!kind_supported(expected_kind)) {
-        throw std::runtime_error(
-            "Robot Runtime plugin " + path + ": this host cannot load "
-            + kind_name(expected_kind) + " plugins");
-    }
+    require_supported_kind(path, expected_kind);
     std::shared_ptr<PluginLibrary> library(new PluginLibrary(path));
     library->load(expected_kind);
+    return library;
+}
+
+std::shared_ptr<PluginLibrary> PluginLibrary::open_builtin(
+    const std::string& name,
+    const std::uint32_t expected_kind,
+    std::span<const BuiltinPlugin> list)
+{
+    const auto plugin = std::find_if(list.begin(), list.end(), [&](const auto& candidate) {
+        return candidate.name != nullptr && name == candidate.name;
+    });
+    if (plugin == list.end()) {
+        throw std::runtime_error("no builtin plugin named " + name);
+    }
+    const auto path = "builtin:" + name;
+    require_supported_kind(path, expected_kind);
+    std::shared_ptr<PluginLibrary> library(new PluginLibrary(path));
+    library->validate(plugin->entry, expected_kind);
     return library;
 }
 
@@ -121,32 +140,30 @@ void PluginLibrary::load(const std::uint32_t expected_kind)
         dlsym(handle_, HAKO_ROBOT_RUNTIME_PLUGIN_ENTRY_V1));
 #endif
 
-    // From here on, every failure closes the library before throwing.
-    try {
-        if (entry == nullptr) {
-            throw std::runtime_error(
-                prefix + " has no entry " + HAKO_ROBOT_RUNTIME_PLUGIN_ENTRY_V1);
-        }
-        header_ = entry();
-        if (header_ == nullptr) {
-            throw std::runtime_error(prefix + " returned no plugin table");
-        }
-        if (header_->kind != expected_kind) {
-            throw std::runtime_error(
-                prefix + " is a " + kind_name(header_->kind)
-                + " plugin; this component needs a "
-                + kind_name(expected_kind) + " plugin");
-        }
-        if (expected_kind == HAKO_PLUGIN_KIND_CONTROLLER) {
-            validate_controller_table();
-        } else {
-            validate_service_table();
-        }
-        plugin_id_ = header_->plugin_id != nullptr ? header_->plugin_id : "unknown";
-    } catch (...) {
-        close();
-        throw;
+    validate(entry, expected_kind);
+}
+
+void PluginLibrary::validate(HakoRobotRuntimePluginEntryV1 entry, const std::uint32_t expected_kind)
+{
+    const std::string prefix = "Robot Runtime plugin " + path_;
+    if (entry == nullptr) {
+        throw std::runtime_error(prefix + " has no entry " + HAKO_ROBOT_RUNTIME_PLUGIN_ENTRY_V1);
     }
+    header_ = entry();
+    if (header_ == nullptr) {
+        throw std::runtime_error(prefix + " returned no plugin table");
+    }
+    if (header_->kind != expected_kind) {
+        throw std::runtime_error(
+            prefix + " is a " + kind_name(header_->kind)
+            + " plugin; this component needs a " + kind_name(expected_kind) + " plugin");
+    }
+    if (expected_kind == HAKO_PLUGIN_KIND_CONTROLLER) {
+        validate_controller_table();
+    } else {
+        validate_service_table();
+    }
+    plugin_id_ = header_->plugin_id != nullptr ? header_->plugin_id : "unknown";
 }
 
 void PluginLibrary::validate_controller_table() const
@@ -193,6 +210,11 @@ void PluginLibrary::validate_service_table() const
             prefix + " has a service table of "
             + std::to_string(header_->struct_size) + " bytes; this build needs at least "
             + std::to_string(sizeof(HakoServicePluginV1)));
+    }
+    // The earlier single-service table used version 1 too, with different hook positions.
+    if (header_->interface_revision != nullptr && std::string_view(header_->interface_revision) == "service-plugin/1") {
+        throw std::runtime_error(
+            prefix + " has a legacy service ABI version 1 table; rebuild the plugin against service_plugin.h");
     }
     const auto& table = service_table();
     const char* missing = nullptr;

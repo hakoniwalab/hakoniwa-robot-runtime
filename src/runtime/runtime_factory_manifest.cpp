@@ -3,6 +3,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -209,6 +210,25 @@ bool load_service_plugin(const json& service, const fs::path& base_path,
     }
     return true;
 }
+
+bool same_robot_plugin(const RuntimeServiceConfig& first, const RuntimeServiceConfig& current,
+    std::string* error)
+{
+    const auto mismatch = [&](const char* field) {
+        return fail(error, "plugin services for robot " + current.pdu_robot + " must use the same "
+            + field + ": " + first.name + " and " + current.name);
+    };
+    if (first.plugin_library != current.plugin_library) {
+        return mismatch("library");
+    }
+    if (first.plugin_config_json != current.plugin_config_json) {
+        return mismatch("config");
+    }
+    if (first.priority != current.priority) {
+        return mismatch("priority");
+    }
+    return true;
+}
 #endif
 
 bool load_services(std::string_view services_json, [[maybe_unused]] const fs::path& base_path,
@@ -220,6 +240,9 @@ bool load_services(std::string_view services_json, [[maybe_unused]] const fs::pa
     }
 
     std::unordered_set<std::string> names;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    std::unordered_map<std::string, std::size_t> first_plugin_rows;
+#endif
     for (const auto& service : services) {
         RuntimeServiceConfig config {};
         std::string type;
@@ -259,6 +282,14 @@ bool load_services(std::string_view services_json, [[maybe_unused]] const fs::pa
         if (!names.insert(config.name).second) {
             return fail(error, "duplicate service name: " + config.name);
         }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+        if (config.type == RuntimeServiceType::Plugin) {
+            const auto [first, inserted] = first_plugin_rows.emplace(config.pdu_robot, definition.services.size());
+            if (!inserted && !same_robot_plugin(definition.services[first->second], config, error)) {
+                return false;
+            }
+        }
+#endif
         definition.services.push_back(std::move(config));
     }
     return true;

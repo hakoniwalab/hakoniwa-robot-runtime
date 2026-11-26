@@ -5,9 +5,17 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 
 namespace hakoniwa::robot_runtime::plugin {
+
+struct BuiltinPlugin {
+    const char* name;
+    HakoRobotRuntimePluginEntryV1 entry;
+};
+
+[[nodiscard]] std::span<const BuiltinPlugin> builtin_plugins();
 
 /**
  * One loaded Robot Runtime plugin library (any kind).
@@ -29,6 +37,10 @@ public:
     [[nodiscard]] static std::shared_ptr<PluginLibrary> open(
         const std::string& path,
         std::uint32_t expected_kind);
+    [[nodiscard]] static std::shared_ptr<PluginLibrary> open_builtin(
+        const std::string& name,
+        std::uint32_t expected_kind,
+        std::span<const BuiltinPlugin> list = builtin_plugins());
 
     ~PluginLibrary();
 
@@ -52,6 +64,7 @@ private:
     explicit PluginLibrary(std::string path);
 
     void load(std::uint32_t expected_kind);
+    void validate(HakoRobotRuntimePluginEntryV1 entry, std::uint32_t expected_kind);
     void validate_controller_table() const;
     void validate_service_table() const;
     void close() noexcept;
