@@ -18,6 +18,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern "C" const HakoPluginHeaderV1* hako_robot_plugin_robot_fixture(void);
