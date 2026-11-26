@@ -253,17 +253,15 @@ ls -l "$PLUGIN"
 ### 6.1 腕（robot-arm）と、Python 用の pdu-rpc をビルドする（最初の 1 回）
 
 ```bash
-SHLIB=so; SEARCH_PREFIX="$PREFIX"; RPC_LINK=()
+SHLIB=so; SEARCH_PREFIX="$PREFIX"
 if [[ $(uname -s) == Darwin ]]; then
   SHLIB=dylib
   SEARCH_PREFIX="$PREFIX;$(brew --prefix glfw)"
-  # macOS：core-pro の関数をすべて libshakoc から取る（libassets と 2 つの写しになるのを防ぐ）
-  RPC_LINK=("-DCMAKE_SHARED_LINKER_FLAGS=$PREFIX/lib/libshakoc.dylib")
 fi
 
 cmake -S "$RPC" -B "$WORK/build-rpc" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$PREFIX" -DHAKONIWA_PDU_REGISTRY_DIR="$REGISTRY" \
-  -DHAKO_PDU_RPC_ENABLE_SHM=ON -DHAKO_PDU_RPC_BUILD_TESTS=OFF "${RPC_LINK[@]}"
+  -DHAKO_PDU_RPC_ENABLE_SHM=ON -DHAKO_PDU_RPC_BUILD_TESTS=OFF
 cmake --build "$WORK/build-rpc" --target hakoniwa_pdu_rpc_shared --parallel 4
 
 cmake -S "$ROBOT_ARM" -B "$WORK/build-arm" -DCMAKE_BUILD_TYPE=Release \
@@ -276,6 +274,7 @@ cmake -S "$ROBOT_ARM" -B "$WORK/build-arm" -DCMAKE_BUILD_TYPE=Release \
 cmake --build "$WORK/build-arm" --target robot-arm-hakoniwa-asset --parallel 4
 ```
 
+- hakoniwa-pdu-rpc は、main の hakoniwalab/hakoniwa-pdu-rpc#91 以降を使ってください。それより前のものは、macOS で `hako_asset_service_initialize(): pro_data is null` で止まります（core-pro のライブラリが 2 つの写しになるため）。
 - プラグインを読み込む機能は、`HAKO_ROBOT_ARM_CONTROLLER_PLUGIN=ON` で入ります。
 - センサありの構成は、画面を使わないときも `HAKO_ARM_ENABLE_VIEWER=ON` でビルドします（GLFW のため）。起動のときに `--no-viewer` を付ければ、画面なしで動きます。
 - robot-arm のアプリは、`--rpc-service-config <service.json>` でサービスの定義を受け取ります（hakoniwalab/hakoniwa-robot-arm#19 以降）。
