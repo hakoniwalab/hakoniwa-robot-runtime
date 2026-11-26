@@ -10,7 +10,16 @@ SO-101 の肩を +0.5、-0.5、0 rad に振り、肘を +0.8 rad まで曲げて
 要求には `float64[6] joint` と `float64 t`、応答には `int32 res` を使います。
 要求の関節配列は SO-101 のマニフェストのアクチュエータ順です。
 
-## 2. プラグインをビルドする
+## 2. C++ プラグインを見る
+
+`servoj_like.cpp` の `ServoJRobot` は `RobotPlugin` を継承します。
+`bind` で `HakoCpp_ServoJRequest` を受けるメソッドと、`HakoCpp_ServoJResponse` を返すメソッドを登録します。
+`step` が、渡されたアクチュエータ順に位置指令を出します。
+目標角は各アクチュエータの範囲内で受け付けます。
+`HAKO_ROBOT_PLUGIN` が入口を作り、生成したコンバーターが PDU を読み書きします。
+C の関数テーブルを直接使う場合は、手順書の [3.3 節](../../../docs/howto-add-async-service.md#33-c-の関数テーブルを使う上級者向け) を参照してください。
+
+## 3. プラグインをビルドする
 
 ```bash
 cmake -S "$DEMO" -B "$WORK/build-plugin" -DCMAKE_BUILD_TYPE=Release \
@@ -24,7 +33,7 @@ CMake は `my_servoj.plugin.json` を `libmy_servoj.plugin.json` として共有
 宣言の `service_types` は `my_robot_srvs_msgs/ServoJ` です。
 ライブラリを移すときは宣言ファイルも一緒に移します。
 
-## 3. 腕と RPC をビルドして動かす
+## 4. 腕と RPC をビルドして動かす
 
 手順書の [6.1 節](../../../docs/howto-add-async-service.md#61-pdu-rpc-と-robot-arm-をビルドする) で、
 SHM 対応の PDU RPC と、センサを有効にした Robot Arm をビルドします。

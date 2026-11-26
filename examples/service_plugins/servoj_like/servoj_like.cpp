@@ -1,163 +1,102 @@
-#include "hakoniwa/robot_runtime/plugin/service_plugin.h"
+#include "hakoniwa/robot_runtime/plugin/robot_plugin.hpp"
 
-#include "my_robot_srvs_msgs/pdu_ctype_ServoJRequestPacket.h"
-#include "my_robot_srvs_msgs/pdu_ctype_ServoJResponsePacket.h"
+#include "my_robot_srvs_msgs/pdu_cpptype_conv_ServoJRequestPacket.hpp"
+#include "my_robot_srvs_msgs/pdu_cpptype_conv_ServoJResponsePacket.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <new>
+#include <cstddef>
+#include <cstdint>
+#include <stdexcept>
 
 namespace {
+
+namespace plugin = hakoniwa::robot_runtime::plugin;
+
+HAKO_ROBOT_SERVICE(my_robot_srvs_msgs, ServoJ);
 
 constexpr std::size_t joint_count = 6;
+constexpr std::size_t servo_service = 0;
 
-struct JointLimits {
-    double minimum;
-    double maximum;
-};
-
-} // namespace
-
-struct HakoRobotPlugin {
-    std::array<JointLimits, joint_count> limits {};
-    std::array<double, joint_count> start {};
-    Hako_ServoJRequest goal {};
-    uint64_t start_ns {0};
-    bool active {false};
-    bool commanded {false};
-};
-
-namespace {
-
-HakoRobotPlugin* create(const HakoRobotCreateV1* args, char* error, size_t error_size)
-{
-    if (args->actuator_count != joint_count) {
-        std::snprintf(error, error_size, "expected six SO-101 actuators");
-        return nullptr;
-    }
-    HakoRobotPlugin service;
-    for (std::size_t i = 0; i < joint_count; ++i) {
-        const auto& actuator = args->actuators[i];
-        service.limits[i] = {actuator.minimum, actuator.maximum};
-    }
-    return new (std::nothrow) HakoRobotPlugin(service);
-}
-
-void destroy(HakoRobotPlugin* instance)
-{
-    delete instance;
-}
-
-int32_t on_request(HakoRobotPlugin* instance, uint32_t service, const HakoServiceRequestV1* request)
-{
-    const auto* packet = request->data;
-    const auto size = request->size;
-    constexpr auto offset = HAKO_PDU_META_DATA_SIZE() + offsetof(Hako_ServoJRequestPacket, body);
-    if (service != 0 || size < offset + sizeof(Hako_ServoJRequest)) {
-        return 0;
-    }
-    HakoPduMetaDataType metadata {};
-    std::memcpy(&metadata, packet, sizeof(metadata));
-    if (HAKO_PDU_METADATA_IS_INVALID(&metadata)
-        || metadata.base_off != HAKO_PDU_META_DATA_SIZE()
-        || metadata.heap_off < offset + sizeof(Hako_ServoJRequest)
-        || metadata.heap_off > metadata.total_size || metadata.total_size > size) {
-        return 0;
-    }
-    Hako_ServoJRequest goal {};
-    std::memcpy(&goal, static_cast<const char*>(packet) + offset, sizeof(goal));
-    if (!std::isfinite(goal.t) || goal.t < 1e-6 || goal.t > 60.0) {
-        return 0;
-    }
-    for (std::size_t i = 0; i < joint_count; ++i) {
-        const auto value = goal.joint[i];
-        const auto& limit = instance->limits[i];
-        if (!std::isfinite(value) || value < limit.minimum || value > limit.maximum) {
-            return 0;
+class ServoJRobot final : public plugin::RobotPlugin {
+public:
+    explicit ServoJRobot(const plugin::RobotContext& context) : RobotPlugin(context)
+    {
+        if (context.actuators.size() != joint_count) {
+            throw std::invalid_argument("expected six SO-101 actuators");
         }
+        bind<ServoJService>(servo_service, &ServoJRobot::on_goal, &ServoJRobot::reply);
     }
-    instance->goal = goal;
-    return 1;
-}
 
-int32_t on_step(HakoRobotPlugin* instance, const HakoTickV1* tick, const HakoRobotStateV1* state,
-    HakoServiceSlotV1* slots, uint32_t slot_count, HakoRobotOutputV1* output, char*, size_t)
-{
-    if (slot_count != 1) {
-        return 1;
-    }
-    auto& service = *instance;
-    auto& slot = slots[0];
-    if (slot.state == HAKO_SERVICE_STATE_CANCELING) {
-        service.active = false;
-        slot.result = HAKO_SERVICE_RESULT_CANCELED;
-    } else if (slot.state == HAKO_SERVICE_STATE_DOING) {
+    void step(plugin::StepView& step) override
+    {
+        if (context().services.size() != 1) {
+            throw std::runtime_error("expected one ServoJ service");
+        }
+        const auto& tick = step.tick();
+        const auto state = step.service_state(servo_service);
+        if (state == plugin::ServiceState::Canceling) {
+            active_ = false;
+            step.finish(servo_service, plugin::ServiceResult::Canceled);
+        } else if (state == plugin::ServiceState::Doing) {
+            for (std::size_t i = 0; i < joint_count; ++i) {
+                start_[i] = step.position(i);
+            }
+            start_ns_ = tick.sim_time_ns;
+            active_ = true;
+            commanded_ = false;
+            step.finish(servo_service, plugin::ServiceResult::Ok);
+        }
+        if (commanded_ && !tick.selected) {
+            active_ = false;
+        }
+        if (!active_) {
+            return;
+        }
+        const double elapsed = static_cast<double>(tick.sim_time_ns - start_ns_) * 1e-9;
+        const double progress = std::min(elapsed / goal_.t, 1.0);
         for (std::size_t i = 0; i < joint_count; ++i) {
-            service.start[i] = state->joints.position[i];
+            step.command(i, std::lerp(start_[i], goal_.joint[i], progress));
         }
-        service.start_ns = tick->sim_time_ns;
-        service.active = true;
-        service.commanded = false;
-        slot.result = HAKO_SERVICE_RESULT_OK;
+        commanded_ = true;
     }
-    if (service.commanded && !tick->selected) {
-        service.active = false;
-    }
-    if (!service.active) {
-        return 0;
-    }
-    const double elapsed = static_cast<double>(tick->sim_time_ns - service.start_ns) * 1e-9;
-    const double progress = std::min(elapsed / service.goal.t, 1.0);
-    auto& commands = output->commands;
-    for (std::size_t i = 0; i < joint_count; ++i) {
-        commands.has_command[i] = 1;
-        commands.command_type[i] = HAKO_JOINT_COMMAND_POSITION;
-        commands.value[i] = std::lerp(service.start[i], service.goal.joint[i], progress);
-    }
-    service.commanded = true;
-    return 0;
-}
 
-int32_t on_response(HakoRobotPlugin*, uint32_t service, const HakoTickV1*, const HakoRobotStateV1*,
-    const HakoServiceResponseV1* response)
-{
-    constexpr auto packet_size = HAKO_ALIGN_SIZE(sizeof(Hako_ServoJResponsePacket), HAKO_ALIGNMENT_SIZE);
-    const auto base = hako_service_packet_base_offset(response->data, response->size);
-    if (service != 0 || base != HAKO_PDU_META_DATA_SIZE() || response->size - base < packet_size) {
-        return 0;
+    void reset() override
+    {
+        active_ = false;
+        commanded_ = false;
     }
-    HakoPduMetaDataType metadata {};
-    std::memcpy(&metadata, response->data, sizeof(metadata));
-    if (HAKO_PDU_METADATA_IS_INVALID(&metadata)) {
-        return 0;
+
+private:
+    bool on_goal(const HakoCpp_ServoJRequest& goal)
+    {
+        if (!std::isfinite(goal.t) || goal.t < 1e-6 || goal.t > 60.0) {
+            return false;
+        }
+        for (std::size_t i = 0; i < joint_count; ++i) {
+            const auto value = goal.joint[i];
+            const auto& actuator = context().actuators[i];
+            if (!std::isfinite(value) || value < actuator.minimum || value > actuator.maximum) {
+                return false;
+            }
+        }
+        goal_ = goal;
+        return true;
     }
-    const auto size = static_cast<uint32_t>(base + packet_size);
-    metadata.heap_off = size;
-    metadata.total_size = size;
-    std::memcpy(response->data, &metadata, sizeof(metadata));
-    auto* packet = static_cast<char*>(response->data) + base;
-    constexpr auto header_size = sizeof(Hako_ServiceResponseHeader);
-    const Hako_ServoJResponse body {0};
-    std::memset(packet + header_size, 0, packet_size - header_size);
-    std::memcpy(packet + offsetof(Hako_ServoJResponsePacket, body), &body, sizeof(body));
-    return 1;
-}
 
-void reset(HakoRobotPlugin* instance)
-{
-    instance->active = false;
-    instance->commanded = false;
-}
+    HakoCpp_ServoJResponse reply(const plugin::StateView&)
+    {
+        return {0};
+    }
 
-const HakoServicePluginV1 table {
-    {sizeof(HakoServicePluginV1), HAKO_SERVICE_PLUGIN_ABI_VERSION, HAKO_PLUGIN_KIND_SERVICE,
-        HAKO_SERVICE_PLUGIN_INTERFACE_REVISION, "servoj-like"},
-    create, destroy, on_request, nullptr, on_step, on_response, reset,
+    std::array<double, joint_count> start_ {};
+    HakoCpp_ServoJRequest goal_ {};
+    std::uint64_t start_ns_ {0};
+    bool active_ {false};
+    bool commanded_ {false};
 };
 
 } // namespace
 
-HAKO_ROBOT_PLUGIN_ENTRY(servoj_like, table)
+HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like)

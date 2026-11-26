@@ -7,9 +7,10 @@ set(HAKO_SERVOJ_PDU_TYPES "" CACHE PATH "Generated ServoJ PDU types directory")
 set(HAKO_PDU_REGISTRY_TYPES "" CACHE PATH "Standard PDU Registry types directory")
 
 foreach(header IN ITEMS
-    "${HAKO_RUNTIME_INCLUDE_DIR}/hakoniwa/robot_runtime/plugin/service_plugin.h"
-    "${HAKO_SERVOJ_PDU_TYPES}/my_robot_srvs_msgs/pdu_ctype_ServoJRequestPacket.h"
-    "${HAKO_PDU_REGISTRY_TYPES}/pdu_primitive_ctypes.h")
+    "${HAKO_RUNTIME_INCLUDE_DIR}/hakoniwa/robot_runtime/plugin/robot_plugin.hpp"
+    "${HAKO_SERVOJ_PDU_TYPES}/my_robot_srvs_msgs/pdu_cpptype_conv_ServoJRequestPacket.hpp"
+    "${HAKO_SERVOJ_PDU_TYPES}/my_robot_srvs_msgs/pdu_cpptype_conv_ServoJResponsePacket.hpp"
+    "${HAKO_PDU_REGISTRY_TYPES}/pdu_dynamic_memory.hpp")
     if(NOT EXISTS "${header}")
         message(FATAL_ERROR "Required header not found: ${header}")
     endif()

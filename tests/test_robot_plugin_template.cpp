@@ -31,8 +31,8 @@ namespace {
 constexpr int kAddId = 60;
 constexpr auto kJoint = "joint";
 constexpr std::uint64_t kDelta = 1'000;
-constexpr int kRequestSize = 288;   // hako_srv_msgs/AddTwoIntsRequestPacket pdu_size
-constexpr int kResponseSize = 280;  // hako_srv_msgs/AddTwoIntsResponsePacket pdu_size
+constexpr int kRequestSize = 24 + 288;   // metadata + hako_srv_msgs/AddTwoIntsRequestPacket base size
+constexpr int kResponseSize = 24 + 280;  // metadata + hako_srv_msgs/AddTwoIntsResponsePacket base size
 
 std::vector<std::byte> add_request(std::uint32_t request_id, long long a, long long b)
 {

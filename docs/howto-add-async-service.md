@@ -2,6 +2,7 @@
 
 SO-101 の腕に ServoJ のようなサービスを足します。
 クライアントが関節の目標を送ると、サービスはすぐに応え、腕はそのあとも目標まで動きます。
+プラグインは、HakoCpp の型で要求を受け取り、応答を返す C++ クラスとして書きます。
 Robot Runtime のアプリは、起動時に共有ライブラリと宣言 JSON を読み込みます。
 
 ## 0. 準備する
@@ -59,7 +60,7 @@ SRV
 ## 2. PDU の型を用意する
 
 生成済みの ServoJ の型が手元にあれば、そのパスを設定して 2.4 節の確認へ進みます。
-`PDU_TYPES` は `my_robot_srvs_msgs/pdu_ctype_ServoJRequestPacket.h` を含む型のルートです。
+`PDU_TYPES` は `my_robot_srvs_msgs/pdu_cpptype_conv_ServoJRequestPacket.hpp` を含む型のルートです。
 `PDU_PY` は `servoj_pdu/` の親ディレクトリです。
 
 ```bash
@@ -99,7 +100,7 @@ $WORK/my-pdu-src
 PATHS
 ```
 
-### 2.3 C と Python の型を生成する
+### 2.3 C++ と Python の型を生成する
 
 生成先は `$WORK/my-pdu` です。
 
@@ -129,16 +130,14 @@ ServoJ のパケットサイズは要求が 328 バイト、応答が 272 バイ
 ### 2.4 型を確認する
 
 ```bash
-test -f "$PDU_TYPES/my_robot_srvs_msgs/pdu_ctype_ServoJRequestPacket.h"
-test -f "$PDU_TYPES/my_robot_srvs_msgs/pdu_ctype_ServoJResponsePacket.h"
+test -f "$PDU_TYPES/my_robot_srvs_msgs/pdu_cpptype_conv_ServoJRequestPacket.hpp"
+test -f "$PDU_TYPES/my_robot_srvs_msgs/pdu_cpptype_conv_ServoJResponsePacket.hpp"
 PYTHONPATH="$PDU_PY" "$PYTHON" -c \
   'from servoj_pdu.my_robot_srvs_msgs import pdu_conv_ServoJRequestPacket; print("ok")'
 ```
 
 ## 3. プラグインと宣言を書く
 
-公開ヘッダー [service_plugin.h](../include/hakoniwa/robot_runtime/plugin/service_plugin.h) の
-`HakoServicePluginV1` を C または C++ で実装します。
 まずはサンプルの 3 ファイルを作業ディレクトリに写します。
 
 ```bash
@@ -146,33 +145,40 @@ mkdir -p "$WORK/plugin"
 cp "$DEMO/servoj_like.cpp" "$DEMO/CMakeLists.txt" "$DEMO/my_servoj.plugin.json" "$WORK/plugin/"
 ```
 
-`HAKO_ROBOT_PLUGIN_ENTRY` が公開する入口から、種類、ABI の版、表のサイズと各関数が渡ります。
-Runtime は `pdu_robot` ごとにインスタンスを 1 つ作り、サービスには `create` に渡した順で番号を振ります。
-フックはシミュレーションのスレッドで同期して動き、渡されたポインタはフックが戻るまで使えます。
+### 3.1 C++ クラスを書く
 
-| 関数 | サンプルでやること |
+`robot_plugin.hpp` と、生成した要求・応答の `pdu_cpptype_conv_*` ヘッダーを読み込みます。
+`HAKO_ROBOT_SERVICE(my_robot_srvs_msgs, ServoJ);` で `ServoJService` を定義します。
+`RobotPlugin` を継承し、コンストラクタで `bind<ServoJService>(0, &ServoJRobot::on_goal, &ServoJRobot::reply)` を呼びます。
+ファイルの末尾で `HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like)` を使い、読み込み口を公開します。
+
+Runtime は `pdu_robot` ごとにインスタンスを 1 つ作ります。
+`RobotContext::services` の順に、0 からサービス番号を振ります。
+`bind` で指定した型は、`service.json` の `type` とそろえます。
+
+| メソッド | サンプルでやること |
 | --- | --- |
-| `create` | アクチュエータが 6 つあることを確認し、各関節の範囲を写して、プラグイン自身の制御データを作ります。 |
-| `on_request` | 要求パケットを読み、時間と目標角を確かめて、受け付けるときは目標を保存して `1` を返します。 |
-| `on_step` | 開始角と時刻を覚え、要求のスロットに `OK` を書き、毎刻み位置指令を出します。 |
-| `on_response` | 物理を進めた後に呼ばれ、Core が用意した応答パケットに `res = 0` を書きます。 |
-| `reset` / `destroy` | 動きを止める処理と、制御データを解放する処理です。 |
+| コンストラクタ | アクチュエータが 6 つあることを確認し、サービスを結び付けます。 |
+| `on_goal` | `HakoCpp_ServoJRequest` の時間と目標角を確かめます。受け付けるときは目標を保存して `true` を返します。 |
+| `step` | `StepView` から開始角と時刻を読み、`finish` で結果を設定し、`command` で位置指令を出します。 |
+| `reply` | 物理を進めた後の `StateView` を受け取り、`res = 0` の `HakoCpp_ServoJResponse` を返します。 |
+| `reset` | 動きを止めます。 |
 
-`create` が受け取る `actuators[i].minimum` と `maximum` は、アクチュエータ設定の `spec.limit` から来ます。
+`context().actuators[i]` の `minimum` と `maximum` は、アクチュエータ設定の `spec.limit` から来ます。
 各関節の範囲、要求の目標、状態の角度、出力の指令は、渡されたアクチュエータ順の同じ添字を使います。
 SO-101 の例は `shoulder_pan`、`shoulder_lift`、`elbow_flex`、`wrist_flex`、`wrist_roll`、`gripper` の順です。
 
-`on_step` は要求がないときも、毎回の物理ステップでロボットごとに 1 回呼ばれます。
-処理中の各サービスに対応するスロットに結果を設定します。
-サンプルは 1 つのスロットを持ち、`DOING` で `OK`、`CANCELING` で動きを止めて `CANCELED` を設定します。
-応答が済んでスロットが `IDLE` になっても、位置指令は開始角から目標へ補間し、到達後は目標を出し続けます。
-Arbiter がほかの指令を選んだら（`tick->selected` が 0）、指令を止めます。
-任意の `on_cancel` フックはサンプルでは空です。
+`step` は要求がないときも、物理ステップごとに 1 回呼ばれます。
+サンプルは `Doing` で `Ok` を設定し、`Canceling` で動きを止めて `Canceled` を設定します。
+応答が済んでスロットが `Idle` になっても、位置指令は開始角から目標へ補間し、到達後は目標を出し続けます。
+Arbiter がほかの指令を選んだら（`step.tick().selected` が 0）、指令を止めます。
+取り消しの通知ですぐに処理したい場合は、`cancel` を上書きできます。
 
-応答バッファはメタデータから始まるパケット全体です。
-`hako_service_packet_base_offset` でパケット本体の位置を読み、バッファに収まることを確認します。
-サンプルは Core が用意した `base_off` とサービス応答ヘッダーを保ちます。
-固定長応答に合わせて `heap_off` と `total_size` を設定し、パケットの `body` に `res` を書きます。
+メソッドはシミュレーションのスレッドで同期して動きます。
+`StepView`、`StateView` と要求への参照は、その呼び出しの間だけ使えます。
+生成されたコンバーターが要求を読み、Core の応答ヘッダーを保ったまま応答の本体とメタデータを書きます。
+
+### 3.2 宣言を書く
 
 `my_servoj.plugin.json` の `service_types` には扱える RPC 型を並べます。
 
@@ -185,6 +191,14 @@ Arbiter がほかの指令を選んだら（`tick->selected` が 0）、指令�
 `plant_operations` にはプラグインが出す Plant 操作を並べます。
 指定できる操作は `surface_friction`、`body_motion`、`humanoid_motion` です。
 ServoJ が出すのは関節指令だけなので、この項目は省略します。
+
+### 3.3 C の関数テーブルを使う（上級者向け）
+
+C で書く場合やパケットを直接扱う場合は、[service_plugin.h](../include/hakoniwa/robot_runtime/plugin/service_plugin.h)
+の `HakoServicePluginV1` を実装し、`HAKO_ROBOT_PLUGIN_ENTRY` で公開します。
+入出力はメタデータを含む PDU パケットです。
+バッファのサイズを確認し、Core の応答ヘッダーを保ち、応答に合うメタデータを書きます。
+宣言 JSON とビルド後の配置は同じです。
 
 ## 4. プラグインをビルドする
 
