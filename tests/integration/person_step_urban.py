@@ -388,8 +388,10 @@ def main(build, foundation, urban, mujoco_library, *, contract):
     print(f"Integration logs: {work}", flush=True)
     os.environ.update(
         HAKONIWA_WORKSPACE_ACTIVE="1",
-        HAKONIWA_WORKSPACE_ROOT=str(urban.parent / "hakoniwa-business-pack"),
-        HAKONIWA_WORK_DIR=str(foundation.parent.parent),
+        HAKONIWA_WORKSPACE_ROOT=os.environ.get("HAKONIWA_WORKSPACE_ROOT")
+        or str(urban.parent / "hakoniwa-business-pack"),
+        HAKONIWA_WORK_DIR=os.environ.get("HAKONIWA_WORK_DIR") or str(foundation.parent.parent),
+        HAKONIWA_FOUNDATION_PREFIX=str(foundation),
         PYTHONDONTWRITEBYTECODE="1",
     )
     car = prepare(urban, work, mujoco_library)

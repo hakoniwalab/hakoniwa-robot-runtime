@@ -6,6 +6,8 @@ import importlib.util
 from pathlib import Path
 import unittest
 
+from hakoniwa_pdu.pdu_msgs.pdu_size import PDU_SIZE
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -32,8 +34,14 @@ class RpcServiceConfigTest(unittest.TestCase):
                     "type": "hako_srv_msgs/AckermannStep",
                     "maxClients": 1,
                     "pduSize": {
-                        "server": {"heapSize": 0, "baseSize": 312},
-                        "client": {"heapSize": 0, "baseSize": 408},
+                        "server": {
+                            "heapSize": 0,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/AckermannStepRequestPacket"] + 8,
+                        },
+                        "client": {
+                            "heapSize": 0,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/AckermannStepResponsePacket"] + 8,
+                        },
                     },
                 }
                 for index in (1, 2)
@@ -56,8 +64,14 @@ class RpcServiceConfigTest(unittest.TestCase):
                     "type": "hako_srv_msgs/PersonStep",
                     "maxClients": 1,
                     "pduSize": {
-                        "server": {"heapSize": 0, "baseSize": 592},
-                        "client": {"heapSize": 2048, "baseSize": 576},
+                        "server": {
+                            "heapSize": 0,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/PersonStepRequestPacket"] + 8,
+                        },
+                        "client": {
+                            "heapSize": 2048,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/PersonStepResponsePacket"] + 8,
+                        },
                     },
                 }
                 for name in ("Alice", "Bob")

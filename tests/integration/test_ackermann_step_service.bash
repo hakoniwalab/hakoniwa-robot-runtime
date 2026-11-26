@@ -150,14 +150,16 @@ run_timeout() {
 
 prepare_urban() {
     local vehicle
+    local workspace_root="${HAKONIWA_WORKSPACE_ROOT:-$URBAN_DIR/../hakoniwa-business-pack}"
     local service_args=()
     for vehicle in "${VEHICLES[@]}"; do
         service_args+=(--car "$vehicle")
     done
     mkdir -p "$WORK_DIR/car"
     HAKONIWA_WORKSPACE_ACTIVE=1 \
-    HAKONIWA_WORKSPACE_ROOT="$URBAN_DIR/../hakoniwa-business-pack" \
-    HAKONIWA_WORK_DIR="$URBAN_DIR/../hakoniwa-business-pack/work" \
+    HAKONIWA_WORKSPACE_ROOT="$workspace_root" \
+    HAKONIWA_WORK_DIR="${HAKONIWA_WORK_DIR:-$workspace_root/work}" \
+    HAKONIWA_FOUNDATION_PREFIX="$FOUNDATION" \
     PYTHONPATH="$URBAN_DIR/tools" PYTHONDONTWRITEBYTECODE=1 \
         "$FOUNDATION/python/bin/python3" - "$URBAN_DIR" "$WORK_DIR/car" "${VEHICLES[@]}" <<'PY'
 from copy import deepcopy
