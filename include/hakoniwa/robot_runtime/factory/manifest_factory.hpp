@@ -42,6 +42,7 @@ struct ManifestFactoryConfig {
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     /** Use the lockstep service pipeline for ackermann_rpc_inputs. */
     bool ackermann_rpc_use_service {false};
+    bool person_rpc_use_service {false};
 #endif
 };
 

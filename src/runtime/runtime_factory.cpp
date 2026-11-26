@@ -46,6 +46,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     , const AckermannServiceFactory& ackermann_service_factory
+    , std::vector<AsyncServiceComponents> person_services
 #endif
     )
 {
@@ -121,6 +122,14 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
         + 1);
     priorities.reserve(controllers.capacity());
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    // PersonStep applies commands directly to the plant's existing person
+    // inputs. Keep their request order ahead of the other input sources.
+    for (auto& service : person_services) {
+        sources.push_back(std::move(service.source));
+        controllers.push_back(std::move(service.controller));
+    }
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     // Plant Directive Controllers are kept apart from `controllers` so their
     // output never reaches the Arbiter.
@@ -461,6 +470,11 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #endif
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    for (auto& service : person_services) {
+        publishers.push_back(std::move(service.publisher));
+    }
+#endif
     auto arbiter = std::make_shared<PriorityCommandArbiter>(
         std::move(priorities));
     return std::make_unique<ActuatorRuntime>(

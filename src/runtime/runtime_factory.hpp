@@ -39,14 +39,14 @@ using AckermannDriveEventReaderFactory = std::function<
     std::shared_ptr<IAckermannDriveEventReader>(
         const RuntimeAckermannControllerConfig&)>;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-struct AckermannServiceComponents {
+struct AsyncServiceComponents {
     std::shared_ptr<ICommandSource> source;
     std::shared_ptr<IController> controller;
     std::shared_ptr<IStatePublisher> publisher;
 };
 
 using AckermannServiceFactory = std::function<
-    std::optional<AckermannServiceComponents>(const RuntimeAckermannControllerConfig&)>;
+    std::optional<AsyncServiceComponents>(const RuntimeAckermannControllerConfig&)>;
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 using MirrorBodyStateReaderFactory = std::function<
@@ -88,6 +88,7 @@ using GeomFrictionReaderFactory = std::function<
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     , const AckermannServiceFactory& ackermann_service_factory = {}
+    , std::vector<AsyncServiceComponents> person_services = {}
 #endif
     );
 

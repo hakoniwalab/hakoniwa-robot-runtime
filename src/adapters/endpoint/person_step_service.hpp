@@ -1,0 +1,36 @@
+#pragma once
+
+#include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
+#include "runtime/service/async_service.hpp"
+
+#include <functional>
+
+namespace hakoniwa::robot_runtime::adapters::hakoniwa {
+
+class PersonStepService final : public runtime::IAsyncService {
+public:
+    using ApplyCommand = std::function<std::uint32_t(const PersonStepCommand&)>;
+    using ReadState = std::function<PersonStepState(std::uint32_t)>;
+    using PublishOutputs = std::function<void()>;
+
+    PersonStepService(std::string person, ApplyCommand apply_command,
+        ReadState read_state, PublishOutputs publish_outputs = {});
+
+    bool on_request(std::span<const std::byte> request) override;
+    runtime::AsyncServiceStepResult on_step(
+        const runtime::RobotState&, runtime::AsyncServiceState,
+        const runtime::RuntimeStepContext&) override;
+    bool on_response(const runtime::RobotState&, const runtime::RuntimeStepContext&,
+        std::span<std::byte> packet) override;
+    void reset() override;
+
+private:
+    std::string person_;
+    ApplyCommand apply_command_;
+    ReadState read_state_;
+    PublishOutputs publish_outputs_;
+    std::uint64_t step_ {0};
+    std::uint32_t result_code_ {0};
+};
+
+} // namespace hakoniwa::robot_runtime::adapters::hakoniwa
