@@ -178,3 +178,22 @@ add_test(NAME hako-robot-plugin-declaration-test COMMAND hako-robot-plugin-decla
 # Stage 2c-2: car and person as builtin robot plugins.
 add_robot_plugin_test(hako-builtin-robot-plugins-test ${RUNTIME_ROOT}/tests/test_builtin_robot_plugins.cpp)
 add_test(NAME hako-builtin-robot-plugins-test COMMAND hako-builtin-robot-plugins-test)
+
+# Stage 2c-4: the C++ template layer (HakoCpp types through the generated converters).
+set(HAKO_PDU_REGISTRY_TYPES "${RUNTIME_ROOT}/../hakoniwa-pdu-registry/pdu/types"
+    CACHE PATH "hakoniwa-pdu-registry pdu/types (generated C and C++ PDU types)")
+function(add_adder_plugin name)
+    add_library(${name} MODULE adder_robot_plugin.cpp)
+    target_compile_features(${name} PRIVATE cxx_std_20)
+    target_include_directories(${name} PRIVATE ${HAKO_RUNTIME_INCLUDE_DIR} ${HAKO_PDU_REGISTRY_TYPES})
+    set_target_properties(${name} PROPERTIES CXX_VISIBILITY_PRESET hidden PREFIX "lib")
+    target_compile_options(${name} PRIVATE -Wall -Wextra)
+    target_compile_definitions(${name} PRIVATE ${ARGN})
+endfunction()
+add_adder_plugin(adder_robot)
+add_adder_plugin(adder_wrong_type ADDER_WRONG_TYPE)
+add_adder_plugin(adder_throwing_step ADDER_THROWING_STEP)
+add_robot_plugin_test(hako-robot-plugin-template-test ${RUNTIME_ROOT}/tests/test_robot_plugin_template.cpp)
+target_include_directories(hako-robot-plugin-template-test PRIVATE ${HAKO_PDU_REGISTRY_TYPES})
+add_test(NAME hako-robot-plugin-template-test COMMAND hako-robot-plugin-template-test
+    "$<TARGET_FILE:adder_robot>" "$<TARGET_FILE:adder_wrong_type>" "$<TARGET_FILE:adder_throwing_step>")
