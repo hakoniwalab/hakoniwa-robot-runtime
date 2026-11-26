@@ -97,8 +97,8 @@ robot-runtime の 1 ステップは `ActuatorRuntime::step()` が回す。MuJoCo
 
 ```text
 状態を読む
-→ command source … サービスの受け口：core-pro を poll。要求・キャンセルを入力にする
-→ controller     … 要求なら on_request、キャンセルなら on_cancel。処理中なら on_step（指令と完了か）
+→ command source … サービスの受け口：core-pro を poll（ロックステップなら門が取っておいたもの）。要求なら on_request、キャンセルなら on_cancel。結果をコントローラへの入力にする
+→ controller     … 処理中なら on_step（指令と完了か）
 → arbiter        … 今のまま
 → plant          … 今のまま（MuJoCo の step はここだけ）
 → sensor         … 今のまま
@@ -107,14 +107,15 @@ robot-runtime の 1 ステップは `ActuatorRuntime::step()` が回す。MuJoCo
 
 | 段 | 今ある型 | サービスの部品（robot-runtime が持つ） | すること |
 |---|---|---|---|
-| command source | `ICommandSource` | サービスの受け口 | core-pro のサーバを service_id で `poll` する。要求（バイト列のまま）かキャンセルを、コントローラへの入力にする。何も来ていなければ入力なし |
-| controller | `IController` | サービスのコントローラ | 入力が要求なら `on_request`（断られたら INVALID の応答を予約）、キャンセルなら CANCELING にして `on_cancel`。処理中なら毎ステップ `on_step(状態, 時刻)` を呼び、指令と完了かを受け取る。待機中は指令を出さない（Arbiter に選ばれない） |
+| command source | `ICommandSource` | サービスの受け口 | core-pro のサーバを service_id で `poll` する（ロックステップのサービスは、門が取っておいた要求を受け取る）。要求なら `on_request` を呼び、断られたら INVALID の応答を予約する。キャンセルなら `on_cancel`。受け付けた要求・キャンセルを、コントローラへの入力にする。何も来ていなければ入力なし |
+| controller | `IController` | サービスのコントローラ | 入力が受け付けた要求なら処理中に、キャンセルなら CANCELING にする。処理中なら毎刻み `on_step(状態, 時刻)` を呼び、指令と完了かを受け取る。待機中は指令を出さない（Arbiter に選ばれない） |
 | arbiter・plant・sensor | 今のまま | 変えない | |
 | publish | `IStatePublisher` | サービスの応答 | 完了していたら、物理の後に core-pro の応答の入れ物を用意し（頭に状態 DONE と結果コード）、`on_response(物理の後の状態, 入れ物)` で中身を書かせて送り、待機に戻す |
 
 - 3 つの部品は、1 つのサービス（`IAsyncService`）と、そのサービスの core-pro のサーバ（service_id）を共有する。ユーザが書くのは `IAsyncService` だけ。プラグインになっても同じ（第 5 節）。
 - 部品は今ある型を継承するだけで、パイプラインの本体（`ActuatorRuntime`）にはサービスのための分岐を入れない。組み立ては工場（factory）が、今の車の受け口やコントローラと同じようにする。
 - コントローラは、入力のないステップにも毎回 `update` が呼ばれる（今の決まり）。だから処理中の `on_step` を毎ステップ呼べる。
+- **`on_request` は受け口の段で呼ぶ**（2026-11-26 に直した。前の版はコントローラの段だった）。受け口の段は、すべてのコントローラより前に動く。だから `on_request` で置いた目標や指令は、同じ刻みのほかのコントローラ（車の Ackermann のコントローラなど）が、ふつうの入力として読める。旧ルートの「ステップの前に指令を置く」と同じ刻みになる。コントローラの段で呼ぶと 1 刻み遅れ、それを埋めるためにコントローラが自分で入力を読みに行く抜け道が要った（段 P1 で分かった）。
 - 応答は publish の段（物理の後）で作って送る。だから物理の後の状態（着いた位置、車の pose・twist など）を応答に入れられる。`on_step` は応答の中身を返さない（2026-11-26 に直した。前の版では `on_step` が中身を返す書き方と、物理の後に作る書き方が混ざっていた）。
 - 応答の入れ物は core-pro が用意する（`get_response_buffer`）。頭（状態、結果コード、どの要求への応答か）は core-pro が書いたものを残し、サービスは中身（body）だけを書く。旧ルートの車の応答の書き方（入れ物を読み、中身だけを書き換えて戻す）と同じ。
 - 応答の中身を作るのはユーザ（サービス）で、コアは作らない。コアは「いつ」（物理の後）と「入れ物」（頭）を受け持ち、ユーザの `on_response` を呼ぶ。呼ぶのはサービスの応答の部品（コア側の publisher の 1 つ）で、共通ルート（`ActuatorRuntime`）は変えない。旧ルートの `AsyncRpcBuildResponse`（ランナーに埋め込まれたもの）とは別物で、旧ルートを消す段 J で一緒に消える。
@@ -219,9 +220,9 @@ robot-runtime が持つのは「サービス名と型」（定義から）と「
 | フック | いつ | プラグインがすること | 返すもの |
 |---|---|---|---|
 | `describe` | 読み込み時 | 提供するサービス名と、要求・応答の型を返す | サービスの一覧（サービス定義を作る道具が使う） |
-| `on_request(service_id, 要求)` | 受け口が `REQUEST_IN` を受けたステップの、controller の段（物理の前） | 要求を自分の型に変換し、中身を確かめ、受け付けるならプラントへの指示を始める | 受け付けた／受け付けない（受け付けないなら robot-runtime が結果コード INVALID で応答する） |
+| `on_request(service_id, 要求)` | 受け口が `REQUEST_IN` を受けた箱庭のステップの、**command source の段**（すべてのコントローラより前、物理の前） | 要求を自分の型に変換し、中身を確かめ、受け付けるならプラントへの指示を始める | 受け付けた／受け付けない（受け付けないなら robot-runtime が結果コード INVALID で応答する） |
 | `on_step(service_id, 状態, 時刻)` | 進行中の要求があるサービスについて、毎ステップ controller の段（物理の前。前のステップの物理の後の状態を見る）。状態は core-pro のサーバの状態そのまま（DOING＝処理中、CANCELING＝キャンセル中） | プラントの状態を見て、指示を続ける。CANCELING なら止め方に切り替える。完了か（キャンセル中なら止め終わったか）を判断する | まだ／完了（OK）／止め終わった（CANCELED）／失敗（ERROR）と、そのステップの指令。任意で進捗。応答の中身は返さない |
-| `on_cancel(service_id)`（任意） | 受け口が `REQUEST_CANCEL` を受けたステップの、controller の段 | キャンセルが来たことの通知だけ。記録やログなど、来た瞬間を知りたいプラグイン向け。実装しなくてよい | なし |
+| `on_cancel(service_id)`（任意） | 受け口が `REQUEST_CANCEL` を受けた箱庭のステップの、command source の段（`on_request` と同じ） | キャンセルが来たことの通知だけ。記録やログなど、来た瞬間を知りたいプラグイン向け。実装しなくてよい | なし |
 | `on_response(service_id, 状態, 時刻, 入れ物)` | `on_step` が完了・止め終わった・失敗を返した箱庭のステップの、publish の段（物理の後）。`on_request` と対になる「出る」側のフック | 物理の後の状態から応答の中身を作り、core-pro が用意した入れ物の中身（body）に書く。頭は書き換えない。**必須**（`on_request` と対）。core-pro は入れ物を使い回し、頭しか書き直さないので、書かないと前の応答の中身が残る。中身の欄は毎回すべて書く | 書けた／書けなかった（書けなければ robot-runtime が誤りとして止める） |
 | `reset`、`destroy` | リセット、終了 | 進行中の要求とプラントへの指示を捨てる | なし |
 
@@ -344,7 +345,9 @@ PDU 版のロックステップは「書く側が毎ステップ書くこと」�
 | 4 | hakoniwa-robot-runtime | 段 J：`AsyncRpcInput` と `HAKO_ENABLE_ASYNC_RPC_INPUT` を消す。段 J2：PDU 版のロックステップ（車、タイヤの摩擦）を消し、`ILockstepInput` を消す |
 | 5 | 箱庭ビジネスパック | Foundation を新しい core-pro（#123）で作り直す。レシピ・文書に旧ルートの指定があれば直す（2026-11-26 に調べた範囲では、レシピはドローンのものだけで、旧ルートの指定はなかった） |
 
-- タイヤの摩擦の入力（Float64 の PDU）を RPC に移すとき、車のサービスの要求に入れるか、別のサービスにするかは、段 J2 の前に決める。
+- **タイヤの摩擦は、車のサービスの要求に入れる**（2026-11-26 決定。Windows の下調べ `report-2.md` の案 1）。hakoniwa-pdu-registry の `idl/service/hako_srv/AckermannStep.srv` の要求に `float64 tire_friction` を足す。0 以下なら「変えない」（車モデルの値のまま）。摩擦を使わないクライアントは 0 のままでよい。`AckermannStep` を使っているのは robot-runtime と scenario-pro だけ（2026-10-27 にできた型）なので、変えるなら今。往復は 1 回のまま、同じ要求の中なので順番もはっきりする。PDU の摩擦の入力（`Float64PduEventReader` のロックステップ）を丸ごと消せる。
+- **J2 の範囲**：統合するのは「ロックステップで動かしている入力」だけ。scenario-pro の 13 のリンクが使っている普通の PDU 入力（ロックステップなし）は RPC ではないので、そのまま残す。ロックステップの使い手（Urban の `--lockstep-input`・`simulation.lockstep`、CARLA 比較 P0 の決定性の比較、debris-highway の摩擦）を、RPC のロックステップに移す。
+- 気になる点（下調べで分かった）：Urban の `apps/car/scenario_executor.py` は摩擦を値が変わったときだけ書く。ロックステップの「毎ステップ書く」決まりと合わない。摩擦を要求に入れれば、この問題はなくなる。
 - 人の RPC のクライアントは、2026-11-26 に調べた範囲では robot-runtime の結合テストだけだった。
 
 一度に全部はやらない。各段で確かめてから次へ。今の車と人（ロックステップ）の振る舞いは、移植の段で新ルートに置き換えるまで変えない。
