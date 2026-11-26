@@ -15,7 +15,19 @@
 #include <string>
 #include <vector>
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+namespace hakoniwa::robot_runtime::runtime {
+class AsyncServiceLockstepGate;
+}
+#endif
+
 namespace hakoniwa::robot_runtime::runner {
+
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+namespace detail {
+class IHakoniwaAssetApi;
+}
+#endif
 
 struct HakoniwaRunnerResources {
     std::unique_ptr<runtime::ActuatorRuntime> runtime;
@@ -26,6 +38,10 @@ struct HakoniwaRunnerResources {
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
     /** Complete multi-robot request batches; opt-in build and empty by default. */
     std::vector<std::shared_ptr<AsyncRpcInput>> async_rpc_inputs;
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    std::shared_ptr<runtime::AsyncServiceLockstepGate> async_service_lockstep_gate;
+    std::function<void()> prepare_async_services;
 #endif
 };
 
@@ -47,7 +63,7 @@ struct HakoniwaRunnerConfig {
      * with substepping). 1 steps Hakoniwa at the Plant's timestep.
      */
     std::uint32_t physics_substeps {1};
-    /** Core service definition JSON for async_rpc_inputs; empty when unused. */
+    /** Core service definition JSON for RPC inputs; empty when unused. */
     std::string async_rpc_service_definition_path;
 };
 
@@ -56,7 +72,11 @@ class HakoniwaRunner final : public IRunner {
 public:
     HakoniwaRunner(
         HakoniwaRunnerResourcesFactory resources_factory,
-        HakoniwaRunnerConfig config);
+        HakoniwaRunnerConfig config
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+        , std::shared_ptr<detail::IHakoniwaAssetApi> asset_api = {}
+#endif
+    );
     ~HakoniwaRunner() override;
 
     HakoniwaRunner(const HakoniwaRunner&) = delete;

@@ -1,3 +1,5 @@
+#include "adapters/endpoint/ackermann_step_packet.hpp"
+
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
@@ -147,6 +149,54 @@ bool decode_ackermann_state(
     return true;
 }
 
+HakoCpp_AckermannStepResponse ackermann_step_response_body(
+    std::uint64_t step, const AckermannStepState& state)
+{
+    HakoCpp_AckermannStepResponse body {};
+    body.step = step;
+    body.result_code = 0;
+    body.sim_time_usec = state.simulation_time_usec;
+    body.pose.translation.x = state.position.x;
+    body.pose.translation.y = state.position.y;
+    body.pose.translation.z = state.position.z;
+    body.pose.rotation.x = state.orientation.x;
+    body.pose.rotation.y = state.orientation.y;
+    body.pose.rotation.z = state.orientation.z;
+    body.pose.rotation.w = state.orientation.w;
+    body.twist.linear.x = state.linear_velocity.x;
+    body.twist.linear.y = state.linear_velocity.y;
+    body.twist.linear.z = state.linear_velocity.z;
+    body.twist.angular.x = state.angular_velocity.x;
+    body.twist.angular.y = state.angular_velocity.y;
+    body.twist.angular.z = state.angular_velocity.z;
+    return body;
+}
+
+bool encode_legacy_ackermann_step_response(
+    const runner::AsyncRpcResponse& response, std::span<std::byte> packet,
+    std::string& error)
+{
+    AckermannStepState state;
+    if (!decode_ackermann_state(response.payload, state)) {
+        error = "invalid AckermannStep response state";
+        return false;
+    }
+    HakoCpp_AckermannStepResponsePacket encoded {};
+    auto converter = hako::pdu::msgs::hako_srv_msgs::AckermannStepResponsePacket {};
+    if (!converter.pdu2cpp(reinterpret_cast<char*>(packet.data()), encoded)) {
+        error = "failed to initialize AckermannStep response";
+        return false;
+    }
+    encoded.body = ackermann_step_response_body(response.step, state);
+    if (converter.cpp2pdu(
+            encoded, reinterpret_cast<char*>(packet.data()),
+            static_cast<int>(packet.size())) < 0) {
+        error = "failed to encode AckermannStep response";
+        return false;
+    }
+    return true;
+}
+
 std::shared_ptr<runner::hakoniwa::CoreAsyncRpcServiceChannel>
 make_ackermann_step_service_channel(
     std::string vehicle_name,
@@ -172,47 +222,9 @@ make_ackermann_step_service_channel(
         });
         return true;
     };
-    auto encoder = [](const runner::AsyncRpcResponse& response,
-                       std::span<std::byte> packet,
-                       std::string& error) {
-        AckermannStepState state;
-        if (!decode_ackermann_state(response.payload, state)) {
-            error = "invalid AckermannStep response state";
-            return false;
-        }
-        HakoCpp_AckermannStepResponsePacket encoded {};
-        auto converter = hako::pdu::msgs::hako_srv_msgs::AckermannStepResponsePacket {};
-        if (!converter.pdu2cpp(reinterpret_cast<char*>(packet.data()), encoded)) {
-            error = "failed to initialize AckermannStep response";
-            return false;
-        }
-        encoded.body.step = response.step;
-        encoded.body.result_code = 0;
-        encoded.body.sim_time_usec = state.simulation_time_usec;
-        encoded.body.pose.translation.x = state.position.x;
-        encoded.body.pose.translation.y = state.position.y;
-        encoded.body.pose.translation.z = state.position.z;
-        encoded.body.pose.rotation.x = state.orientation.x;
-        encoded.body.pose.rotation.y = state.orientation.y;
-        encoded.body.pose.rotation.z = state.orientation.z;
-        encoded.body.pose.rotation.w = state.orientation.w;
-        encoded.body.twist.linear.x = state.linear_velocity.x;
-        encoded.body.twist.linear.y = state.linear_velocity.y;
-        encoded.body.twist.linear.z = state.linear_velocity.z;
-        encoded.body.twist.angular.x = state.angular_velocity.x;
-        encoded.body.twist.angular.y = state.angular_velocity.y;
-        encoded.body.twist.angular.z = state.angular_velocity.z;
-        if (converter.cpp2pdu(
-                encoded, reinterpret_cast<char*>(packet.data()),
-                static_cast<int>(packet.size())) < 0) {
-            error = "failed to encode AckermannStep response";
-            return false;
-        }
-        return true;
-    };
     return std::make_shared<runner::hakoniwa::CoreAsyncRpcServiceChannel>(
         std::move(vehicle_name), std::move(asset_name), service_name,
-        std::move(decoder), std::move(encoder));
+        std::move(decoder), encode_legacy_ackermann_step_response);
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

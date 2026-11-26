@@ -67,7 +67,7 @@ public:
 int main(int argc, char** argv)
 {
     std::cout << std::unitbuf;
-    if (argc != 3) return 2;
+    if (argc != 3 && (argc != 4 || std::string_view(argv[3]) != "A")) return 2;
     auto reader_a = std::make_shared<adapters::hakoniwa::AckermannDriveRpcEventReader>();
     auto reader_b = std::make_shared<adapters::hakoniwa::AckermannDriveRpcEventReader>();
     const std::map<std::string,
@@ -76,9 +76,12 @@ int main(int argc, char** argv)
     };
     std::map<std::string, double> speeds;
     auto channel_a = adapters::hakoniwa::make_ackermann_step_service_channel("A", kAsset);
-    auto channel_b = adapters::hakoniwa::make_ackermann_step_service_channel("B", kAsset);
+    std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> channels {channel_a};
+    if (argc == 3) {
+        channels.push_back(adapters::hakoniwa::make_ackermann_step_service_channel("B", kAsset));
+    }
     auto input = std::make_shared<runner::AsyncRpcInput>(
-        std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> {channel_a, channel_b},
+        std::move(channels),
         runner::AsyncRpcInputConfig {std::chrono::seconds(5), std::chrono::seconds(30), {}},
         [&readers, &speeds](
             std::span<const runner::AsyncRpcRequest> requests, std::string& error) {

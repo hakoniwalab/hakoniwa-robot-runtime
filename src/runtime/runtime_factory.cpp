@@ -44,6 +44,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
     , const PluginPduChannels* plugin_pdu_channels
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    , const AckermannServiceFactory& ackermann_service_factory
+#endif
     )
 {
     if (plant == nullptr) {
@@ -355,6 +358,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #endif
 
+    std::vector<std::shared_ptr<IStatePublisher>> publishers;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
     constexpr const char* ackermann_control_group = "ackermann-pdu-direct";
     for (const auto& config : definition.ackermann_controllers) {
@@ -365,19 +369,30 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
                 + config.component_id);
         }
         const std::string source_id = "ackermann-pdu:" + config.component_id;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+        auto service = ackermann_service_factory
+            ? ackermann_service_factory(config) : std::nullopt;
+        if (service) {
+            // Source polling is ordered: the service must fill the reader
+            // before the drive source takes the command in this substep.
+            sources.push_back(std::move(service->source));
+            controllers.push_back(std::move(service->controller));
+            publishers.push_back(std::move(service->publisher));
+        }
+#endif
         sources.push_back(std::make_shared<AckermannDriveCommandSource>(
-            source_id,
-            config.input_timeout_usec,
-            std::move(reader)));
+            source_id, config.input_timeout_usec, std::move(reader)));
         controllers.push_back(std::make_shared<AckermannController>(config));
         priorities.push_back({config.component_id, 10, ackermann_control_group});
     }
 #else
     (void)ackermann_reader_factory;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    (void)ackermann_service_factory;
+#endif
 #endif
 
-    std::vector<std::shared_ptr<IStatePublisher>> publishers;
-    publishers.reserve(definition.state_outputs.size()
+    publishers.reserve(publishers.size() + definition.state_outputs.size()
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         + definition.impulse_collision_outputs.size()
 #endif

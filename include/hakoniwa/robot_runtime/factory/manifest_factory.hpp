@@ -39,6 +39,10 @@ struct ManifestFactoryConfig {
     std::string async_rpc_service_definition_path;
     /** Optional JSONL destination for person contact edges. */
     std::string person_contact_log_path;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    /** Use the lockstep service pipeline for ackermann_rpc_inputs. */
+    bool ackermann_rpc_use_service {false};
+#endif
 };
 
 /**

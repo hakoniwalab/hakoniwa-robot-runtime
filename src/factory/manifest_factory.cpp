@@ -32,6 +32,12 @@
 #include "runner/runner_factory.hpp"
 #include "runtime/runtime_factory.hpp"
 #include "runtime/runtime_factory_manifest.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+#include "adapters/endpoint/ackermann_step_service.hpp"
+#include "runner/hakoniwa/core_async_service_server.hpp"
+#include "runtime/service/async_service_lockstep_gate.hpp"
+#include "runtime/service/async_service_pipeline.hpp"
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 #include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
@@ -225,12 +231,20 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
     }
 #endif
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    if (config.ackermann_rpc_use_service && config.ackermann_rpc_inputs.empty()) {
+        throw std::invalid_argument("AckermannStep service route requires an Ackermann RPC vehicle");
+    }
+#endif
     auto resources_factory =
         [definition = std::move(runtime_definition),
          endpoint_path = manifest.endpoint_path,
          endpoint_name = std::move(config.endpoint_name),
          lockstep_keys = config.lockstep_inputs,
          rpc_vehicles = config.ackermann_rpc_inputs,
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+         use_ackermann_service = config.ackermann_rpc_use_service,
+#endif
          rpc_people = config.person_rpc_inputs,
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
@@ -257,9 +271,66 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
         }
 #endif
         try {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+            runtime::AckermannServiceFactory ackermann_service_factory;
+            std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
+            std::vector<std::shared_ptr<runtime::AsyncServiceCommandSource>> lockstep_services;
+#endif
             auto plant = std::make_shared<
                 adapters::mujoco::MujocoActuatorPlant>(definition);
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+            std::unordered_map<std::string, std::string> state_id_by_vehicle;
+            for (const auto& output : definition.multi_dof_state_outputs) {
+                for (const auto& body : output.bodies) {
+                    if (rpc_requested.contains(body.name)
+                        && !state_id_by_vehicle.emplace(body.name, body.state_id).second) {
+                        throw std::invalid_argument(
+                            "Ackermann RPC vehicle has multiple state bindings: " + body.name);
+                    }
+                }
+            }
+            for (const auto& vehicle : rpc_vehicles) {
+                if (!state_id_by_vehicle.contains(vehicle)) {
+                    throw std::invalid_argument(
+                        "Ackermann RPC vehicle has no MultiDOF state binding: " + vehicle);
+                }
+            }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+            if (use_ackermann_service) {
+                std::vector<std::string> service_names;
+                std::unordered_map<std::string, int> service_ids;
+                for (const auto& vehicle : rpc_vehicles) {
+                    service_ids.emplace(vehicle, static_cast<int>(service_names.size()));
+                    service_names.push_back(adapters::hakoniwa::ackermann_step_service_name(vehicle));
+                }
+                service_server = std::make_shared<runner::hakoniwa::CoreAsyncServiceServer>(
+                    asset_name, std::move(service_names));
+                ackermann_service_factory =
+                    [&, service_ids = std::move(service_ids)](
+                        const runtime::RuntimeAckermannControllerConfig& drive)
+                        -> std::optional<runtime::AckermannServiceComponents> {
+                    const auto& vehicle = drive.pdu_robot;
+                    const auto binding = service_ids.find(vehicle);
+                    if (binding == service_ids.end()) {
+                        return std::nullopt;
+                    }
+                    const auto id = binding->second;
+                    const auto name = adapters::hakoniwa::ackermann_step_service_name(vehicle);
+                    auto service = std::make_shared<adapters::hakoniwa::AckermannStepService>(
+                        rpc_readers.at(vehicle), state_id_by_vehicle.at(vehicle));
+                    auto source = std::make_shared<runtime::AsyncServiceCommandSource>(
+                        name, id, service_server, std::move(service), true);
+                    auto controller = std::make_shared<runtime::AsyncServiceController>(
+                        name + ":controller", source);
+                    auto publisher = std::make_shared<runtime::AsyncServiceResponsePublisher>(
+                        name + ":response", source);
+                    lockstep_services.push_back(source);
+                    return runtime::AckermannServiceComponents {
+                        std::move(source), std::move(controller), std::move(publisher),
+                    };
+                };
+            }
+#endif
             std::unordered_set<std::string> person_requested(
                 rpc_people.begin(), rpc_people.end());
             if (person_requested.size() != rpc_people.size()) {
@@ -402,6 +473,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
                 , &plugin_pdu_channels
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+                , ackermann_service_factory
+#endif
                 );
 
             for (const auto& key : lockstep_keys) {
@@ -413,34 +487,22 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             }
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
             std::vector<std::shared_ptr<runner::AsyncRpcInput>> async_rpc_inputs;
-            if (!rpc_requested.empty()) {
-                if (rpc_readers.size() != rpc_requested.size()) {
-                    for (const auto& vehicle : rpc_requested) {
-                        if (!rpc_readers.contains(vehicle)) {
-                            throw std::invalid_argument(
-                                "Ackermann RPC vehicle has no controller: " + vehicle);
-                        }
+            if (rpc_readers.size() != rpc_requested.size()) {
+                for (const auto& vehicle : rpc_requested) {
+                    if (!rpc_readers.contains(vehicle)) {
+                        throw std::invalid_argument(
+                            "Ackermann RPC vehicle has no controller: " + vehicle);
                     }
                 }
-                std::unordered_map<std::string, std::string> state_id_by_vehicle;
-                for (const auto& output : definition.multi_dof_state_outputs) {
-                    for (const auto& body : output.bodies) {
-                        if (rpc_requested.contains(body.name)
-                            && !state_id_by_vehicle.emplace(body.name, body.state_id).second) {
-                            throw std::invalid_argument(
-                                "Ackermann RPC vehicle has multiple state bindings: "
-                                + body.name);
-                        }
-                    }
-                }
+            }
+            if (!rpc_requested.empty()
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+                && !use_ackermann_service
+#endif
+            ) {
                 std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> channels;
                 channels.reserve(rpc_vehicles.size());
                 for (const auto& vehicle : rpc_vehicles) {
-                    if (!state_id_by_vehicle.contains(vehicle)) {
-                        throw std::invalid_argument(
-                            "Ackermann RPC vehicle has no MultiDOF state binding: "
-                            + vehicle);
-                    }
                     channels.push_back(
                         adapters::hakoniwa::make_ackermann_step_service_channel(
                             vehicle, asset_name));
@@ -765,6 +827,12 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 std::move(lockstep_inputs),
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
                 std::move(async_rpc_inputs),
+#endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+                lockstep_services.empty() ? nullptr
+                    : std::make_shared<runtime::AsyncServiceLockstepGate>(std::move(lockstep_services)),
+                service_server ? std::function<void()>([service_server] { service_server->prepare(); })
+                    : std::function<void()>(),
 #endif
             };
         } catch (...) {
