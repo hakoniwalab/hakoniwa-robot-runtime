@@ -1,7 +1,7 @@
 # Source groups for consumers that own their CMake targets.
 # Use the groups with add_library(), add_executable() or target_sources().
-# Keep each src/ implementation in exactly one group. The standalone catalog
-# test checks this list against src/. Consumers select groups and the matching
+# Keep each src/ implementation in exactly one primary group. The standalone
+# catalog test checks this list against src/. Consumers select groups and the matching
 # feature definitions based on what their targets build.
 
 get_filename_component(HAKO_RUNTIME_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
@@ -84,24 +84,15 @@ set(HAKO_RUNTIME_CORE_ASYNC_SERVER_SOURCES "${HAKO_RUNTIME_SRC_DIR}/runner/hakon
 
 set(HAKO_RUNTIME_ACKERMANN_STEP_READER_SOURCES "${HAKO_RUNTIME_SRC_DIR}/adapters/endpoint/ackermann_drive_rpc_event_reader.cpp")
 
-set(HAKO_RUNTIME_ACKERMANN_STEP_SERVICE_SOURCES "${HAKO_RUNTIME_SRC_DIR}/adapters/endpoint/ackermann_step_service.cpp")
-
 set(HAKO_RUNTIME_PERSON_STEP_READER_SOURCES "${HAKO_RUNTIME_SRC_DIR}/adapters/endpoint/person_step_rpc_event_reader.cpp")
 
-set(HAKO_RUNTIME_PERSON_STEP_SERVICE_SOURCES "${HAKO_RUNTIME_SRC_DIR}/adapters/endpoint/person_step_service.cpp")
-
 # Mobile Base sources (HAKO_RUNTIME_MOBILE_BASE_DEFINE).
-set(HAKO_RUNTIME_MOBILE_BASE_COMMAND_SOURCES
-    "${HAKO_RUNTIME_SRC_DIR}/runtime/source/ackermann_drive_command_source.cpp"
-    "${HAKO_RUNTIME_SRC_DIR}/runtime/controller/ackermann_controller.cpp"
-)
-
 set(HAKO_RUNTIME_MOBILE_BASE_STATE_SOURCES "${HAKO_RUNTIME_SRC_DIR}/runtime/publisher/multi_dof_joint_state_publisher.cpp")
 
 set(HAKO_RUNTIME_MOBILE_BASE_MANIFEST_SOURCES "${HAKO_RUNTIME_SRC_DIR}/runtime/runtime_factory_ackermann.cpp")
 
 set(HAKO_RUNTIME_MOBILE_BASE_PDU_SOURCES
-    "${HAKO_RUNTIME_SRC_DIR}/adapters/endpoint/ackermann_drive_pdu_event_reader.cpp"
+    "${HAKO_RUNTIME_SRC_DIR}/adapters/endpoint/robot_pdu_event_reader.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/adapters/endpoint/multi_dof_joint_state_pdu_writer.cpp"
 )
 
@@ -161,13 +152,30 @@ set(HAKO_RUNTIME_SENSOR_MANIFEST_SOURCES
     "${HAKO_RUNTIME_SRC_DIR}/runtime/sensor/sensor_catalog.cpp"
 )
 
-# Controller and service plugin sources (HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE).
-set(HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES
+# Loader, C robot adapter and builtin definitions are linked together.
+set(HAKO_RUNTIME_ROBOT_PLUGIN_SOURCES
     "${HAKO_RUNTIME_SRC_DIR}/plugin/builtin_plugins.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/plugin/plugin_library.cpp"
-    "${HAKO_RUNTIME_SRC_DIR}/runtime/controller/plugin_controller.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/runtime/service/robot_plugin_declaration.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/runtime/service/service_plugin_adapter.cpp"
+    "${HAKO_RUNTIME_SRC_DIR}/plugins/ackermann_step/ackermann_step.cpp"
+    "${HAKO_RUNTIME_SRC_DIR}/plugins/person_step/person_step.cpp"
+)
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    set_source_files_properties(
+        "${HAKO_RUNTIME_SRC_DIR}/plugins/ackermann_step/ackermann_step.cpp"
+        "${HAKO_RUNTIME_SRC_DIR}/plugins/person_step/person_step.cpp"
+        PROPERTIES COMPILE_DEFINITIONS HAKO_ROBOT_PLUGIN_BUILTIN
+    )
+endif()
+
+# Existing consumers of the former AckermannStep source group get the complete
+# builtin group through the same variable.
+set(HAKO_RUNTIME_ACKERMANN_STEP_SERVICE_SOURCES ${HAKO_RUNTIME_ROBOT_PLUGIN_SOURCES})
+
+# Controller plugin adapter (HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE).
+set(HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES
+    "${HAKO_RUNTIME_SRC_DIR}/runtime/controller/plugin_controller.cpp"
 )
 
 set(HAKO_RUNTIME_CONTROLLER_PLUGIN_MANIFEST_SOURCES "${HAKO_RUNTIME_SRC_DIR}/runtime/runtime_factory_plugin.cpp")

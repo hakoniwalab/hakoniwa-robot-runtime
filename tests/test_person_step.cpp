@@ -1,9 +1,8 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
-#include "adapters/endpoint/person_step_service.hpp"
+#include "support/builtin_step_plugins.hpp"
 #include "support/single_robot_service_calls.hpp"
-#include "adapters/endpoint/person_step_packet.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_PersonStepRequestPacket.hpp"
 #define hako_convert_pdu2cpp_array_string_varray hako_convert_pdu2ros_array_string_varray
 #define hako_convert_cpp2pdu_array_string_varray hako_convert_ros2pdu_array_string_varray
@@ -303,11 +302,17 @@ void test_service_packet()
         {4.0, -5.0, 6.0}, {0.4, -0.5, 0.6}, {0.1, -0.2, 0.3, -0.4, 0.5, -0.6},
     };
     std::size_t applied = 0;
-    PersonStepService robot("A");
-    test_support::SingleRobotServiceCalls service(robot);
+    const auto robot = test_support::make_person_plugin("A", person_step_service_name("A"), 1000);
+    test_support::SingleRobotServiceCalls service(*robot);
+    runtime::RobotState snapshot;
+    snapshot.sample_time_usec = state.simulation_time_usec;
+    snapshot.humanoids.push_back({
+        "A", state.position, state.orientation, state.linear_velocity,
+        state.angular_velocity, state.joint_positions, state.result_code,
+    });
     runtime::RobotServiceSlot slot {runtime::AsyncServiceState::Doing};
     const auto step = [&]() {
-        auto result = robot.on_step({}, {}, std::span(&slot, 1));
+        auto result = robot->on_step(snapshot, {}, std::span(&slot, 1));
         for (const auto& input : result.operations.humanoid_motions) {
             REQUIRE(input.linear_velocity.x == 1.25);
             REQUIRE(input.linear_velocity.y == -0.5);
@@ -318,12 +323,6 @@ void test_service_packet()
         }
         return result;
     };
-    runtime::RobotState snapshot;
-    snapshot.sample_time_usec = state.simulation_time_usec;
-    snapshot.humanoids.push_back({
-        "A", state.position, state.orientation, state.linear_velocity,
-        state.angular_velocity, state.joint_positions, state.result_code,
-    });
     const auto request = request_packet(
         41, command(1.25, -0.5, 0.25, "sit_talk", "Car-1/driver"));
     REQUIRE(service.on_request(request));
@@ -495,11 +494,12 @@ void test_gestures_and_sitting(bool use_service = false)
     const auto apply = [&](const std::string& person,
                            const adapters::hakoniwa::PersonStepCommand& input) {
         if (use_service) {
-            adapters::hakoniwa::PersonStepService robot(person);
-            test_support::SingleRobotServiceCalls service(robot);
+            const auto robot = test_support::make_person_plugin(
+                person, adapters::hakoniwa::person_step_service_name(person), plant.delta_time_usec());
+            test_support::SingleRobotServiceCalls service(*robot);
             REQUIRE(service.on_request(request_packet(0, input)));
             runtime::RobotServiceSlot slot {runtime::AsyncServiceState::Doing};
-            plant.apply_operations(robot.on_step(plant.read_state(), {}, std::span(&slot, 1)).operations);
+            plant.apply_operations(robot->on_step(plant.read_state(), {}, std::span(&slot, 1)).operations);
             return humanoid_state(plant, person).last_motion_result;
         }
         return apply_humanoid_motion(plant, person, input);

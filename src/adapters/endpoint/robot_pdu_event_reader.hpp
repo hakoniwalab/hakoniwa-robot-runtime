@@ -1,10 +1,11 @@
 #pragma once
 
-#include "runtime/source/ackermann_drive_command_source.hpp"
 #include "hakoniwa/robot_runtime/runner/lockstep_input.hpp"
+#include "runtime/service/robot_pdu_reader.hpp"
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace hakoniwa::pdu {
@@ -13,15 +14,19 @@ class Endpoint;
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 
-class AckermannDrivePduEventReader final
-    : public runtime::IAckermannDriveEventReader
+/** Latest-wins receive-event adapter for an input PDU of a robot plugin. */
+class RobotPduEventReader final
+    : public runtime::IRobotPduReader
     , public runner::ILockstepInput {
 public:
-    AckermannDrivePduEventReader(
+    using Validator = bool (*)(std::span<const std::byte>);
+
+    RobotPduEventReader(
         ::hakoniwa::pdu::Endpoint& endpoint,
         std::string pdu_robot,
-        std::string pdu_name);
-    ~AckermannDrivePduEventReader() override;
+        std::string pdu_name,
+        Validator validate = nullptr);
+    ~RobotPduEventReader() override;
 
     void subscribe();
     /**
@@ -31,8 +36,8 @@ public:
     void subscribe_lockstep();
     [[nodiscard]] bool lockstep_ready() noexcept override;
     void lockstep_prepare() noexcept override;
-    [[nodiscard]] std::optional<runtime::AckermannDriveCommand>
-        take_latest() override;
+    [[nodiscard]] std::optional<runtime::RobotPduSample>
+        take_latest(std::uint64_t poll_time_usec) override;
     void reset() noexcept override;
 
 private:

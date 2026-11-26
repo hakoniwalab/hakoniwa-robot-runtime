@@ -7,6 +7,7 @@
 #include "runtime/service/robot_services.hpp"
 #include "runtime/service/async_service_server.hpp"
 
+#include <functional>
 #include <optional>
 
 namespace hakoniwa::robot_runtime::runtime {
@@ -47,7 +48,10 @@ private:
 
 class RobotServiceSource final : public ICommandSource {
 public:
-    RobotServiceSource(std::string id, std::vector<std::shared_ptr<AsyncServiceCommandSource>> services);
+    using PduPoll = std::function<bool(const RuntimeStepContext&)>;
+
+    RobotServiceSource(std::string id, std::vector<std::shared_ptr<AsyncServiceCommandSource>> services,
+        PduPoll poll_pdus = {});
 
     std::string_view id() const noexcept override;
     CommandSourcePollResult poll(const RuntimeStepContext& context) override;
@@ -58,6 +62,7 @@ private:
 
     std::string id_;
     std::vector<std::shared_ptr<AsyncServiceCommandSource>> services_;
+    PduPoll poll_pdus_;
     std::uint64_t sequence_ {0};
 };
 

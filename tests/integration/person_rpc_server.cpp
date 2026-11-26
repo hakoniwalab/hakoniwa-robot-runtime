@@ -1,7 +1,7 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #include "runner/hakoniwa/hakoniwa_asset_driver.hpp"
 
-#include "adapters/endpoint/person_step_service.hpp"
+#include "../support/builtin_step_plugins.hpp"
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
@@ -131,7 +131,7 @@ public:
         int id = 0;
         for (const auto& [person, input] : plant->people) {
             const auto& name = names.at(id);
-            auto service = std::make_shared<adapters::hakoniwa::PersonStepService>(person);
+            auto service = test_support::make_person_plugin(person, name, plant->delta_time_usec());
             auto service_source = std::make_shared<AsyncServiceCommandSource>(
                 name + "/0", id++, server_, service, 0, true);
             auto source = std::make_shared<RobotServiceSource>(name, std::vector {service_source});

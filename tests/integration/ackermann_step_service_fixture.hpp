@@ -1,13 +1,16 @@
 #pragma once
 
-#include "adapters/endpoint/ackermann_step_service.hpp"
+#include "../support/builtin_step_plugins.hpp"
+#include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runner/lockstep_gate.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <limits>
 #include <iostream>
 #include <stdexcept>
 
@@ -16,6 +19,7 @@ namespace ackermann_step_fixture {
 using namespace ::hakoniwa::robot_runtime::runtime;
 using ::hakoniwa::robot_runtime::runner::LockstepGate;
 using namespace ::hakoniwa::robot_runtime::adapters::hakoniwa;
+namespace test_support = ::hakoniwa::robot_runtime::test_support;
 using ::hakoniwa::robot_runtime::runner::hakoniwa::CoreAsyncServiceServer;
 
 
@@ -26,7 +30,7 @@ class Plant final : public IActuatorPlant {
 public:
     struct Vehicle {
         std::string name;
-        std::shared_ptr<AckermannDriveRpcEventReader> reader;
+        RuntimeAckermannActuatorBindings actuators;
         double speed {0};
     };
 
@@ -42,6 +46,9 @@ public:
         RobotState result;
         result.sample_time_usec = time_;
         for (const auto& vehicle : vehicles_) {
+            for (const auto& actuator : test_support::ackermann_actuators(vehicle.actuators)) {
+                result.actuators.push_back({.actuator_id = actuator.component_id});
+            }
             result.bodies.push_back({
                 .body_id = vehicle.name,
                 .position = {static_cast<double>(time_ / kDelta) - 1.0, 0, 0},
@@ -51,14 +58,15 @@ public:
         return result;
     }
 
-    RobotState step(const std::vector<ActuatorCommand>&) override
+    RobotState step(const std::vector<ActuatorCommand>& commands) override
     {
         for (auto& vehicle : vehicles_) {
-            const auto command = vehicle.reader->take_latest();
-            if (!command) {
+            const auto command = std::ranges::find(commands, vehicle.actuators.drive_right,
+                &ActuatorCommand::actuator_id);
+            if (command == commands.end() || command->created_at_usec != time_) {
                 throw std::runtime_error("expected a new Ackermann command for " + vehicle.name);
             }
-            vehicle.speed = command->speed_m_s;
+            vehicle.speed = command->value;
         }
         time_ += kDelta;
         return read_state();
@@ -93,19 +101,30 @@ public:
         std::vector<LockstepGate::Input> gate_inputs;
         std::vector<std::shared_ptr<ICommandSource>> sources;
         std::vector<std::shared_ptr<IController>> controllers;
+        std::vector<ControllerPriority> priorities;
         std::vector<std::shared_ptr<IStatePublisher>> publishers;
         for (std::size_t index = 0; index < vehicle_names.size(); ++index) {
             const auto& vehicle = vehicle_names[index];
             const auto& name = service_names[index];
-            auto reader = std::make_shared<AckermannDriveRpcEventReader>();
-            auto service = std::make_shared<AckermannStepService>(reader, vehicle);
+            // The synthetic plant reports the requested speed directly. A unit wheel radius
+            // and negligible track width make each wheel target equal that speed.
+            const RuntimeAckermannControllerConfig drive {
+                .component_id = name + ":controller",
+                .pdu_robot = vehicle,
+                .input_timeout_usec = kDelta,
+                .geometry = {1.0, 1e-18, 1.0, 1.0, std::numeric_limits<double>::max()},
+                .actuators = {vehicle + "/left-steer", vehicle + "/right-steer",
+                    vehicle + "/left-wheel", vehicle + "/right-wheel"},
+            };
+            auto service = test_support::make_ackermann_plugin(drive, vehicle, name, kDelta);
             auto service_source = std::make_shared<AsyncServiceCommandSource>(
                 name + "/0", static_cast<int>(index), server_, service, 0, true);
             auto source = std::make_shared<RobotServiceSource>(name, std::vector {service_source});
-            vehicles.push_back({vehicle, std::move(reader)});
+            vehicles.push_back({vehicle, drive.actuators});
             gate_inputs.push_back({name, service_source});
             sources.push_back(source);
-            controllers.push_back(std::make_shared<RobotServiceController>(name + ":controller", source, service));
+            controllers.push_back(std::make_shared<RobotServiceController>(drive.component_id, source, service));
+            priorities.push_back({drive.component_id, 10, ackermann_control_group});
             publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":reply", service_source));
         }
         if (step_permission) {
@@ -116,7 +135,7 @@ public:
         gate_ = std::make_unique<LockstepGate>(std::move(gate_inputs), config);
         runtime_ = std::make_unique<ActuatorRuntime>(
             std::move(sources), std::move(controllers),
-            std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority> {}),
+            std::make_shared<PriorityCommandArbiter>(std::move(priorities)),
             std::make_shared<Plant>(std::move(vehicles)), std::move(publishers));
     }
 

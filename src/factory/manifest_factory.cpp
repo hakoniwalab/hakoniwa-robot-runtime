@@ -12,11 +12,12 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/mirror_body_twist_pdu_reader.hpp"
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
-#include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_pdu_event_reader.hpp"
+#include "adapters/endpoint/robot_pdu_event_reader.hpp"
+#include "plugins/ackermann_step/ackermann_step.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/multi_dof_joint_state_pdu_writer.hpp"
+#endif
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
-#endif
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hako_msgs/pdu_cpptype_ContactEvent.hpp"
@@ -28,14 +29,10 @@
 #include "runner/runner_factory.hpp"
 #include "runtime/runtime_factory.hpp"
 #include "runtime/runtime_factory_manifest.hpp"
-#include "adapters/endpoint/ackermann_step_service.hpp"
-#include "adapters/endpoint/person_step_service.hpp"
+#include "runtime/service/builtin_robot_config.hpp"
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
 #include "runtime/service/robot_plugin_declaration.hpp"
-#include "runtime/service/service_plugin_adapter.hpp"
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 #include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
@@ -304,11 +301,13 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             people.push_back(robot);
             continue;
         }
-        const auto& controllers = runtime_definition.ackermann_controllers;
-        if (std::none_of(controllers.begin(), controllers.end(), [&robot](const auto& controller) {
-                return controller.pdu_robot == robot;
-            })) {
+        const auto count = std::ranges::count(runtime_definition.ackermann_controllers, robot,
+            &runtime::RuntimeAckermannControllerConfig::pdu_robot);
+        if (count == 0) {
             throw std::invalid_argument("Ackermann RPC vehicle has no controller: " + robot);
+        }
+        if (count > 1) {
+            throw std::invalid_argument("Ackermann RPC vehicle has multiple controllers: " + robot);
         }
         rpc_requested.insert(robot);
     }
@@ -360,31 +359,25 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 
         std::vector<runner::LockstepGate::Input> lockstep_inputs;
         std::vector<std::string> lockstep_matched;
-        std::unordered_map<std::string,
-            std::shared_ptr<adapters::hakoniwa::AckermannDriveRpcEventReader>>
-            rpc_readers;
         try {
-            runtime::AckermannServiceFactory ackermann_service_factory;
             std::vector<runtime::RobotServiceComponents> additional_services;
             std::shared_ptr<runtime::IStatePublisher> person_state_publisher;
             std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
             auto plant = std::make_shared<
                 adapters::mujoco::MujocoActuatorPlant>(definition);
-            std::unordered_map<std::string,
-                std::shared_ptr<adapters::hakoniwa::AckermannStepFrictionInput>> service_friction;
+            std::unordered_map<std::string, std::vector<std::string>> service_friction;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
             for (const auto& friction : definition.geom_frictions) {
                 if (friction.ackermann_step) {
-                    service_friction.emplace(friction.pdu_robot,
-                        std::make_shared<adapters::hakoniwa::AckermannStepFrictionInput>());
+                    service_friction.emplace(friction.pdu_robot, friction.geoms);
                 }
             }
 #endif
             std::unordered_map<std::string, std::string> state_id_by_vehicle;
             for (const auto& output : definition.multi_dof_state_outputs) {
                 for (const auto& body : output.bodies) {
-                    if (rpc_requested.contains(body.name)
-                        && !state_id_by_vehicle.emplace(body.name, body.state_id).second) {
+                    if (!state_id_by_vehicle.try_emplace(body.name, body.state_id).second
+                        && rpc_requested.contains(body.name)) {
                         throw std::invalid_argument(
                             "Ackermann RPC vehicle has multiple state bindings: " + body.name);
                     }
@@ -420,34 +413,21 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 return service_source;
             };
             const auto make_service_components = [&](
-                std::size_t index, std::shared_ptr<runtime::IRobotServices> robot) {
+                std::size_t index, std::shared_ptr<runtime::IRobotServices> robot,
+                std::string controller_id = {}, std::string source_id = {}) {
                 const auto& config = definition.services[index];
                 auto service_source = make_service_source(index, robot, 0, config.name + "/0");
-                auto source = std::make_shared<runtime::RobotServiceSource>(config.name,
-                    std::vector {service_source});
+                auto source = std::make_shared<runtime::RobotServiceSource>(
+                    source_id.empty() ? config.name : std::move(source_id), std::vector {service_source});
                 return runtime::RobotServiceComponents {
                     source,
-                    std::make_shared<runtime::RobotServiceController>(config.name + ":controller", source, robot),
+                    std::make_shared<runtime::RobotServiceController>(
+                        controller_id.empty() ? config.name + ":controller" : std::move(controller_id),
+                        source, robot),
                     {std::make_shared<runtime::AsyncServiceResponsePublisher>(
                         config.name + ":response", service_source)},
                 };
             };
-            if (!ackermann_service_ids.empty()) {
-                ackermann_service_factory =
-                    [&](const runtime::RuntimeAckermannControllerConfig& drive)
-                        -> std::optional<runtime::RobotServiceComponents> {
-                    const auto& vehicle = drive.pdu_robot;
-                    const auto service = ackermann_service_ids.find(vehicle);
-                    if (service == ackermann_service_ids.end()) {
-                        return std::nullopt;
-                    }
-                    const auto friction = service_friction.find(vehicle);
-                    return make_service_components(service->second,
-                        std::make_shared<adapters::hakoniwa::AckermannStepService>(
-                            rpc_readers.at(vehicle), state_id_by_vehicle.at(vehicle),
-                            friction == service_friction.end() ? nullptr : friction->second));
-                };
-            }
             for (const auto& person : people) {
                 const auto initial = std::find_if(
                     definition.person_initial_poses.begin(),
@@ -520,8 +500,12 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     continue;
                 }
                 const auto& person = service.pdu_robot;
+                auto library = plugin::PluginLibrary::open_builtin("person_step", HAKO_PLUGIN_KIND_SERVICE);
+                auto person_config = runtime::person_plugin_config(person,
+                    {service.name, "hako_srv_msgs/PersonStep", service.lockstep}, plant->delta_time_usec() * 1000);
+                runtime::require_robot_plugin_declaration(*library, person_config, plant->capabilities());
                 additional_services.push_back(make_service_components(index,
-                    std::make_shared<adapters::hakoniwa::PersonStepService>(person)));
+                    std::make_shared<runtime::ServicePlugin>(std::move(library), std::move(person_config))));
             }
             if (!additional_services.empty()) {
                 // An asynchronous person may have no reply on this tick.
@@ -570,6 +554,22 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             // bytes the sensor writers encode for the endpoint.
             const auto plugin_pdu_channels = runtime::make_plugin_pdu_channels(definition);
 #endif
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
+            const auto bind_robot_pdu = [&](const std::string& robot, const std::string& pdu,
+                adapters::hakoniwa::RobotPduEventReader::Validator validate = nullptr) -> runtime::RobotPduInput {
+                auto reader = std::make_shared<adapters::hakoniwa::RobotPduEventReader>(
+                    *endpoint, robot, pdu, validate);
+                const auto key = robot + "/" + pdu;
+                if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key) != lockstep_keys.end()) {
+                    reader->subscribe_lockstep();
+                    lockstep_inputs.push_back({key, reader});
+                    lockstep_matched.push_back(key);
+                } else {
+                    reader->subscribe();
+                }
+                return {pdu, std::move(reader)};
+            };
+#endif
             auto runtime_instance = runtime::build_runtime(
                 definition,
                 plant,
@@ -609,33 +609,39 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
                 ,
-                [&](const runtime::RuntimeAckermannControllerConfig& controller)
-                    -> std::shared_ptr<runtime::IAckermannDriveEventReader> {
-                    if (rpc_requested.contains(controller.pdu_robot)) {
-                        auto reader = std::make_shared<
-                            adapters::hakoniwa::AckermannDriveRpcEventReader>();
-                        if (!rpc_readers.emplace(controller.pdu_robot, reader).second) {
-                            throw std::invalid_argument(
-                                "Ackermann RPC vehicle has multiple controllers: "
-                                + controller.pdu_robot);
-                        }
-                        return std::shared_ptr<runtime::IAckermannDriveEventReader>(reader);
+                [&](const runtime::RuntimeAckermannControllerConfig& drive) {
+                    const auto& vehicle = drive.pdu_robot;
+                    const auto service = ackermann_service_ids.find(vehicle);
+                    const bool rpc = service != ackermann_service_ids.end();
+                    const auto friction = service_friction.find(vehicle);
+                    auto config = runtime::ackermann_plugin_config(drive, definition.actuators, rpc,
+                        friction == service_friction.end() ? std::vector<std::string> {} : friction->second);
+                    config.physics_step_ns = plant->delta_time_usec() * 1000;
+                    if (const auto body = state_id_by_vehicle.find(vehicle); body != state_id_by_vehicle.end()) {
+                        config.bodies.push_back(body->second);
                     }
-                    auto reader = std::make_shared<
-                        adapters::hakoniwa::AckermannDrivePduEventReader>(
-                        *endpoint,
-                        controller.pdu_robot,
-                        controller.pdu_name);
-                    const auto key = controller.pdu_robot + "/" + controller.pdu_name;
-                    if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key)
-                        != lockstep_keys.end()) {
-                        reader->subscribe_lockstep();
-                        lockstep_inputs.push_back({key, reader});
-                        lockstep_matched.push_back(key);
+                    const std::string drive_source = "ackermann-pdu:" + drive.component_id;
+                    if (rpc) {
+                        const auto& row = definition.services[service->second];
+                        config.services.push_back({row.name, "hako_srv_msgs/AckermannStep", row.lockstep});
                     } else {
-                        reader->subscribe();
+                        config.pdus.push_back(bind_robot_pdu(vehicle, drive.pdu_name,
+                            plugins::ackermann_step::valid_topic));
                     }
-                    return reader;
+                    auto library = plugin::PluginLibrary::open_builtin("ackermann_step", HAKO_PLUGIN_KIND_SERVICE);
+                    runtime::require_robot_plugin_declaration(*library, config, plant->capabilities());
+                    auto robot = std::make_shared<runtime::ServicePlugin>(std::move(library), std::move(config));
+                    if (rpc) {
+                        return make_service_components(service->second, robot, drive.component_id, drive_source);
+                    }
+                    auto source = std::make_shared<runtime::RobotServiceSource>(drive_source,
+                        std::vector<std::shared_ptr<runtime::AsyncServiceCommandSource>> {},
+                        [robot](const auto& context) { return robot->poll_pdus(context); });
+                    return runtime::RobotServiceComponents {
+                        source,
+                        std::make_shared<runtime::RobotServiceController>(drive.component_id, source, robot),
+                        {},
+                    };
                 },
                 [&](const runtime::RuntimeMultiDofStateOutputConfig& output) {
                     return std::make_shared<
@@ -667,9 +673,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 },
                 [&](const runtime::RuntimeGeomFrictionConfig& friction)
                     -> std::shared_ptr<runtime::IFloat64EventReader> {
-                    if (friction.ackermann_step) {
-                        return service_friction.at(friction.pdu_robot);
-                    }
                     auto reader = std::make_shared<
                         adapters::hakoniwa::Float64PduEventReader>(
                         *endpoint,
@@ -690,7 +693,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
                 , &plugin_pdu_channels
 #endif
-                , ackermann_service_factory
                 , std::move(additional_services)
                 , std::move(person_state_publisher)
                 );
@@ -700,14 +702,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     == lockstep_matched.end()) {
                     throw std::invalid_argument(
                         "lockstep input " + key + " is not an Ackermann command or a geom friction input");
-                }
-            }
-            if (rpc_readers.size() != rpc_requested.size()) {
-                for (const auto& vehicle : rpc_requested) {
-                    if (!rpc_readers.contains(vehicle)) {
-                        throw std::invalid_argument(
-                            "Ackermann RPC vehicle has no controller: " + vehicle);
-                    }
                 }
             }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR

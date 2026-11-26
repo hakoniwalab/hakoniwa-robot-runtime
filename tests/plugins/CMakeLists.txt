@@ -1,4 +1,4 @@
-# Controller plugin contract test (standalone; no Hakoniwa, MuJoCo or ROS).
+# Plugin contract tests (PDU headers only, no Hakoniwa, MuJoCo or ROS libraries).
 #
 #   cmake -S tests/plugins -B /tmp/hako-plugin-test -DCMAKE_BUILD_TYPE=Debug \
 #         -DNLOHMANN_JSON_INCLUDE_DIR=<dir that contains nlohmann/json.hpp>
@@ -10,6 +10,12 @@ cmake_minimum_required(VERSION 3.21)
 project(hakoniwa-robot-runtime-plugin-test LANGUAGES C CXX)
 
 get_filename_component(RUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+set(HAKONIWA_FOUNDATION_PREFIX
+    "${RUNTIME_ROOT}/../hakoniwa-business-pack/work/foundation/install"
+    CACHE PATH "Hakoniwa Foundation installation (PDU support headers)")
+set(HAKONIWA_PDU_REGISTRY_ROOT
+    "${RUNTIME_ROOT}/../hakoniwa-pdu-registry"
+    CACHE PATH "Hakoniwa PDU registry checkout (generated packet headers)")
 include("${RUNTIME_ROOT}/cmake/HakoniwaRobotRuntimeSources.cmake")
 
 set(NLOHMANN_JSON_INCLUDE_DIR
@@ -51,6 +57,7 @@ target_compile_options(controller_plugin_header_c PRIVATE -Wall -Wextra -Wpedant
 set(PLUGIN_TEST_SOURCES
     ${RUNTIME_ROOT}/tests/test_controller_plugin.cpp
     ${HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES}
+    ${HAKO_RUNTIME_ROBOT_PLUGIN_SOURCES}
     ${HAKO_RUNTIME_CONTROLLER_PLUGIN_MANIFEST_SOURCES}
     ${HAKO_RUNTIME_ACTUATOR_MANIFEST_SOURCES}
     ${HAKO_RUNTIME_ACTUATOR_COMPONENTS_SOURCES}
@@ -74,7 +81,9 @@ function(add_plugin_test name)
         ${HAKO_RUNTIME_INCLUDE_DIR}
         ${HAKO_RUNTIME_SRC_DIR})
     target_include_directories(${name} SYSTEM PRIVATE
-        ${NLOHMANN_JSON_INCLUDE_DIR})
+        ${NLOHMANN_JSON_INCLUDE_DIR}
+        ${HAKONIWA_PDU_REGISTRY_ROOT}/pdu/types
+        ${HAKO_RUNTIME_FOUNDATION_PDU_INCLUDE_DIR})
     target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
     add_dependencies(${name}
         hold_target hold_target_bad_kind hold_target_bad_abi
@@ -121,6 +130,7 @@ add_robot_plugin(robot_failing_step FIXTURE_FAILING_STEP)
 
 set(ROBOT_PLUGIN_TEST_SOURCES
     ${HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES}
+    ${HAKO_RUNTIME_ROBOT_PLUGIN_SOURCES}
     ${HAKO_RUNTIME_CONTROLLER_PLUGIN_MANIFEST_SOURCES}
     ${HAKO_RUNTIME_ACTUATOR_MANIFEST_SOURCES}
     ${HAKO_RUNTIME_ACTUATOR_COMPONENTS_SOURCES}
@@ -136,7 +146,9 @@ function(add_robot_plugin_test name)
     target_compile_definitions(${name} PRIVATE
         ${HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE}=1 ${HAKO_RUNTIME_LOCKSTEP_DEFINE}=1)
     target_include_directories(${name} PRIVATE ${HAKO_RUNTIME_INCLUDE_DIR} ${HAKO_RUNTIME_SRC_DIR})
-    target_include_directories(${name} SYSTEM PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+    target_include_directories(${name} SYSTEM PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR}
+        ${HAKONIWA_PDU_REGISTRY_ROOT}/pdu/types
+        ${HAKO_RUNTIME_FOUNDATION_PDU_INCLUDE_DIR})
     target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
 endfunction()
 

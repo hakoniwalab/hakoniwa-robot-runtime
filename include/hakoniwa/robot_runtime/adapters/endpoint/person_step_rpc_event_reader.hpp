@@ -1,6 +1,7 @@
 #pragma once
 
 #include "runtime/types.hpp"
+#include "plugins/person_step/limb_names.hpp"
 
 #include <array>
 #include <cstdint>
@@ -12,14 +13,7 @@
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 
-inline constexpr std::array<std::string_view, 6> person_limb_joint_names {
-    "shoulder_left_joint",
-    "shoulder_right_joint",
-    "hip_left_joint",
-    "hip_right_joint",
-    "knee_left_joint",
-    "knee_right_joint",
-};
+inline constexpr auto& person_limb_joint_names = plugins::person_step::limb_names;
 
 struct PersonStepCommand {
     runtime::Vector3State linear_velocity;
