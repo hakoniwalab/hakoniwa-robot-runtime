@@ -298,7 +298,9 @@ void test_runner_syncs_before_first_step_when_a_pdu_is_registered()
     assert(fixture.runner.wait() == 0);
     assert(fixture.api->sleeps == (std::vector<Times> {{0, 0}, {kStepUsec, kStepUsec}}));
     assert(fixture.pdu->polls == 3);
-    assert(fixture.server->polls == (std::vector<Times> {{kStepUsec, 0}}));
+    // Poll for cancellation each time the staged request waits for the PDU.
+    assert(fixture.server->polls == std::vector<Times>(3, {kStepUsec, 0}));
+    assert(fixture.server->reads == 1);
     assert(fixture.server->replies == (std::vector<Times> {{kStepUsec, kStepUsec}}));
 }
 

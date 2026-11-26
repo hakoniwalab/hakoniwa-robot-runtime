@@ -83,33 +83,45 @@ bool AsyncServiceCommandSource::lockstep_ready() noexcept
     }
 
     try {
-        if (!staged_request_) {
-            switch (server_->poll(service_id_)) {
-            case AsyncServiceEvent::None:
-                return false;
-            case AsyncServiceEvent::Request: {
-                if (expected_state_ != AsyncServiceState::Idle) {
-                    lockstep_failure_ = "service request arrived before the previous response";
-                    return false;
-                }
-                std::vector<std::byte> request;
-                if (!server_->get_request(service_id_, request)) {
-                    lockstep_failure_ = "failed to read request";
-                    return false;
-                }
-                staged_request_ = std::move(request);
-                break;
-            }
-            case AsyncServiceEvent::Cancel:
-                lockstep_failure_ = "request was canceled";
-                return false;
-            default:
-                lockstep_failure_ = "failed to poll server";
+        switch (server_->poll(service_id_)) {
+        case AsyncServiceEvent::None:
+            if (!staged_request_) {
                 return false;
             }
+            break;
+        case AsyncServiceEvent::Request: {
+            if (staged_request_ || expected_state_ != AsyncServiceState::Idle) {
+                lockstep_failure_ = "service request arrived before the previous response";
+                return false;
+            }
+            std::vector<std::byte> request;
+            if (!server_->get_request(service_id_, request)) {
+                lockstep_failure_ = "failed to read request";
+                return false;
+            }
+            staged_request_ = std::move(request);
+            break;
         }
-        // A staged request already owns this service. Check the state without
-        // polling again, which could consume another event or send BUSY.
+        case AsyncServiceEvent::Cancel: {
+            // The gate owns a staged request until the source takes it into a step.
+            if (!staged_request_) {
+                lockstep_failure_ = "cancel arrived without a staged request";
+                return false;
+            }
+            const auto actual = server_->status(service_id_);
+            if (actual != AsyncServiceState::Canceling) {
+                lockstep_failure_ = state_mismatch(AsyncServiceState::Canceling, actual);
+            } else if (!server_->reply(service_id_, AsyncServiceResultCode::Canceled, {})) {
+                lockstep_failure_ = "failed to reply to staged request cancellation";
+            } else {
+                staged_request_.reset();
+            }
+            return false;
+        }
+        default:
+            lockstep_failure_ = "failed to poll server";
+            return false;
+        }
         const auto actual = server_->status(service_id_);
         if (actual == AsyncServiceState::Doing) {
             return true;
@@ -124,6 +136,13 @@ bool AsyncServiceCommandSource::lockstep_ready() noexcept
         lockstep_failure_ = "failed to stage request";
     }
     return false;
+}
+
+void AsyncServiceCommandSource::lockstep_poll_while_paused() noexcept
+{
+    if (staged_request_) {
+        (void)lockstep_ready();
+    }
 }
 
 CommandSourcePollResult AsyncServiceCommandSource::poll(const RuntimeStepContext& context)

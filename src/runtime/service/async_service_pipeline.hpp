@@ -22,6 +22,7 @@ public:
     CommandSourcePollResult poll(const RuntimeStepContext& context) override;
     void reset() noexcept override;
     bool lockstep_ready() noexcept override;
+    void lockstep_poll_while_paused() noexcept override;
     void lockstep_prepare() noexcept override;
     void lockstep_reset() noexcept override { lockstep_prepare(); }
     std::string_view lockstep_failure_reason() const noexcept override { return lockstep_failure_; }

@@ -28,7 +28,7 @@ using namespace hakoniwa::robot_runtime::runner;
 
 namespace {
 
-enum class Call { Request, Step, Physics, Response, Reply };
+enum class Call { Request, Cancel, Step, Physics, Response, Reply };
 using Trace = std::vector<Call>;
 
 class FakeServer final : public IAsyncServiceServer {
@@ -38,6 +38,8 @@ public:
     int polls {0};
     int reads {0};
     int busy_replies {0};
+    int canceled_replies {0};
+    bool cancel_pending {false};
     std::vector<std::array<std::byte, 2>> replies;
 
     void queue(std::byte request)
@@ -50,6 +52,12 @@ public:
     {
         assert(service_id == id_);
         ++polls;
+        if (cancel_pending) {
+            assert(state_ == AsyncServiceState::Doing);
+            cancel_pending = false;
+            state_ = AsyncServiceState::Canceling;
+            return AsyncServiceEvent::Cancel;
+        }
         if (!pending_) {
             return AsyncServiceEvent::None;
         }
@@ -83,7 +91,19 @@ public:
         int service_id, AsyncServiceResultCode code,
         const AsyncServiceResponseWriter& write) override
     {
-        assert(service_id == id_ && code == AsyncServiceResultCode::Ok && write);
+        assert(service_id == id_);
+        if (code == AsyncServiceResultCode::Canceled) {
+            assert(state_ == AsyncServiceState::Canceling);
+            if (write) {
+                std::array<std::byte, 2> packet {};
+                if (!write(packet)) return false;
+            }
+            trace_.push_back(Call::Reply);
+            ++canceled_replies;
+            state_ = AsyncServiceState::Idle;
+            return true;
+        }
+        assert(code == AsyncServiceResultCode::Ok && write);
         if (state_ != AsyncServiceState::Doing) {
             return false;
         }
@@ -108,7 +128,8 @@ constexpr std::uint64_t kDelta = 1'000;
 
 class FakeService final : public IAsyncService {
 public:
-    FakeService(std::string joint, Trace& trace) : joint_(std::move(joint)), trace_(trace) {}
+    FakeService(std::string joint, Trace& trace, bool finish_request = true)
+        : joint_(std::move(joint)), trace_(trace), finish_request_(finish_request) {}
 
     bool on_request(std::span<const std::byte> request) override
     {
@@ -118,13 +139,22 @@ public:
         return true;
     }
 
+    void on_cancel() override { trace_.push_back(Call::Cancel); }
+
     AsyncServiceStepResult on_step(
         const RobotState& state, AsyncServiceState server_state,
         const RuntimeStepContext& context) override
     {
         trace_.push_back(Call::Step);
         assert(state.sample_time_usec == context.simulation_time_usec);
+        if (server_state == AsyncServiceState::Canceling) {
+            assert(!finish_request_);
+            return {AsyncServiceStepOutcome::Canceled, {}};
+        }
         assert(server_state == AsyncServiceState::Doing);
+        if (!finish_request_) {
+            return {AsyncServiceStepOutcome::Pending, {}};
+        }
         return {
             AsyncServiceStepOutcome::Ok,
             {{joint_, ActuatorCommandType::Velocity, double(std::to_integer<int>(value_)),
@@ -149,6 +179,7 @@ private:
     std::string joint_;
     Trace& trace_;
     std::byte value_ {};
+    bool finish_request_;
 };
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP) && HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP
@@ -207,7 +238,8 @@ struct Fixture {
     std::unique_ptr<LockstepGate> gate;
     std::unique_ptr<ActuatorRuntime> runtime;
 
-    explicit Fixture(std::initializer_list<bool> lockstep = {true}, bool with_pdu = false)
+    explicit Fixture(std::initializer_list<bool> lockstep = {true}, bool with_pdu = false,
+                     bool finish_request = true)
     {
         std::vector<LockstepGate::Input> gate_inputs;
         std::vector<std::shared_ptr<ICommandSource>> sources;
@@ -221,7 +253,7 @@ struct Fixture {
             auto server = std::make_shared<FakeServer>(id, trace);
             auto source = std::make_shared<AsyncServiceCommandSource>(
                 "service-" + suffix, id, server,
-                std::make_shared<FakeService>("joint-" + suffix, trace), is_lockstep);
+                std::make_shared<FakeService>("joint-" + suffix, trace, finish_request), is_lockstep);
             auto controller = std::make_shared<AsyncServiceController>(
                 "controller-" + suffix, source);
             servers.push_back(server);
@@ -402,14 +434,14 @@ void waits_for_every_lockstep_service()
     assert(!f.step_if_ready());
     assert(!f.step_if_ready());
     f.assert_time(0);
-    assert(f.servers[0]->polls == 1 && f.servers[0]->reads == 1);
+    assert(f.servers[0]->polls == 2 && f.servers[0]->reads == 1);
     assert(f.servers[1]->polls == 2 && f.servers[1]->reads == 0);
     assert(f.trace.empty());
 
     f.servers[1]->queue(std::byte {2});
     assert(f.step_if_ready());
     f.assert_time(1);
-    assert(f.servers[0]->polls == 1 && f.servers[1]->polls == 3);
+    assert(f.servers[0]->polls == 3 && f.servers[1]->polls == 3);
     assert(f.servers[0]->replies.size() == 1 && f.servers[1]->replies.size() == 1);
 }
 
@@ -484,6 +516,69 @@ void gate_does_not_wait_for_or_poll_an_async_service()
     assert(f.servers[1]->polls == 2);
 }
 
+void cancel_staged_request()
+{
+    Fixture f({true}, true);
+    auto& server = *f.servers[0];
+    server.queue(std::byte {7});
+    assert(!f.step_if_ready() && server.reads == 1);
+    f.gate->set_waiting_paused(true);
+    server.cancel_pending = true;
+    assert(!f.step_if_ready() && !f.gate->failed());
+    assert(server.canceled_replies == 1);
+    assert(f.trace == Trace({Call::Reply}));
+    f.assert_time(0);
+}
+
+void accepts_next_request_after_cancel()
+{
+    Fixture f({true}, true);
+    auto& server = *f.servers[0];
+    server.queue(std::byte {7});
+    assert(!f.step_if_ready() && server.reads == 1);
+    server.cancel_pending = true;
+    assert(!f.step_if_ready());
+    server.queue(std::byte {8});
+    f.pdu->arrived = true;
+    assert(f.step_if_ready());
+    f.assert_time(1);
+    assert(server.canceled_replies == 1 && server.reads == 2);
+    assert(server.replies.size() == 1 && server.replies[0][0] == std::byte {8});
+    assert(f.trace == Trace({
+        Call::Reply, Call::Request, Call::Step, Call::Physics, Call::Response, Call::Reply}));
+}
+
+void pdu_alone_cannot_admit_a_canceled_request()
+{
+    Fixture f({true}, true);
+    auto& server = *f.servers[0];
+    server.queue(std::byte {7});
+    assert(!f.step_if_ready() && server.reads == 1);
+    server.cancel_pending = true;
+    f.pdu->arrived = true;
+    assert(!f.step_if_ready() && !f.gate->failed());
+    assert(!f.step_if_ready() && !f.gate->failed());
+    assert(f.pdu->arrived && server.canceled_replies == 1);
+    assert(f.trace == Trace({Call::Reply}));
+    f.assert_time(0);
+}
+
+void non_lockstep_cancel_runs_hooks_in_step()
+{
+    Fixture f({false}, false, false);
+    auto& server = *f.servers[0];
+    server.queue(std::byte {7});
+    assert(f.step_if_ready());
+    assert(f.trace == Trace({Call::Request, Call::Step, Call::Physics}));
+    f.trace.clear();
+
+    server.cancel_pending = true;
+    assert(f.step_if_ready());
+    assert(server.canceled_replies == 1);
+    assert(f.trace == Trace({Call::Cancel, Call::Step, Call::Physics, Call::Response, Call::Reply}));
+    f.assert_time(2);
+}
+
 void old_core_busy_state_mismatch_stops_the_step()
 {
     Fixture f;
@@ -502,7 +597,7 @@ void old_core_busy_state_mismatch_stops_the_step()
     assert(f.gate->failure_reason().find("service-1") != std::string::npos);
     assert(f.gate->failure_reason().find("service state mismatch") != std::string::npos);
     assert(f.trace.empty());
-    assert(server.polls == 2 && server.reads == 1);
+    assert(server.polls == 3 && server.reads == 1);
     assert(server.replies.empty());
     f.assert_time(0);
 }
@@ -529,9 +624,25 @@ void rejects_lockstep_construction_when_disabled()
 
 } // namespace
 
-int main()
+int main(int argc, [[maybe_unused]] char** argv)
 {
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP) && HAKONIWA_ROBOT_RUNTIME_ENABLE_LOCKSTEP
+    const auto cases = std::array {
+        cancel_staged_request, accepts_next_request_after_cancel,
+        pdu_alone_cannot_admit_a_canceled_request, non_lockstep_cancel_runs_hooks_in_step,
+    };
+    if (argc == 2) {
+        const std::string_view name = argv[1];
+        if (name.size() != 2 || name[0] != 'C' || name[1] < '1' || name[1] > '4') {
+            return 2;
+        }
+        cases[name[1] - '1']();
+        std::cout << name << " passed\n";
+        return 0;
+    }
+    for (const auto test : cases) {
+        test();
+    }
     waits_without_a_request();
     consumes_the_staged_request_in_the_same_step();
     alternates_requests_and_replies_for_ten_steps();
@@ -546,6 +657,7 @@ int main()
     pdu_only_keeps_initial_sync_and_has_no_deadline();
     std::cout << "async service lockstep unit tests H1-H8 and common gate G1-G4 passed\n";
 #else
+    if (argc != 1) return 2;
     rejects_lockstep_construction_when_disabled();
     std::cout << "async service lockstep-disabled unit test H9 passed\n";
 #endif

@@ -55,7 +55,7 @@ void LockstepGate::start_run() noexcept
 
 bool LockstepGate::ready_to_step() noexcept
 {
-    if (failed() || paused_) {
+    if (failed()) {
         return false;
     }
 
@@ -63,19 +63,26 @@ bool LockstepGate::ready_to_step() noexcept
         bool all_ready = true;
         for (std::size_t i = 0; i < inputs_.size(); ++i) {
             const auto& [name, source] = inputs_[i];
-            ready_[i] = source->lockstep_ready();
+            if (paused_) {
+                source->lockstep_poll_while_paused();
+            } else {
+                ready_[i] = source->lockstep_ready();
+            }
             const auto error = source->lockstep_failure_reason();
             if (!error.empty()) {
                 failure_ = "lockstep input " + name + ": ";
                 failure_ += error;
                 return false;
             }
-            if (!ready_[i]) {
+            if (!paused_ && !ready_[i]) {
                 if (!uses_deadline_) {
                     return false;  // Preserve the untimed PDU polling order.
                 }
                 all_ready = false;
             }
+        }
+        if (paused_) {
+            return false;
         }
         if (all_ready) {
             wait_started_.reset();

@@ -2,9 +2,14 @@
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepResponsePacket.hpp"
 
+#include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -14,6 +19,24 @@
 namespace {
 constexpr hako_time_t kDeltaUsec = 1000;
 constexpr int kStateRunning = 2;
+void print_state(const HakoCpp_AckermannStepResponse& body)
+{
+    const auto& pose = body.pose;
+    const auto& twist = body.twist;
+    const std::array fields {
+        pose.translation.x, pose.translation.y, pose.translation.z,
+        pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w,
+        twist.linear.x, twist.linear.y, twist.linear.z,
+        twist.angular.x, twist.angular.y, twist.angular.z,
+    };
+    std::cout << "STATE " << body.step << ' ' << body.result_code << ' ' << body.sim_time_usec;
+    for (const auto value : fields) {
+        std::cout << ' ' << std::hex << std::setw(16) << std::setfill('0')
+                  << std::bit_cast<std::uint64_t>(value);
+    }
+    std::cout << std::dec << std::setfill(' ') << std::endl;
+}
+
 struct Item { std::uint64_t step; double speed; };
 bool parse(const std::string& text, std::vector<Item>& result)
 {
@@ -36,6 +59,8 @@ int main(int argc, char** argv)
     const std::string asset = argv[2];
     const std::string service = argv[3];
     const std::string channel = argv[4];
+    const auto* cancel_dir = std::getenv("HAKO_TEST_CANCEL_DIR");
+    const bool trace_state = std::getenv("HAKO_TEST_STATE_TRACE") != nullptr;
     std::vector<Item> plan;
     if (!parse(argv[5], plan)) return 2;
     if (hakoniwa_asset_init() != 0 || hakoniwa_simevent_init() != 0
@@ -45,6 +70,8 @@ int main(int argc, char** argv)
     HakoServiceHandleType handle {-1, -1};
     bool valid = false;
     bool waiting = false;
+    bool cancel_sent = false;
+    bool canceled = false;
     std::size_t next = 0;
     hako_time_t local_time = 0;
     const std::string client_name = asset + "Rpc";
@@ -71,7 +98,9 @@ int main(int argc, char** argv)
 
         if (valid && hakoniwa_simevent_get_state() == kStateRunning
             && hakoniwa_asset_is_pdu_created()) {
-            if (!waiting && next < plan.size()) {
+            const bool hold_retry = canceled
+                && !std::filesystem::exists(std::filesystem::path(cancel_dir) / "resume");
+            if (!waiting && !hold_retry && next < plan.size()) {
                 char* packet = nullptr;
                 std::size_t packet_len = 0;
                 HakoCpp_AckermannStepRequestPacket request {};
@@ -88,8 +117,20 @@ int main(int argc, char** argv)
                         &handle, packet, packet_len, 30000) != 0) return 1;
                 waiting = true;
             } else if (waiting) {
+                if (cancel_dir && !cancel_sent
+                    && std::filesystem::exists(std::filesystem::path(cancel_dir) / "staged")) {
+                    if (hako_asset_service_client_cancel_request(&handle) != 0) return 1;
+                    cancel_sent = true;
+                    std::cout << "CLIENT cancel sent" << std::endl;
+                }
                 const int service_event = hako_asset_service_client_poll(&handle);
-                if (service_event == HAKO_SERVICE_CLIENT_API_RESPONSE_IN) {
+                if (service_event == HAKO_SERVICE_CLIENT_API_REQUEST_CANCEL_DONE) {
+                    if (!cancel_sent || canceled) return 1;
+                    canceled = true;
+                    waiting = false;
+                    std::cout << "CLIENT CANCELED" << std::endl;
+                } else if (service_event == HAKO_SERVICE_CLIENT_API_RESPONSE_IN) {
+                    if (cancel_dir && !canceled) return 1;
                     char* packet = nullptr;
                     std::size_t packet_len = 0;
                     HakoCpp_AckermannStepResponsePacket response {};
@@ -107,6 +148,7 @@ int main(int argc, char** argv)
                     std::cout << "RESPONSE channel=" << channel
                               << " k=" << response.body.step
                               << " speed=" << response.body.twist.linear.x << std::endl;
+                    if (trace_state) print_state(response.body);
                     ++next;
                     waiting = false;
                     if (next == plan.size()) {
