@@ -1,7 +1,7 @@
 #pragma once
 
 #include "hakoniwa/robot_runtime/plugin/controller_plugin.h"
-#include "hakoniwa/robot_runtime/plugin/plugin_common.h"
+#include "hakoniwa/robot_runtime/plugin/service_plugin.h"
 
 #include <cstdint>
 #include <memory>
@@ -46,12 +46,14 @@ public:
      * @throws std::logic_error for another kind.
      */
     [[nodiscard]] const HakoControllerPluginV1& controller_table() const;
+    [[nodiscard]] const HakoServicePluginV1& service_table() const;
 
 private:
     explicit PluginLibrary(std::string path);
 
     void load(std::uint32_t expected_kind);
     void validate_controller_table() const;
+    void validate_service_table() const;
     void close() noexcept;
 
     std::string path_;

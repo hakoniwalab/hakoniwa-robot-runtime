@@ -102,3 +102,42 @@ if(EXISTS "${SENSOR_ADAPTER_INCLUDE_DIR}/hakoniwa/sensor_adapter/sensor_adapter_
 else()
     message(WARNING "hakoniwa-sensor-adapter not found: the sensor variant of the test is skipped")
 endif()
+
+function(add_service_plugin name)
+    add_library(${name} MODULE service_fixture_plugin.c)
+    target_include_directories(${name} PRIVATE ${HAKO_RUNTIME_INCLUDE_DIR})
+    set_target_properties(${name} PROPERTIES
+        C_STANDARD 99 C_EXTENSIONS OFF C_VISIBILITY_PRESET hidden PREFIX "lib")
+    target_compile_options(${name} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_definitions(${name} PRIVATE ${ARGN})
+endfunction()
+add_service_plugin(service_fixture)
+add_service_plugin(service_bad_kind SERVICE_BAD_KIND)
+add_service_plugin(service_bad_abi SERVICE_BAD_ABI)
+add_service_plugin(service_small_table SERVICE_SMALL_TABLE)
+add_service_plugin(service_missing_step SERVICE_MISSING_STEP)
+add_service_plugin(service_no_optional SERVICE_NO_OPTIONAL)
+
+add_executable(hako-service-plugin-test
+    ${RUNTIME_ROOT}/tests/test_service_plugin.cpp
+    ${HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES}
+    ${HAKO_RUNTIME_CONTROLLER_PLUGIN_MANIFEST_SOURCES}
+    ${HAKO_RUNTIME_ACTUATOR_MANIFEST_SOURCES}
+    ${HAKO_RUNTIME_ACTUATOR_COMPONENTS_SOURCES}
+    ${HAKO_RUNTIME_ACTUATOR_LOOP_SOURCES}
+    ${HAKO_RUNTIME_SCALAR_PDU_COMMAND_SOURCES}
+    ${HAKO_RUNTIME_HOLD_CONTROLLER_SOURCES}
+    ${HAKO_RUNTIME_ASYNC_PIPELINE_SOURCES})
+target_compile_features(hako-service-plugin-test PRIVATE cxx_std_20)
+target_compile_options(hako-service-plugin-test PRIVATE -Wall -Wextra)
+target_compile_definitions(hako-service-plugin-test PRIVATE
+    ${HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE}=1 ${HAKO_RUNTIME_LOCKSTEP_DEFINE}=1)
+target_include_directories(hako-service-plugin-test PRIVATE
+    ${HAKO_RUNTIME_INCLUDE_DIR} ${HAKO_RUNTIME_SRC_DIR})
+target_include_directories(hako-service-plugin-test SYSTEM PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+target_link_libraries(hako-service-plugin-test PRIVATE ${CMAKE_DL_LIBS})
+add_test(NAME hako-service-plugin-test COMMAND hako-service-plugin-test
+    "$<TARGET_FILE:service_fixture>" "$<TARGET_FILE:hold_target>"
+    "$<TARGET_FILE:service_bad_kind>" "$<TARGET_FILE:service_bad_abi>"
+    "$<TARGET_FILE:service_small_table>" "$<TARGET_FILE:service_missing_step>"
+    "$<TARGET_FILE:service_no_optional>")

@@ -42,6 +42,7 @@ struct AsyncServiceComponents {
     std::shared_ptr<ICommandSource> source;
     std::shared_ptr<IController> controller;
     std::shared_ptr<IStatePublisher> publisher;
+    std::optional<std::int32_t> priority {std::nullopt};
 };
 
 using AckermannServiceFactory = std::function<
@@ -85,7 +86,7 @@ using GeomFrictionReaderFactory = std::function<
     , const PluginPduChannels* plugin_pdu_channels = nullptr
 #endif
     , const AckermannServiceFactory& ackermann_service_factory = {}
-    , std::vector<AsyncServiceComponents> person_services = {}
+    , std::vector<AsyncServiceComponents> additional_services = {}
     , std::shared_ptr<IStatePublisher> person_state_publisher = {}
     );
 
