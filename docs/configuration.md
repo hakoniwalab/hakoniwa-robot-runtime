@@ -73,6 +73,8 @@ manifestへ設定してください。Runtimeは拡張子とファイル存在�
 
 `$schema`、`schema_version`、`description` 等の metadata を付与しても構いませんが、現在の Runtime 実装が直接意味解釈する必須 field は上表です。
 
+任意の項目として `services` があります（2.4 節）。
+
 <a id="22-components"></a>
 
 ### 2.2 `components[]` の共通項目
@@ -133,6 +135,32 @@ controller、publisher、Endpoint adapterをリンクします。未定義また
 Applicationだけが `HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1` を定義し、センサの
 実装のライブラリをリンクします。未定義または `0` のビルドでこれらのcomponentを
 書くと、起動時に止まります。
+
+<a id="24-services"></a>
+
+### 2.4 `services`（非同期 RPC のサービス）
+
+`services` は、このアセットが hakoniwa-core-pro のサービスとして受け付ける RPC の一覧です（任意）。書かなければ、サービスは作られず、core-pro のサービスの初期化もしません（pub/sub だけのロボットは、今までどおり）。設計は [design-async-rpc.md](design-async-rpc.md) を見てください。
+
+```json
+"services": [
+  { "name": "CarService/AckermannStep/Car-1", "type": "ackermann_step", "pdu_robot": "Car-1", "lockstep": true },
+  { "name": "PersonService/PersonStep/Person-1", "type": "person_step", "pdu_robot": "Person-1", "lockstep": true }
+]
+```
+
+| field | 意味 |
+| --- | --- |
+| `name` | core-pro に登録するサービス名。`type` に合わせて `CarService/AckermannStep/<pdu_robot>` または `PersonService/PersonStep/<pdu_robot>` |
+| `type` | `ackermann_step`（車。要求は `hako_srv_msgs/AckermannStep`）または `person_step`（人） |
+| `pdu_robot` | 対象のロボット名。PDU の robot 名と同じ |
+| `lockstep` | `true` なら、ロックステップのサービスにする（既定 `false`） |
+
+- core-pro のサービスの定義（`service.json`）は、`tools/gen_rpc_service_config.py --car <name> --person <name> --pdu-config <pdu_def> --output <file>` で、同じ名前から作れます。1 つのサービスに、クライアントは 1 つです（`maxClients: 1`。core-pro のサーバは 1 度に 1 クライアントの番しか読まないため。hakoniwalab/hakoniwa-core-pro#115）。
+- **ロックステップのサービス**：物理のステップは、要求が来たときに進みます。ステップの門は、PDU のロックステップの入力と同じものです（両方そろうまで待つ）。サービスは 0 ステップで終わり、応答は物理の後の状態です。クライアントは、応答を受けてから次の要求を送ります（応答の前に次の要求を送るのは誤り）。
+- ステップを待っている要求にキャンセルが来たら、物理のステップを使わずに CANCELED で応えます。応答の中身は読まないでください。
+- **車の摩擦**：`AckermannStep` の要求の `tire_friction` が 0 より大きいとき、その車の 4 輪の摩擦を、そのステップの最初の刻みからその値にします。0 以下なら変えません（hakoniwa-pdu-registry `428115b` 以降、`hakoniwa-pdu` 1.7.1 以降）。
+- 要るもの：hakoniwa-core-pro は #123 を含む版（途中の知らせで要求が終わらない）。
 
 ## 3. Component Config — `components[].config` の内容
 

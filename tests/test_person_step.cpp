@@ -1,6 +1,17 @@
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 
+#include "adapters/endpoint/person_step_service.hpp"
+#include "adapters/endpoint/person_step_packet.hpp"
+#include "hako_srv_msgs/pdu_cpptype_conv_PersonStepRequestPacket.hpp"
+#define hako_convert_pdu2cpp_array_string_varray hako_convert_pdu2ros_array_string_varray
+#define hako_convert_cpp2pdu_array_string_varray hako_convert_ros2pdu_array_string_varray
+#include "hako_srv_msgs/pdu_cpptype_conv_PersonStepResponsePacket.hpp"
+#undef hako_convert_pdu2cpp_array_string_varray
+#undef hako_convert_cpp2pdu_array_string_varray
+
+#include <cstring>
+
 #include <mujoco/mujoco.h>
 
 #include <algorithm>
@@ -231,6 +242,122 @@ void test_codec()
     REQUIRE(state_decoded.joint_positions[2] == 0.4);
 }
 
+using Packet = std::array<std::byte, 2048>;
+
+Packet request_packet(std::uint64_t step,
+    const adapters::hakoniwa::PersonStepCommand& command)
+{
+    Packet packet {};
+    HakoCpp_PersonStepRequestPacket request {};
+    request.body.step = step;
+    request.body.cmd_vel.linear.x = command.linear_velocity.x;
+    request.body.cmd_vel.linear.y = command.linear_velocity.y;
+    request.body.cmd_vel.angular.z = command.angular_velocity.z;
+    request.body.animation = command.animation;
+    request.body.ride = command.ride;
+    REQUIRE(hako::pdu::msgs::hako_srv_msgs::PersonStepRequestPacket {}.cpp2pdu(
+        request, reinterpret_cast<char*>(packet.data()), packet.size()) > 0);
+    return packet;
+}
+
+Packet response_header()
+{
+    Packet packet {};
+    HakoCpp_ServiceResponseHeader header {};
+    header.request_id = 19;
+    header.service_name = "PersonService/PersonStep/A";
+    header.client_name = "PersonClient";
+    header.status = 2;
+    header.result_code = 3;
+    REQUIRE(hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader {}.cpp2pdu(
+        header, reinterpret_cast<char*>(packet.data()), packet.size()) > 0);
+    return packet;
+}
+
+void test_service_packet()
+{
+    using namespace adapters::hakoniwa;
+    PersonStepState state {
+        7, 1'012'345, {1.5, -2.0, 3.0}, {0.1, 0.2, -0.3, 0.9},
+        {4.0, -5.0, 6.0}, {0.4, -0.5, 0.6}, {0.1, -0.2, 0.3, -0.4, 0.5, -0.6},
+    };
+    unsigned applied = 0;
+    PersonStepService service("A",
+        [&](const PersonStepCommand& input) {
+            REQUIRE(input.linear_velocity.x == 1.25);
+            REQUIRE(input.linear_velocity.y == -0.5);
+            REQUIRE(input.angular_velocity.z == 0.25);
+            REQUIRE(input.animation == "sit_talk");
+            REQUIRE(input.ride == "Car-1/driver");
+            ++applied;
+            return state.result_code;
+        },
+        [&](std::uint32_t result_code) {
+            REQUIRE(result_code == state.result_code);
+            return state;
+        });
+    const auto request = request_packet(
+        41, command(1.25, -0.5, 0.25, "sit_talk", "Car-1/driver"));
+    REQUIRE(service.on_request(request));
+    auto python = request;
+    HakoPduMetaDataType metadata {};
+    std::memcpy(&metadata, python.data(), sizeof(metadata));
+    metadata.heap_off = metadata.total_size = metadata.base_off
+        + offsetof(Hako_PersonStepRequestPacket, body)
+        + offsetof(Hako_PersonStepRequest, ride) + sizeof(Hako_PersonStepRequest::ride);
+    std::memcpy(python.data(), &metadata, sizeof(metadata));
+    REQUIRE(service.on_request(std::span(python).first(metadata.total_size)));
+    REQUIRE(!service.on_request(std::span(python).first(metadata.total_size - 1)));
+    REQUIRE(applied == 2);
+    const auto completed = service.on_step({}, runtime::AsyncServiceState::Doing, {});
+    REQUIRE(completed.outcome == runtime::AsyncServiceStepOutcome::Ok);
+    REQUIRE(completed.commands.empty());
+
+    const auto clean_response = response_header();
+    auto actual = clean_response;
+    REQUIRE(service.on_response({}, {}, actual));
+    HakoCpp_PersonStepResponsePacket decoded {};
+    REQUIRE(hako::pdu::msgs::hako_srv_msgs::PersonStepResponsePacket {}.pdu2cpp(
+        reinterpret_cast<char*>(actual.data()), decoded));
+    REQUIRE(decoded.header.request_id == 19);
+    REQUIRE(decoded.header.result_code == 3);
+    REQUIRE(decoded.body.step == 41);
+    REQUIRE(decoded.body.result_code == 7);
+    REQUIRE(decoded.body.sim_time_usec == 1'012'345);
+    REQUIRE(decoded.body.pose.translation.y == -2.0);
+    REQUIRE(decoded.body.twist.angular.z == 0.6);
+    REQUIRE(decoded.body.joints.header.frame_id == "city_map");
+    REQUIRE(decoded.body.joints.header.stamp.sec == 1);
+    REQUIRE(decoded.body.joints.header.stamp.nanosec == 12'345'000);
+    REQUIRE(decoded.body.joints.name.size() == state.joint_positions.size());
+    REQUIRE(decoded.body.joints.name.front() == "A/shoulder_left_joint");
+    REQUIRE(std::ranges::equal(decoded.body.joints.position, state.joint_positions));
+    // Core may reuse a response buffer with dynamic joint arrays from last step.
+    state.joint_positions[0] = 0.9;
+    auto fresh = clean_response;
+    REQUIRE(service.on_response({}, {}, fresh));
+    REQUIRE(service.on_response({}, {}, actual));
+    std::memcpy(&metadata, fresh.data(), sizeof(metadata));
+    HakoPduMetaDataType reused_metadata {};
+    std::memcpy(&reused_metadata, actual.data(), sizeof(reused_metadata));
+    REQUIRE(reused_metadata.total_size == metadata.total_size);
+    const auto body_offset = metadata.base_off + sizeof(Hako_ServiceResponseHeader);
+    REQUIRE(std::ranges::equal(std::span(actual).first(metadata.total_size).subspan(body_offset),
+        std::span(fresh).first(metadata.total_size).subspan(body_offset)));
+
+    actual = response_header();
+    std::memcpy(&metadata, actual.data(), sizeof(metadata));
+    metadata.epoch = 7;
+    std::memcpy(actual.data(), &metadata, sizeof(metadata));
+    const auto header = actual;
+    REQUIRE(service.on_response({}, {}, actual));
+    constexpr auto header_offset = HAKO_PDU_META_DATA_SIZE();
+    REQUIRE(std::memcmp(actual.data() + header_offset, header.data() + header_offset,
+        sizeof(Hako_ServiceResponseHeader)) == 0);
+    std::memcpy(&metadata, actual.data(), sizeof(metadata));
+    REQUIRE(metadata.epoch == 7);
+}
+
 void test_motion_and_gait()
 {
     const TemporaryModel temporary_model;
@@ -324,7 +451,7 @@ void test_initial_world_yaw()
     REQUIRE(std::fabs(quaternion_yaw(east.orientation) + pi / 2.0) < 0.01);
 }
 
-void test_gestures_and_sitting()
+void test_gestures_and_sitting(bool use_service = false)
 {
     const TemporaryModel temporary_model;
     runtime::RuntimeDefinition definition;
@@ -333,6 +460,20 @@ void test_gestures_and_sitting()
     plant.bind_person("A");
     plant.bind_person("B");
 
+    const auto apply = [&](const std::string& person,
+                           const adapters::hakoniwa::PersonStepCommand& input) {
+        if (use_service) {
+            std::uint32_t code = 0;
+            adapters::hakoniwa::PersonStepService service(person,
+                [&](const auto& decoded) {
+                    return code = plant.apply_person_command(person, decoded);
+                },
+                [&](std::uint32_t result) { return plant.person_state(person, result); });
+            REQUIRE(service.on_request(request_packet(0, input)));
+            return code;
+        }
+        return plant.apply_person_command(person, input);
+    };
     const auto steps = [&](const int count) {
         for (int step = 0; step < count; ++step) (void)plant.step({});
     };
@@ -341,7 +482,7 @@ void test_gestures_and_sitting()
     };
     const auto animation = [&](const std::string& name,
                                const double forward = 0.0) {
-        REQUIRE(plant.apply_person_command(
+        REQUIRE(apply(
             "A", command(forward, 0.0, 0.0, name)) == 0);
     };
 
@@ -469,7 +610,7 @@ void test_gestures_and_sitting()
 
     // A scaled person's model-space hip height replaces HIP_M * scale.
     reset();
-    REQUIRE(plant.apply_person_command(
+    REQUIRE(apply(
         "B", command(0.0, 0.0, 0.0, "sit")) == 0);
     steps(100);
     const int child_slide_z = mj_name2id(
@@ -790,8 +931,15 @@ void test_person_contact_events()
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--service") {
+        test_service_packet();
+        test_gestures_and_sitting(true);
+        return 0;
+    }
+    (void)argc;
+    (void)argv;
     test_codec();
     test_motion_and_gait();
     test_initial_world_yaw();

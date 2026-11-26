@@ -44,6 +44,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
     , const PluginPduChannels* plugin_pdu_channels
 #endif
+    , const AckermannServiceFactory& ackermann_service_factory
+    , std::vector<AsyncServiceComponents> person_services
+    , std::shared_ptr<IStatePublisher> person_state_publisher
     )
 {
     if (plant == nullptr) {
@@ -118,6 +121,12 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
         + 1);
     priorities.reserve(controllers.capacity());
+    // PersonStep applies commands directly to the plant's existing person
+    // inputs. Keep their request order ahead of the other input sources.
+    for (auto& service : person_services) {
+        sources.push_back(std::move(service.source));
+        controllers.push_back(std::move(service.controller));
+    }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     // Plant Directive Controllers are kept apart from `controllers` so their
     // output never reaches the Arbiter.
@@ -152,6 +161,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    std::vector<std::shared_ptr<ICommandSource>> service_friction_sources;
     for (const auto& mirror : definition.mirror_bodies) {
         auto reader = mirror_reader_factory(mirror);
         if (reader == nullptr) {
@@ -178,9 +188,10 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
         // The Float64 sample is consumed in the step it is polled; the Plant
         // keeps the applied friction afterwards. One Plant step is therefore
         // a sufficient input lifetime.
-        const std::string source_id =
-            "geom-friction-pdu:" + friction.component_id;
-        sources.push_back(std::make_shared<ScalarPduCommandSource>(
+        const std::string source_id = (friction.ackermann_step
+            ? "geom-friction-service:" : "geom-friction-pdu:") + friction.component_id;
+        auto& input_sources = friction.ackermann_step ? service_friction_sources : sources;
+        input_sources.push_back(std::make_shared<ScalarPduCommandSource>(
             source_id, plant->delta_time_usec(), std::move(reader)));
         directive_controllers.push_back(std::make_shared<GeomFrictionController>(
             friction.component_id,
@@ -355,6 +366,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #endif
 
+    std::vector<std::shared_ptr<IStatePublisher>> publishers;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
     constexpr const char* ackermann_control_group = "ackermann-pdu-direct";
     for (const auto& config : definition.ackermann_controllers) {
@@ -365,19 +377,26 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
                 + config.component_id);
         }
         const std::string source_id = "ackermann-pdu:" + config.component_id;
+        auto service = ackermann_service_factory
+            ? ackermann_service_factory(config) : std::nullopt;
+        if (service) {
+            // Source polling is ordered: the service must fill the reader
+            // before the drive source takes the command in this substep.
+            sources.push_back(std::move(service->source));
+            controllers.push_back(std::move(service->controller));
+            publishers.push_back(std::move(service->publisher));
+        }
         sources.push_back(std::make_shared<AckermannDriveCommandSource>(
-            source_id,
-            config.input_timeout_usec,
-            std::move(reader)));
+            source_id, config.input_timeout_usec, std::move(reader)));
         controllers.push_back(std::make_shared<AckermannController>(config));
         priorities.push_back({config.component_id, 10, ackermann_control_group});
     }
 #else
     (void)ackermann_reader_factory;
+    (void)ackermann_service_factory;
 #endif
 
-    std::vector<std::shared_ptr<IStatePublisher>> publishers;
-    publishers.reserve(definition.state_outputs.size()
+    publishers.reserve(publishers.size() + definition.state_outputs.size()
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
         + definition.impulse_collision_outputs.size()
 #endif
@@ -446,6 +465,18 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #endif
 
+    if (person_state_publisher) {
+        publishers.push_back(std::move(person_state_publisher));
+    }
+    for (auto& service : person_services) {
+        publishers.push_back(std::move(service.publisher));
+    }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+    // Poll the service request before the friction reader in this same substep.
+    for (auto& source : service_friction_sources) {
+        sources.push_back(std::move(source));
+    }
+#endif
     auto arbiter = std::make_shared<PriorityCommandArbiter>(
         std::move(priorities));
     return std::make_unique<ActuatorRuntime>(

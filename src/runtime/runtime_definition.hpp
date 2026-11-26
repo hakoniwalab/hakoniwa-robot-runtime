@@ -210,6 +210,7 @@ struct RuntimeGeomFrictionConfig {
      * contact is decided by the model (geom priority), not by the Runtime.
      */
     std::vector<std::string> geoms;
+    bool ackermann_step {false};
 };
 #endif
 
@@ -285,6 +286,15 @@ struct RuntimeSensorOutputConfig {
 };
 #endif
 
+enum class RuntimeServiceType { AckermannStep, PersonStep };
+
+struct RuntimeServiceConfig {
+    std::string name;
+    RuntimeServiceType type;
+    std::string pdu_robot;
+    bool lockstep {false};
+};
+
 struct RuntimeDefinition {
     std::string model_path;
     std::vector<RuntimeInitialBodyPoseConfig> initial_body_poses;
@@ -296,6 +306,7 @@ struct RuntimeDefinition {
     std::vector<RuntimeTrajectoryControllerConfig> trajectory_controllers;
     std::vector<RuntimeManualControllerConfig> manual_controllers;
     std::vector<RuntimeAckermannControllerConfig> ackermann_controllers;
+    std::vector<RuntimeServiceConfig> services;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
     std::vector<RuntimePluginControllerConfig> plugin_controllers;
 #endif

@@ -177,6 +177,7 @@ bool resolve_manifest(
         pdu_definition_path.string(),
         runtime_config_path.string(),
         root.at("components").dump(),
+        root.value("services", json::array()).dump(),
     };
 
     output = std::move(resolved);

@@ -14,24 +14,24 @@
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_MOBILE_BASE
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_pdu_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/multi_dof_joint_state_pdu_writer.hpp"
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
 #include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
 #include "hakoniwa/robot_runtime/adapters/endpoint/person_step_rpc_event_reader.hpp"
 #endif
-#endif
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
 #include "hako_msgs/pdu_cpptype_ContactEvent.hpp"
 #include "hako_msgs/pdu_cpptype_ContactEventArray.hpp"
 #include "hako_msgs/pdu_cpptype_conv_ContactEvent.hpp"
 #include "hako_msgs/pdu_cpptype_conv_ContactEventArray.hpp"
 #include "hakoniwa/pdu/type_endpoint.hpp"
 #include <nlohmann/json.hpp>
-#endif
 #include "runner/runner_factory.hpp"
 #include "runtime/runtime_factory.hpp"
 #include "runtime/runtime_factory_manifest.hpp"
+#include "adapters/endpoint/ackermann_step_service.hpp"
+#include "adapters/endpoint/person_step_service.hpp"
+#include "runner/hakoniwa/core_async_service_server.hpp"
+#include "runtime/service/async_service_pipeline.hpp"
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 #include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
@@ -59,13 +59,11 @@
 #endif
 
 #include <memory>
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
 #include <cmath>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
-#endif
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -73,7 +71,6 @@
 
 namespace hakoniwa::robot_runtime::factory {
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
 namespace {
 
 using ContactEndpoint = ::hakoniwa::pdu::TypedEndpoint<
@@ -183,8 +180,36 @@ private:
     std::ofstream log_;
 };
 
+class PersonStatePublisher final : public runtime::IStatePublisher {
+public:
+    explicit PersonStatePublisher(std::function<bool(std::string&)> write)
+        : write_(std::move(write)) {}
+
+    std::string_view id() const noexcept override { return "person-state"; }
+
+    runtime::ComponentStatus publish(
+        const runtime::RobotState&, const runtime::RuntimeStepContext&) noexcept override
+    {
+        const std::string component_id(id());
+        try {
+            std::string error;
+            const bool ok = write_(error);
+            return {component_id, ok ? runtime::ComponentState::Ready
+                                     : runtime::ComponentState::Error, std::move(error)};
+        } catch (const std::exception& error) {
+            return {component_id, runtime::ComponentState::Error, error.what()};
+        } catch (...) {
+            return {component_id, runtime::ComponentState::Error, "failed to publish person state"};
+        }
+    }
+
+    void reset() noexcept override {}
+
+private:
+    std::function<bool(std::string&)> write_;
+};
+
 } // namespace
-#endif
 
 std::unique_ptr<runner::IRunner> ManifestFactory::create(
     const std::string& manifest_path,
@@ -217,21 +242,46 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
         ? manifest.name
         : std::move(config.asset_name);
 
-#if !defined(HAKO_ENABLE_ASYNC_RPC_INPUT) || !HAKO_ENABLE_ASYNC_RPC_INPUT
-    if (!config.ackermann_rpc_inputs.empty()
-        || !config.person_rpc_inputs.empty()) {
-        throw std::invalid_argument(
-            "asynchronous RPC input support is not enabled in this build");
-    }
-#endif
 
+    std::unordered_set<std::string> rpc_requested;
+    std::vector<std::string> people;
+    for (const auto& service : runtime_definition.services) {
+        const auto& robot = service.pdu_robot;
+        const bool ackermann = service.type == runtime::RuntimeServiceType::AckermannStep;
+        const auto expected_name = ackermann
+            ? adapters::hakoniwa::ackermann_step_service_name(robot)
+            : adapters::hakoniwa::person_step_service_name(robot);
+        if (service.name != expected_name) {
+            throw std::invalid_argument("service " + service.name
+                + " must use the name " + expected_name + " for " + robot);
+        }
+        if (!ackermann) {
+            people.push_back(robot);
+            continue;
+        }
+        const auto& controllers = runtime_definition.ackermann_controllers;
+        if (std::none_of(controllers.begin(), controllers.end(), [&robot](const auto& controller) {
+                return controller.pdu_robot == robot;
+            })) {
+            throw std::invalid_argument("Ackermann RPC vehicle has no controller: " + robot);
+        }
+        rpc_requested.insert(robot);
+    }
+    const bool has_services = !runtime_definition.services.empty();
+    const bool has_service_definition = !config.async_rpc_service_definition_path.empty();
+    if (has_services != has_service_definition) {
+        throw std::invalid_argument("Manifest services must be paired with --rpc-service-config");
+    }
+    if (people.empty() && !config.person_contact_log_path.empty()) {
+        throw std::invalid_argument("--person-contact-log requires a PersonStep input");
+    }
     auto resources_factory =
         [definition = std::move(runtime_definition),
          endpoint_path = manifest.endpoint_path,
          endpoint_name = std::move(config.endpoint_name),
          lockstep_keys = config.lockstep_inputs,
-         rpc_vehicles = config.ackermann_rpc_inputs,
-         rpc_people = config.person_rpc_inputs,
+         rpc_requested = std::move(rpc_requested),
+         people = std::move(people),
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
          asset_name]() mutable
@@ -244,28 +294,88 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 "failed to open Runtime endpoint: " + endpoint_path);
         }
 
-        std::vector<std::shared_ptr<runner::ILockstepInput>> lockstep_inputs;
+        std::vector<runner::LockstepGate::Input> lockstep_inputs;
         std::vector<std::string> lockstep_matched;
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
         std::unordered_map<std::string,
             std::shared_ptr<adapters::hakoniwa::AckermannDriveRpcEventReader>>
             rpc_readers;
-        std::unordered_set<std::string> rpc_requested(
-            rpc_vehicles.begin(), rpc_vehicles.end());
-        if (rpc_requested.size() != rpc_vehicles.size()) {
-            throw std::invalid_argument("duplicate Ackermann RPC vehicle");
-        }
-#endif
         try {
+            runtime::AckermannServiceFactory ackermann_service_factory;
+            std::vector<runtime::AsyncServiceComponents> person_services;
+            std::shared_ptr<runtime::IStatePublisher> person_state_publisher;
+            std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
             auto plant = std::make_shared<
                 adapters::mujoco::MujocoActuatorPlant>(definition);
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-            std::unordered_set<std::string> person_requested(
-                rpc_people.begin(), rpc_people.end());
-            if (person_requested.size() != rpc_people.size()) {
-                throw std::invalid_argument("duplicate PersonStep person");
+            std::unordered_map<std::string,
+                std::shared_ptr<adapters::hakoniwa::AckermannStepFrictionInput>> service_friction;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
+            for (const auto& friction : definition.geom_frictions) {
+                if (friction.ackermann_step) {
+                    service_friction.emplace(friction.pdu_robot,
+                        std::make_shared<adapters::hakoniwa::AckermannStepFrictionInput>());
+                }
             }
-            for (const auto& person : rpc_people) {
+#endif
+            std::unordered_map<std::string, std::string> state_id_by_vehicle;
+            for (const auto& output : definition.multi_dof_state_outputs) {
+                for (const auto& body : output.bodies) {
+                    if (rpc_requested.contains(body.name)
+                        && !state_id_by_vehicle.emplace(body.name, body.state_id).second) {
+                        throw std::invalid_argument(
+                            "Ackermann RPC vehicle has multiple state bindings: " + body.name);
+                    }
+                }
+            }
+            for (const auto& vehicle : rpc_requested) {
+                if (!state_id_by_vehicle.contains(vehicle)) {
+                    throw std::invalid_argument(
+                        "Ackermann RPC vehicle has no MultiDOF state binding: " + vehicle);
+                }
+            }
+            std::unordered_map<std::string, std::size_t> ackermann_service_ids;
+            std::vector<std::string> service_names;
+            for (std::size_t index = 0; index < definition.services.size(); ++index) {
+                const auto& service = definition.services[index];
+                service_names.push_back(service.name);
+                if (service.type == runtime::RuntimeServiceType::AckermannStep) {
+                    ackermann_service_ids.emplace(service.pdu_robot, index);
+                }
+            }
+            if (!service_names.empty()) {
+                service_server = std::make_shared<runner::hakoniwa::CoreAsyncServiceServer>(
+                    asset_name, std::move(service_names));
+            }
+            const auto make_service_components = [&](
+                std::size_t index, std::shared_ptr<runtime::IAsyncService> service) {
+                const auto& config = definition.services[index];
+                auto source = std::make_shared<runtime::AsyncServiceCommandSource>(
+                    config.name, static_cast<int>(index), service_server, std::move(service), config.lockstep);
+                if (config.lockstep) {
+                    lockstep_inputs.push_back({config.name, source});
+                }
+                return runtime::AsyncServiceComponents {
+                    source,
+                    std::make_shared<runtime::AsyncServiceController>(config.name + ":controller", source),
+                    std::make_shared<runtime::AsyncServiceResponsePublisher>(config.name + ":response", source),
+                };
+            };
+            if (!ackermann_service_ids.empty()) {
+                ackermann_service_factory =
+                    [&](const runtime::RuntimeAckermannControllerConfig& drive)
+                        -> std::optional<runtime::AsyncServiceComponents> {
+                    const auto& vehicle = drive.pdu_robot;
+                    const auto service = ackermann_service_ids.find(vehicle);
+                    if (service == ackermann_service_ids.end()) {
+                        return std::nullopt;
+                    }
+                    const auto friction = service_friction.find(vehicle);
+                    return make_service_components(service->second,
+                        std::make_shared<adapters::hakoniwa::AckermannStepService>(
+                            rpc_readers.at(vehicle), state_id_by_vehicle.at(vehicle),
+                            friction == service_friction.end() ? nullptr : friction->second));
+                };
+            }
+            for (const auto& person : people) {
                 const auto initial = std::find_if(
                     definition.person_initial_poses.begin(),
                     definition.person_initial_poses.end(),
@@ -278,7 +388,83 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         ? 0.0
                         : initial->yaw_rad);
             }
-#endif
+            std::function<bool(std::string&)> publish_people;
+            if (!people.empty()) {
+                auto person_joint_writer = std::make_shared<
+                    adapters::hakoniwa::JointStatePduWriter>(
+                        *endpoint, person_state_robot, "joint_states");
+                auto person_body_writer = std::make_shared<
+                    adapters::hakoniwa::MultiDofJointStatePduWriter>(
+                        *endpoint, person_state_robot, "vehicle_states");
+                auto person_contact_output = std::make_shared<PersonContactOutput>(
+                    *endpoint,
+                    people,
+                    person_state_robot,
+                    person_contact_log_path);
+                publish_people = [plant, people, person_joint_writer,
+                    person_body_writer, person_contact_output](std::string& error) {
+                    runtime::JointStateOutput joints;
+                    runtime::MultiDofJointStateOutput bodies;
+                    bodies.frame_id = "city_map";
+                    for (const auto& person : people) {
+                        const auto state = plant->person_state(person);
+                        joints.simulation_time_usec =
+                            state.simulation_time_usec;
+                        bodies.simulation_time_usec =
+                            state.simulation_time_usec;
+                        for (std::size_t index = 0;
+                             index < adapters::hakoniwa::person_limb_joint_names.size();
+                             ++index) {
+                            joints.names.push_back(
+                                person + "/" + std::string(
+                                    adapters::hakoniwa::person_limb_joint_names[index]));
+                            joints.position.push_back(
+                                state.joint_positions[index]);
+                            joints.velocity.push_back(0.0);
+                            joints.effort.push_back(0.0);
+                        }
+                        bodies.bodies.push_back({
+                            person,
+                            state.position,
+                            state.orientation,
+                            state.linear_velocity,
+                            state.angular_velocity,
+                        });
+                    }
+                    if (!person_joint_writer->send(joints)
+                        || !person_body_writer->send(bodies)) {
+                        error = "failed to publish viewer-compatible person state";
+                        return false;
+                    }
+                    if (!person_contact_output->publish(
+                            plant->take_person_contact_events())) {
+                        error = "failed to publish person contact events";
+                        return false;
+                    }
+                    return true;
+                };
+            }
+            for (std::size_t index = 0; index < definition.services.size(); ++index) {
+                const auto& service = definition.services[index];
+                if (service.type != runtime::RuntimeServiceType::PersonStep) {
+                    continue;
+                }
+                const auto& person = service.pdu_robot;
+                person_services.push_back(make_service_components(index,
+                    std::make_shared<adapters::hakoniwa::PersonStepService>(person,
+                        [plant, person](const auto& command) {
+                            return plant->apply_person_command(person, command);
+                        },
+                        [plant, person](std::uint32_t code) {
+                            return plant->person_state(person, code);
+                        })));
+            }
+            if (!person_services.empty()) {
+                // An asynchronous person may have no reply on this tick.
+                // Publish viewer state and contacts once independently of replies.
+                person_state_publisher = std::make_shared<PersonStatePublisher>(
+                    std::exchange(publish_people, {}));
+            }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
             // Sensor PDUs of the controller plugins: the plugins read the
             // bytes the sensor writers encode for the endpoint.
@@ -325,7 +511,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 ,
                 [&](const runtime::RuntimeAckermannControllerConfig& controller)
                     -> std::shared_ptr<runtime::IAckermannDriveEventReader> {
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
                     if (rpc_requested.contains(controller.pdu_robot)) {
                         auto reader = std::make_shared<
                             adapters::hakoniwa::AckermannDriveRpcEventReader>();
@@ -336,7 +521,6 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         }
                         return std::shared_ptr<runtime::IAckermannDriveEventReader>(reader);
                     }
-#endif
                     auto reader = std::make_shared<
                         adapters::hakoniwa::AckermannDrivePduEventReader>(
                         *endpoint,
@@ -346,7 +530,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key)
                         != lockstep_keys.end()) {
                         reader->subscribe_lockstep();
-                        lockstep_inputs.push_back(reader);
+                        lockstep_inputs.push_back({key, reader});
                         lockstep_matched.push_back(key);
                     } else {
                         reader->subscribe();
@@ -381,7 +565,11 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         output.pdu_robot,
                         output.pdu_name);
                 },
-                [&](const runtime::RuntimeGeomFrictionConfig& friction) {
+                [&](const runtime::RuntimeGeomFrictionConfig& friction)
+                    -> std::shared_ptr<runtime::IFloat64EventReader> {
+                    if (friction.ackermann_step) {
+                        return service_friction.at(friction.pdu_robot);
+                    }
                     auto reader = std::make_shared<
                         adapters::hakoniwa::Float64PduEventReader>(
                         *endpoint,
@@ -391,7 +579,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     if (std::find(lockstep_keys.begin(), lockstep_keys.end(), key)
                         != lockstep_keys.end()) {
                         reader->subscribe_lockstep();
-                        lockstep_inputs.push_back(reader);
+                        lockstep_inputs.push_back({key, reader});
                         lockstep_matched.push_back(key);
                     } else {
                         reader->subscribe();
@@ -402,6 +590,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
                 , &plugin_pdu_channels
 #endif
+                , ackermann_service_factory
+                , std::move(person_services)
+                , std::move(person_state_publisher)
                 );
 
             for (const auto& key : lockstep_keys) {
@@ -411,191 +602,14 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         "lockstep input " + key + " is not an Ackermann command or a geom friction input");
                 }
             }
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-            std::vector<std::shared_ptr<runner::AsyncRpcInput>> async_rpc_inputs;
-            if (!rpc_requested.empty()) {
-                if (rpc_readers.size() != rpc_requested.size()) {
-                    for (const auto& vehicle : rpc_requested) {
-                        if (!rpc_readers.contains(vehicle)) {
-                            throw std::invalid_argument(
-                                "Ackermann RPC vehicle has no controller: " + vehicle);
-                        }
-                    }
-                }
-                std::unordered_map<std::string, std::string> state_id_by_vehicle;
-                for (const auto& output : definition.multi_dof_state_outputs) {
-                    for (const auto& body : output.bodies) {
-                        if (rpc_requested.contains(body.name)
-                            && !state_id_by_vehicle.emplace(body.name, body.state_id).second) {
-                            throw std::invalid_argument(
-                                "Ackermann RPC vehicle has multiple state bindings: "
-                                + body.name);
-                        }
-                    }
-                }
-                std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> channels;
-                channels.reserve(rpc_vehicles.size());
-                for (const auto& vehicle : rpc_vehicles) {
-                    if (!state_id_by_vehicle.contains(vehicle)) {
+            if (rpc_readers.size() != rpc_requested.size()) {
+                for (const auto& vehicle : rpc_requested) {
+                    if (!rpc_readers.contains(vehicle)) {
                         throw std::invalid_argument(
-                            "Ackermann RPC vehicle has no MultiDOF state binding: "
-                            + vehicle);
+                            "Ackermann RPC vehicle has no controller: " + vehicle);
                     }
-                    channels.push_back(
-                        adapters::hakoniwa::make_ackermann_step_service_channel(
-                            vehicle, asset_name));
                 }
-                auto input = std::make_shared<runner::AsyncRpcInput>(
-                    std::move(channels),
-                    runner::AsyncRpcInputConfig {},
-                    [rpc_readers](
-                        std::span<const runner::AsyncRpcRequest> requests,
-                        std::string& error) {
-                        for (const auto& request : requests) {
-                            runtime::AckermannDriveCommand command;
-                            const auto reader = rpc_readers.find(request.channel);
-                            if (reader == rpc_readers.end()
-                                || !adapters::hakoniwa::decode_ackermann_command(
-                                    request.payload, command)) {
-                                error = "invalid Ackermann command for " + request.channel;
-                                return false;
-                            }
-                            reader->second->apply(command);
-                        }
-                        return true;
-                    },
-                    [plant, state_id_by_vehicle](
-                        const runner::AsyncRpcRequest& request,
-                        runner::AsyncRpcResponse& response,
-                        std::string& error) {
-                        const auto binding = state_id_by_vehicle.find(request.channel);
-                        if (binding == state_id_by_vehicle.end()) {
-                            error = "missing Ackermann state binding for " + request.channel;
-                            return false;
-                        }
-                        const auto state = plant->read_state();
-                        const auto body = std::find_if(
-                            state.bodies.begin(), state.bodies.end(),
-                            [&](const auto& candidate) {
-                                return candidate.body_id == binding->second;
-                            });
-                        if (body == state.bodies.end()) {
-                            error = "plant state is missing body " + binding->second;
-                            return false;
-                        }
-                        response.step = request.step;
-                        response.payload = adapters::hakoniwa::encode_ackermann_state({
-                            state.sample_time_usec,
-                            body->position,
-                            body->orientation,
-                            body->linear_velocity,
-                            body->angular_velocity,
-                        });
-                        return true;
-                    });
-                async_rpc_inputs.push_back(std::move(input));
             }
-            if (!person_requested.empty()) {
-                auto person_joint_writer = std::make_shared<
-                    adapters::hakoniwa::JointStatePduWriter>(
-                        *endpoint, person_state_robot, "joint_states");
-                auto person_body_writer = std::make_shared<
-                    adapters::hakoniwa::MultiDofJointStatePduWriter>(
-                        *endpoint, person_state_robot, "vehicle_states");
-                auto person_contact_output = std::make_shared<PersonContactOutput>(
-                    *endpoint,
-                    rpc_people,
-                    person_state_robot,
-                    person_contact_log_path);
-                std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> channels;
-                channels.reserve(rpc_people.size());
-                for (const auto& person : rpc_people) {
-                    channels.push_back(
-                        adapters::hakoniwa::make_person_step_service_channel(
-                            person, asset_name));
-                }
-                auto result_codes = std::make_shared<
-                    std::unordered_map<std::string, std::uint32_t>>();
-                auto input = std::make_shared<runner::AsyncRpcInput>(
-                    std::move(channels),
-                    runner::AsyncRpcInputConfig {},
-                    [plant, result_codes](
-                        std::span<const runner::AsyncRpcRequest> requests,
-                        std::string& error) {
-                        result_codes->clear();
-                        for (const auto& request : requests) {
-                            adapters::hakoniwa::PersonStepCommand command;
-                            if (!adapters::hakoniwa::decode_person_command(
-                                    request.payload, command)) {
-                                error = "invalid PersonStep command for "
-                                    + request.channel;
-                                return false;
-                            }
-                            (*result_codes)[request.channel] =
-                                plant->apply_person_command(
-                                    request.channel, command);
-                        }
-                        return true;
-                    },
-                    [plant, result_codes, rpc_people,
-                        person_joint_writer, person_body_writer,
-                        person_contact_output](
-                        const runner::AsyncRpcRequest& request,
-                        runner::AsyncRpcResponse& response,
-                        std::string& error) {
-                        const auto code = result_codes->find(request.channel);
-                        response.step = request.step;
-                        response.payload =
-                            adapters::hakoniwa::encode_person_state(
-                                plant->person_state(
-                                    request.channel,
-                                    code == result_codes->end()
-                                        ? 0U : code->second));
-                        if (request.channel == rpc_people.back()) {
-                            runtime::JointStateOutput joints;
-                            runtime::MultiDofJointStateOutput bodies;
-                            bodies.frame_id = "city_map";
-                            for (const auto& person : rpc_people) {
-                                const auto state = plant->person_state(person);
-                                joints.simulation_time_usec =
-                                    state.simulation_time_usec;
-                                bodies.simulation_time_usec =
-                                    state.simulation_time_usec;
-                                for (std::size_t index = 0;
-                                     index < adapters::hakoniwa::person_limb_joint_names.size();
-                                     ++index) {
-                                    joints.names.push_back(
-                                        person + "/" + std::string(
-                                            adapters::hakoniwa::person_limb_joint_names[index]));
-                                    joints.position.push_back(
-                                        state.joint_positions[index]);
-                                    joints.velocity.push_back(0.0);
-                                    joints.effort.push_back(0.0);
-                                }
-                                bodies.bodies.push_back({
-                                    person,
-                                    state.position,
-                                    state.orientation,
-                                    state.linear_velocity,
-                                    state.angular_velocity,
-                                });
-                            }
-                            if (!person_joint_writer->send(joints)
-                                || !person_body_writer->send(bodies)) {
-                                error = "failed to publish viewer-compatible person state";
-                                return false;
-                            }
-                            if (!person_contact_output->publish(
-                                    plant->take_person_contact_events())) {
-                                error = "failed to publish person contact events";
-                                return false;
-                            }
-                        }
-                        return true;
-                    });
-                async_rpc_inputs.push_back(std::move(input));
-            }
-#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
             if (!definition.sensors.empty()) {
                 auto stage = std::make_shared<adapters::mujoco::MujocoSensorStage>(
@@ -763,9 +777,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 std::move(plant),
                 std::move(endpoint),
                 std::move(lockstep_inputs),
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-                std::move(async_rpc_inputs),
-#endif
+                service_server ? std::function<void()>([service_server] { service_server->prepare(); })
+                    : std::function<void()>(),
             };
         } catch (...) {
             endpoint->close();

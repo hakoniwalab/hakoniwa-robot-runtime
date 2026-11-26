@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hakoniwa.dev/schemas/robot-runtime-asset-manifest.schema.json",
+  "title": "Hakoniwa Robot Runtime asset manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "model", "pdu_def", "endpoint", "runtime_config", "components"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": 1 },
+    "name": { "$ref": "#/$defs/nonempty_string" },
+    "description": { "type": "string" },
+    "model": { "$ref": "#/$defs/nonempty_string" },
+    "pdu_def": { "$ref": "#/$defs/nonempty_string" },
+    "endpoint": { "$ref": "#/$defs/nonempty_string" },
+    "runtime_config": { "$ref": "#/$defs/nonempty_string" },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/service" }
+    }
+  },
+  "$defs": {
+    "nonempty_string": { "type": "string", "minLength": 1 },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "type", "config"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonempty_string" },
+        "kind": { "enum": ["sensor", "actuator", "state_output", "command_input", "controller"] },
+        "type": { "$ref": "#/$defs/nonempty_string" },
+        "config": { "$ref": "#/$defs/nonempty_string" },
+        "pdu_robot": { "$ref": "#/$defs/nonempty_string" },
+        "description": { "type": "string" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "pdu_robot"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonempty_string",
+          "description": "Registered Core service name. Use CarService/AckermannStep/<pdu_robot> or PersonService/PersonStep/<pdu_robot> according to type."
+        },
+        "type": { "enum": ["ackermann_step", "person_step"] },
+        "pdu_robot": { "$ref": "#/$defs/nonempty_string" },
+        "lockstep": { "type": "boolean", "default": false }
+      }
+    }
+  }
+}

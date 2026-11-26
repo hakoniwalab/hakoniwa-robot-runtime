@@ -29,13 +29,9 @@ struct ManifestFactoryConfig {
     std::vector<std::string> lockstep_inputs;
     /** Physics steps per Hakoniwa step (HakoniwaRunnerConfig::physics_substeps). */
     std::uint32_t physics_substeps {1};
-    /** Vehicles supplied by `CarService/AckermannStep/<vehicle>`. */
-    std::vector<std::string> ackermann_rpc_inputs;
-    /** People supplied by `PersonService/PersonStep/<person>`. */
-    std::vector<std::string> person_rpc_inputs;
     /** Robot carrying the viewer-compatible people state PDUs. */
     std::string person_state_robot {"UrbanPeople"};
-    /** Core service definition JSON; required when any RPC input is non-empty. */
+    /** Core service definition JSON for manifest services. */
     std::string async_rpc_service_definition_path;
     /** Optional JSONL destination for person contact edges. */
     std::string person_contact_log_path;

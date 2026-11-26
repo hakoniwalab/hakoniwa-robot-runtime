@@ -1,0 +1,82 @@
+{
+  "_provenance": {
+    "uname_sm": "Darwin arm64",
+    "os_release": "macOS 27.2.1 (26B131)",
+    "compiler": "AppleClang 21.0.0.21000401",
+    "capture": "Stage K macOS runs verified against the existing RPC references on 2026-11-26"
+  },
+  "_tolerance": {
+    "absolute": 1e-09,
+    "by_column": {},
+    "reason": "Allow observed platform round-off in physical values. Preserve exact timing, identifiers, and same-machine replay bytes."
+  },
+  "ackermann-single": {
+    "responses-A.txt": {
+      "text": "RESPONSE channel=A k=0 speed=5\nRESPONSE channel=A k=1 speed=6\nRESPONSE channel=A k=2 speed=7\n"
+    }
+  },
+  "ackermann-two": {
+    "responses-A.txt": {
+      "text": "RESPONSE channel=A k=0 speed=5\nRESPONSE channel=A k=1 speed=6\nRESPONSE channel=A k=2 speed=7\n"
+    },
+    "responses-B.txt": {
+      "text": "RESPONSE channel=B k=0 speed=0\nRESPONSE channel=B k=1 speed=1\nRESPONSE channel=B k=2 speed=2\n"
+    }
+  },
+  "person": {
+    "responses-A.txt": {
+      "text": "RESPONSE channel=A k=0 x=0.001\nRESPONSE channel=A k=1 x=0.002\nRESPONSE channel=A k=2 x=0.003\n"
+    },
+    "responses-B.txt": {
+      "text": "RESPONSE channel=B k=0 x=0\nRESPONSE channel=B k=1 x=0\nRESPONSE channel=B k=2 x=0\n"
+    }
+  },
+  "urban-single": {
+    "state-Car-1.bin": {
+      "bytes": 8960,
+      "sha256": "535609aa366068d4a8eae7c6f6cad8ab503c99abf6ea5a4331781ddd3a0319c5",
+      "payload": "rpc_step_payloads/urban-single/state-Car-1.bin.gz",
+      "format": "ackermann-state"
+    }
+  },
+  "urban-two": {
+    "state-Car-1.bin": {
+      "bytes": 8960,
+      "sha256": "b943922d877dc0d0caa8cb300907027e8e4fe3e0272f993a242600596f9e96a5",
+      "payload": "rpc_step_payloads/urban-two/state-Car-1.bin.gz",
+      "format": "ackermann-state"
+    },
+    "state-Car-2.bin": {
+      "bytes": 8960,
+      "sha256": "c625dc37144faa74b25ca766a2d22437f910d3830bd9059a67bd152932cd2e53",
+      "payload": "rpc_step_payloads/urban-two/state-Car-2.bin.gz",
+      "format": "ackermann-state"
+    }
+  },
+  "urban-mixed": {
+    "Car-1.bin": {
+      "bytes": 10240,
+      "sha256": "062697208762ea21e3a6f87de2936bd9ab788e1eb336fe60e7610ef26d686e66",
+      "payload": "rpc_step_payloads/urban-mixed/Car-1.bin.gz",
+      "format": "ackermann-body"
+    },
+    "Car-2.bin": {
+      "bytes": 10240,
+      "sha256": "796fffe2a098269b60feb42d18d5f64e96e4223b8861c1d9fbf2807b48a98eb3",
+      "payload": "rpc_step_payloads/urban-mixed/Car-2.bin.gz",
+      "format": "ackermann-body"
+    },
+    "Walker.bin": {
+      "bytes": 96640,
+      "sha256": "20cd9c5b5b3549f0479420082253ecae9742b1a850d6658c5c096a119b57b78d",
+      "payload": "rpc_step_payloads/urban-mixed/Walker.bin.gz",
+      "format": "person-body"
+    },
+    "contacts.jsonl": {
+      "bytes": 167,
+      "sha256": "c24e6564907e199a93ec28961b9b99bee214c451a7ce6ed139d5cb201695458d",
+      "payload": "rpc_step_payloads/urban-mixed/contacts.jsonl.gz",
+      "format": "contacts-jsonl"
+    }
+  }
+}

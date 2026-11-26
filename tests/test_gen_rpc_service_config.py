@@ -6,6 +6,8 @@ import importlib.util
 from pathlib import Path
 import unittest
 
+from hakoniwa_pdu.pdu_msgs.pdu_size import PDU_SIZE
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -32,8 +34,14 @@ class RpcServiceConfigTest(unittest.TestCase):
                     "type": "hako_srv_msgs/AckermannStep",
                     "maxClients": 1,
                     "pduSize": {
-                        "server": {"heapSize": 0, "baseSize": 312},
-                        "client": {"heapSize": 0, "baseSize": 408},
+                        "server": {
+                            "heapSize": 0,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/AckermannStepRequestPacket"] + 8,
+                        },
+                        "client": {
+                            "heapSize": 0,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/AckermannStepResponsePacket"] + 8,
+                        },
                     },
                 }
                 for index in (1, 2)
@@ -56,8 +64,14 @@ class RpcServiceConfigTest(unittest.TestCase):
                     "type": "hako_srv_msgs/PersonStep",
                     "maxClients": 1,
                     "pduSize": {
-                        "server": {"heapSize": 0, "baseSize": 592},
-                        "client": {"heapSize": 2048, "baseSize": 576},
+                        "server": {
+                            "heapSize": 0,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/PersonStepRequestPacket"] + 8,
+                        },
+                        "client": {
+                            "heapSize": 2048,
+                            "baseSize": PDU_SIZE["hako_srv_msgs/PersonStepResponsePacket"] + 8,
+                        },
                     },
                 }
                 for name in ("Alice", "Bob")
@@ -69,37 +83,6 @@ class RpcServiceConfigTest(unittest.TestCase):
             GENERATOR.build_service_json(
                 [], "pdu.json", ["Alice", "Alice"]
             )
-
-    def test_runtime_arguments_match_generated_service_config(self) -> None:
-        self.assertEqual(
-            GENERATOR.build_runtime_args(
-                ["Car-1", "Car-2"], "/runtime/service.json"
-            ),
-            [
-                "--ackermann-rpc-input",
-                "Car-1",
-                "--ackermann-rpc-input",
-                "Car-2",
-                "--rpc-service-config",
-                "/runtime/service.json",
-            ],
-        )
-
-    def test_person_runtime_arguments(self) -> None:
-        self.assertEqual(
-            GENERATOR.build_runtime_args(
-                [], "/runtime/service.json", ["Alice", "Bob"]
-            ),
-            [
-                "--person-rpc-input",
-                "Alice",
-                "--person-rpc-input",
-                "Bob",
-                "--rpc-service-config",
-                "/runtime/service.json",
-            ],
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

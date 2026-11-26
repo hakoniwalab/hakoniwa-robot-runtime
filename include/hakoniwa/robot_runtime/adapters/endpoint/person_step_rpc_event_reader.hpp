@@ -1,15 +1,14 @@
 #pragma once
 
-#include "hakoniwa/robot_runtime/runner/async_rpc_input.hpp"
-#include "hakoniwa/robot_runtime/runner/hakoniwa/async_rpc_service_channel.hpp"
 #include "runtime/types.hpp"
 
 #include <array>
 #include <cstdint>
-#include <memory>
+#include <cstddef>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 
@@ -53,11 +52,5 @@ struct PersonStepState {
 /** `PersonService/PersonStep/<person>`. */
 [[nodiscard]] std::string person_step_service_name(
     std::string_view person_name);
-
-/** One PersonStep Core service server per person. */
-[[nodiscard]] std::shared_ptr<runner::hakoniwa::CoreAsyncRpcServiceChannel>
-make_person_step_service_channel(
-    std::string person_name,
-    std::string asset_name);
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

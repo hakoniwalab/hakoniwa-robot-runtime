@@ -4,9 +4,7 @@
 #include "runner/realtime_pacer.hpp"
 
 #include "hako_conductor.h"
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
 #include "hako_asset_service.h"
-#endif
 #include "hakoniwa/pdu/endpoint.hpp"
 
 #include <mujoco/mujoco.h>
@@ -16,6 +14,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -139,6 +138,7 @@ public:
             mj_deleteData(view);
             view = nullptr;
         }
+        step_gate.reset();
         resources = {};
         runtime_started = false;
         pacer.reset();
@@ -149,18 +149,15 @@ public:
 
     int on_initialize() noexcept override
     {
-        for (const auto& input : resources.lockstep_inputs) {
-            input->lockstep_prepare();
-        }
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-        for (const auto& input : resources.async_rpc_inputs) {
-            if (!input->prepare_channels()) {
-                fail(input->failure_reason());
+        if (resources.prepare_async_services) {
+            try {
+                resources.prepare_async_services();
+            } catch (const std::exception& error) {
+                fail(error.what());
                 return -1;
             }
-            input->lockstep_prepare();
         }
-#endif
+        step_gate->prepare();
         if (resources.endpoint == nullptr
             || resources.endpoint->post_start() != HAKO_PDU_ERR_OK) {
             fail("failed to complete endpoint post_start");
@@ -174,42 +171,18 @@ public:
 
     bool sleep_before_first_step() const noexcept override
     {
-        return !resources.lockstep_inputs.empty();
+        return step_gate->sleep_before_first_step();
     }
 
     bool ready_to_step() noexcept override
     {
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-        // Propagate pause before consulting any other lockstep input.  A
-        // different input may be incomplete and return early below, but that
-        // must not leave the asynchronous RPC timeout clock running.
         const bool is_paused = paused.load();
-        for (const auto& input : resources.async_rpc_inputs) {
-            input->set_waiting_paused(is_paused);
+        step_gate->set_waiting_paused(is_paused);
+        const bool inputs_ready = step_gate->ready_to_step();
+        if (step_gate->failed()) {
+            fail(step_gate->failure_reason());
         }
-        // With asynchronous RPC, one request batch corresponds to exactly one
-        // physics/time step.  A viewer pause therefore blocks the Driver before
-        // on_step() and sleep_no_wait().  The legacy PDU-only path remains below.
-        if (is_paused && !resources.async_rpc_inputs.empty()) {
-            return false;
-        }
-#endif
-        for (const auto& input : resources.lockstep_inputs) {
-            if (!input->lockstep_ready()) {
-                return false;
-            }
-        }
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-        for (const auto& input : resources.async_rpc_inputs) {
-            if (!input->lockstep_ready()) {
-                if (input->failed()) {
-                    fail(input->failure_reason());
-                }
-                return false;
-            }
-        }
-#endif
-        return true;
+        return inputs_ready;
     }
 
     int on_step() noexcept override
@@ -226,31 +199,18 @@ public:
                     std::cout << "[INFO] Robot simulation reset." << std::endl;
                     refresh_view(true);
                 }
-                if (paused.load()) {
+                // A timed batch already admitted by ready_to_step() owns
+                // this tick. A concurrent pause takes effect on the next tick.
+                if (paused.load() && !step_gate->uses_deadline()) {
                     pacer.reset();
                     return 0;
                 }
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-                for (const auto& input : resources.async_rpc_inputs) {
-                    if (!input->apply_ready_requests()) {
-                        throw std::runtime_error(input->failure_reason());
-                    }
-                }
-#endif
-                // Inputs are taken at the first substep (none are new later: the
-                // controllers hold them); the state goes out after the last.
                 const auto substeps = std::max<std::uint32_t>(1, config.physics_substeps);
-                for (std::uint32_t substep = 0; substep < substeps; ++substep) {
-                    simulation_time_usec = resources.runtime->step(substep + 1 == substeps)
-                        .next_step.simulation_time_usec;
-                }
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-                for (const auto& input : resources.async_rpc_inputs) {
-                    if (!input->complete_step()) {
-                        throw std::runtime_error(input->failure_reason());
-                    }
-                }
-#endif
+                // Two rates: inputs are polled once, at the first physics step of
+                // this Hakoniwa step, and the state goes out after the last one;
+                // control and physics run in every physics step.
+                simulation_time_usec = resources.runtime->step_hakoniwa(substeps)
+                    .next_step.simulation_time_usec;
                 refresh_view(false);
             }
             pacer.pace(
@@ -272,11 +232,7 @@ public:
             reset_requested.store(false);
             pacer.reset();
             refresh_view(true);
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-            for (const auto& input : resources.async_rpc_inputs) {
-                input->lockstep_prepare();
-            }
-#endif
+            step_gate->reset();
             return 0;
         } catch (const std::exception& error) {
             fail(error.what());
@@ -291,17 +247,17 @@ public:
         return !running.load();
     }
 
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
     [[nodiscard]] int stop_result() const noexcept override
     {
         return last_error.empty() ? 0 : -1;
     }
-#endif
 
     HakoniwaRunnerResourcesFactory resources_factory;
     HakoniwaRunnerConfig config;
     RealtimePacer pacer;
+    std::shared_ptr<detail::IHakoniwaAssetApi> asset_api;
     HakoniwaRunnerResources resources;
+    std::optional<LockstepGate> step_gate;
     std::unique_ptr<detail::HakoniwaAssetDriver> driver;
     std::thread asset_thread;
     std::atomic_bool running {true};
@@ -343,10 +299,12 @@ public:
 
 HakoniwaRunner::HakoniwaRunner(
     HakoniwaRunnerResourcesFactory resources_factory,
-    HakoniwaRunnerConfig config)
+    HakoniwaRunnerConfig config,
+    std::shared_ptr<detail::IHakoniwaAssetApi> asset_api)
     : impl_(std::make_unique<Impl>(
         std::move(resources_factory), std::move(config)))
 {
+    impl_->asset_api = std::move(asset_api);
 }
 
 HakoniwaRunner::~HakoniwaRunner()
@@ -377,6 +335,9 @@ int HakoniwaRunner::start()
             throw std::runtime_error(
                 "Hakoniwa Runner resources factory returned incomplete resources");
         }
+        impl_->step_gate.emplace(
+            std::move(impl_->resources.lockstep_inputs), LockstepGate::Config {},
+            impl_->config.lockstep_now);
 
         const auto delta_time_usec = impl_->resources.plant->delta_time_usec()
             * std::max<std::uint32_t>(1, impl_->config.physics_substeps);
@@ -386,8 +347,12 @@ int HakoniwaRunner::start()
                 impl_->config.pdu_definition_path,
                 delta_time_usec,
                 HAKO_ASSET_MODEL_PLANT,
+                static_cast<bool>(impl_->resources.prepare_async_services)
+                    || impl_->step_gate->uses_deadline(),
             },
-            *impl_);
+            *impl_,
+            impl_->asset_api ? impl_->asset_api : std::make_shared<detail::HakoniwaAssetApi>()
+        );
     } catch (const std::exception& error) {
         std::cerr << "[ERROR] Failed to prepare Hakoniwa Runner: "
                   << error.what() << std::endl;
@@ -409,10 +374,9 @@ int HakoniwaRunner::start()
         impl_->cleanup();
         return 1;
     }
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-    if (!impl_->resources.async_rpc_inputs.empty()) {
+    if (impl_->resources.prepare_async_services) {
         if (impl_->config.async_rpc_service_definition_path.empty()) {
-            std::cerr << "[ERROR] Async RPC inputs require a service definition path."
+            std::cerr << "[ERROR] Manifest services require a service definition path."
                       << std::endl;
             impl_->cleanup();
             return 1;
@@ -425,7 +389,6 @@ int HakoniwaRunner::start()
             return 1;
         }
     }
-#endif
     if (impl_->resources.endpoint->start() != HAKO_PDU_ERR_OK) {
         std::cerr << "[ERROR] Failed to start Runtime endpoint." << std::endl;
         impl_->cleanup();

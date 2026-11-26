@@ -2,10 +2,7 @@
 
 #include "hakoniwa/robot_runtime/adapters/physics/mujoco/mujoco_actuator_plant.hpp"
 #include "hakoniwa/robot_runtime/runner/runner.hpp"
-#include "hakoniwa/robot_runtime/runner/lockstep_input.hpp"
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-#include "hakoniwa/robot_runtime/runner/async_rpc_input.hpp"
-#endif
+#include "runner/lockstep_gate.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "runtime/actuator_runtime.hpp"
 
@@ -17,16 +14,17 @@
 
 namespace hakoniwa::robot_runtime::runner {
 
+namespace detail {
+class IHakoniwaAssetApi;
+}
+
 struct HakoniwaRunnerResources {
     std::unique_ptr<runtime::ActuatorRuntime> runtime;
     std::shared_ptr<adapters::mujoco::MujocoActuatorPlant> plant;
     std::unique_ptr<::hakoniwa::pdu::Endpoint> endpoint;
     /** Inputs each step waits for (lockstep mode; empty otherwise). */
-    std::vector<std::shared_ptr<ILockstepInput>> lockstep_inputs;
-#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
-    /** Complete multi-robot request batches; opt-in build and empty by default. */
-    std::vector<std::shared_ptr<AsyncRpcInput>> async_rpc_inputs;
-#endif
+    std::vector<LockstepGate::Input> lockstep_inputs;
+    std::function<void()> prepare_async_services;
 };
 
 using HakoniwaRunnerResourcesFactory =
@@ -47,8 +45,9 @@ struct HakoniwaRunnerConfig {
      * with substepping). 1 steps Hakoniwa at the Plant's timestep.
      */
     std::uint32_t physics_substeps {1};
-    /** Core service definition JSON for async_rpc_inputs; empty when unused. */
+    /** Core service definition JSON for manifest services; empty when unused. */
     std::string async_rpc_service_definition_path;
+    LockstepGate::Now lockstep_now {LockstepGate::Clock::now};
 };
 
 /** Runs one pre-composed ActuatorRuntime as a Hakoniwa Asset. */
@@ -56,7 +55,8 @@ class HakoniwaRunner final : public IRunner {
 public:
     HakoniwaRunner(
         HakoniwaRunnerResourcesFactory resources_factory,
-        HakoniwaRunnerConfig config);
+        HakoniwaRunnerConfig config,
+        std::shared_ptr<detail::IHakoniwaAssetApi> asset_api = {});
     ~HakoniwaRunner() override;
 
     HakoniwaRunner(const HakoniwaRunner&) = delete;

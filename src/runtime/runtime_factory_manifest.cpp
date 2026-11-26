@@ -173,6 +173,49 @@ bool load_person_initial_poses(
     return true;
 }
 
+bool load_services(
+    std::string_view services_json, RuntimeDefinition& definition, std::string* error)
+{
+    const auto services = json::parse(services_json, nullptr, false);
+    if (!services.is_array()) {
+        return fail(error, "manifest services must be an array");
+    }
+
+    std::unordered_set<std::string> names;
+    for (const auto& service : services) {
+        RuntimeServiceConfig config {};
+        std::string type;
+        if (!required_string(service, "name", config.name, error, "service")
+            || !required_string(service, "type", type, error, "service " + config.name)
+            || !required_string(service, "pdu_robot", config.pdu_robot, error,
+                "service " + config.name)) {
+            return false;
+        }
+        if (type == "ackermann_step") {
+            config.type = RuntimeServiceType::AckermannStep;
+        } else if (type == "person_step") {
+            config.type = RuntimeServiceType::PersonStep;
+        } else {
+            return fail(error, "unknown service type " + type + " for " + config.name);
+        }
+        for (const auto& [field, value] : service.items()) {
+            if (field == "lockstep") {
+                if (!value.is_boolean()) {
+                    return fail(error, "service " + config.name + " lockstep must be a boolean");
+                }
+                config.lockstep = value.get<bool>();
+            } else if (field != "name" && field != "type" && field != "pdu_robot") {
+                return fail(error, "unknown field " + field + " in service " + config.name);
+            }
+        }
+        if (!names.insert(config.name).second) {
+            return fail(error, "duplicate service name: " + config.name);
+        }
+        definition.services.push_back(std::move(config));
+    }
+    return true;
+}
+
 } // namespace
 
 bool fail(std::string* error, std::string message)
@@ -463,7 +506,8 @@ bool resolve_runtime_definition(
 
     RuntimeDefinition definition;
     definition.model_path = input.model_path;
-    if (!detail::load_initial_body_poses(
+    if (!detail::load_services(input.services_json, definition, error_message)
+        || !detail::load_initial_body_poses(
             context.runtime_root, definition, error_message)
         || !detail::load_person_initial_poses(
             context.runtime_root, definition, error_message)

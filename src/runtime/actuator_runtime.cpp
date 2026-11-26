@@ -279,6 +279,32 @@ void ActuatorRuntime::publish_state(
 
 RuntimeStepReport ActuatorRuntime::step(const bool publish)
 {
+    return step_impl(publish, true);
+}
+
+RuntimeStepReport ActuatorRuntime::step_hakoniwa(const std::uint32_t substeps)
+{
+    if (substeps == 0) {
+        throw std::invalid_argument("Hakoniwa step substeps must be greater than zero");
+    }
+
+    RuntimeStepReport report;
+    std::vector<ComponentStatus> first_source_statuses;
+    for (std::uint32_t substep = 0; substep < substeps; ++substep) {
+        report = step_impl(substep + 1 == substeps, substep == 0);
+        if (substep == 0) {
+            first_source_statuses = std::move(report.source_statuses);
+        }
+    }
+    report.source_statuses = std::move(first_source_statuses);
+    return report;
+}
+
+RuntimeStepReport ActuatorRuntime::step_impl(
+    const bool publish
+    , const bool poll_inputs
+    )
+{
     RuntimeStepReport report;
 
     // 1. Observe the current physical state and Plant-local simulation time.
@@ -292,7 +318,15 @@ RuntimeStepReport ActuatorRuntime::step(const bool publish)
     // 3. Consume the latest received value from each independent input channel.
     // Endpoint receive callbacks run asynchronously and stage the latest value;
     // poll_sources() only transfers that staged value into this Runtime step.
-    const auto inputs = poll_sources(context, report.source_statuses);
+    ControllerInputMap inputs;
+    if (poll_inputs) {
+        inputs = poll_sources(context, report.source_statuses);
+    } else {
+        inputs.reserve(sources_.size());
+        for (const auto& source : sources_) {
+            inputs.emplace(source->id(), nullptr);
+        }
+    }
 
     // 4. Let every Controller generate its candidate ActuatorCommands.
     const auto outputs = update_controllers(

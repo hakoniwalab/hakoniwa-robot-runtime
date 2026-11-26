@@ -1,13 +1,9 @@
-#include "hakoniwa/robot_runtime/adapters/endpoint/ackermann_drive_rpc_event_reader.hpp"
-
-#include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepRequestPacket.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AckermannStepResponsePacket.hpp"
+#include "adapters/endpoint/ackermann_step_packet.hpp"
 
 #include <array>
 #include <cstring>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 namespace hakoniwa::robot_runtime::adapters::hakoniwa {
 namespace {
@@ -147,72 +143,27 @@ bool decode_ackermann_state(
     return true;
 }
 
-std::shared_ptr<runner::hakoniwa::CoreAsyncRpcServiceChannel>
-make_ackermann_step_service_channel(
-    std::string vehicle_name,
-    std::string asset_name)
+HakoCpp_AckermannStepResponse ackermann_step_response_body(
+    std::uint64_t step, const AckermannStepState& state)
 {
-    const auto service_name = ackermann_step_service_name(vehicle_name);
-    auto decoder = [](std::span<const std::byte> packet,
-                       runner::AsyncRpcRequest& request,
-                       std::string& error) {
-        HakoCpp_AckermannStepRequestPacket decoded {};
-        if (!hako::pdu::msgs::hako_srv_msgs::AckermannStepRequestPacket {}.pdu2cpp(
-                const_cast<char*>(reinterpret_cast<const char*>(packet.data())), decoded)) {
-            error = "failed to decode AckermannStep request";
-            return false;
-        }
-        request.step = decoded.body.step;
-        request.payload = encode_ackermann_command({
-            decoded.body.drive.steering_angle,
-            decoded.body.drive.steering_angle_velocity,
-            decoded.body.drive.speed,
-            decoded.body.drive.acceleration,
-            decoded.body.drive.jerk,
-        });
-        return true;
-    };
-    auto encoder = [](const runner::AsyncRpcResponse& response,
-                       std::span<std::byte> packet,
-                       std::string& error) {
-        AckermannStepState state;
-        if (!decode_ackermann_state(response.payload, state)) {
-            error = "invalid AckermannStep response state";
-            return false;
-        }
-        HakoCpp_AckermannStepResponsePacket encoded {};
-        auto converter = hako::pdu::msgs::hako_srv_msgs::AckermannStepResponsePacket {};
-        if (!converter.pdu2cpp(reinterpret_cast<char*>(packet.data()), encoded)) {
-            error = "failed to initialize AckermannStep response";
-            return false;
-        }
-        encoded.body.step = response.step;
-        encoded.body.result_code = 0;
-        encoded.body.sim_time_usec = state.simulation_time_usec;
-        encoded.body.pose.translation.x = state.position.x;
-        encoded.body.pose.translation.y = state.position.y;
-        encoded.body.pose.translation.z = state.position.z;
-        encoded.body.pose.rotation.x = state.orientation.x;
-        encoded.body.pose.rotation.y = state.orientation.y;
-        encoded.body.pose.rotation.z = state.orientation.z;
-        encoded.body.pose.rotation.w = state.orientation.w;
-        encoded.body.twist.linear.x = state.linear_velocity.x;
-        encoded.body.twist.linear.y = state.linear_velocity.y;
-        encoded.body.twist.linear.z = state.linear_velocity.z;
-        encoded.body.twist.angular.x = state.angular_velocity.x;
-        encoded.body.twist.angular.y = state.angular_velocity.y;
-        encoded.body.twist.angular.z = state.angular_velocity.z;
-        if (converter.cpp2pdu(
-                encoded, reinterpret_cast<char*>(packet.data()),
-                static_cast<int>(packet.size())) < 0) {
-            error = "failed to encode AckermannStep response";
-            return false;
-        }
-        return true;
-    };
-    return std::make_shared<runner::hakoniwa::CoreAsyncRpcServiceChannel>(
-        std::move(vehicle_name), std::move(asset_name), service_name,
-        std::move(decoder), std::move(encoder));
+    HakoCpp_AckermannStepResponse body {};
+    body.step = step;
+    body.result_code = 0;
+    body.sim_time_usec = state.simulation_time_usec;
+    body.pose.translation.x = state.position.x;
+    body.pose.translation.y = state.position.y;
+    body.pose.translation.z = state.position.z;
+    body.pose.rotation.x = state.orientation.x;
+    body.pose.rotation.y = state.orientation.y;
+    body.pose.rotation.z = state.orientation.z;
+    body.pose.rotation.w = state.orientation.w;
+    body.twist.linear.x = state.linear_velocity.x;
+    body.twist.linear.y = state.linear_velocity.y;
+    body.twist.linear.z = state.linear_velocity.z;
+    body.twist.angular.x = state.angular_velocity.x;
+    body.twist.angular.y = state.angular_velocity.y;
+    body.twist.angular.z = state.angular_velocity.z;
+    return body;
 }
 
 } // namespace hakoniwa::robot_runtime::adapters::hakoniwa

@@ -109,24 +109,6 @@ def build_service_json(
     }
 
 
-def build_runtime_args(
-    car_names: Sequence[str],
-    service_config_path: str | Path,
-    person_names: Sequence[str] = (),
-) -> list[str]:
-    names = _validated_unique_names(car_names, "car", required=False)
-    people = _validated_unique_names(person_names, "person", required=False)
-    if not names and not people:
-        raise ValueError("at least one car or person name is required")
-    result: list[str] = []
-    for name in names:
-        result.extend(("--ackermann-rpc-input", name))
-    for name in people:
-        result.extend(("--person-rpc-input", name))
-    result.extend(("--rpc-service-config", str(service_config_path)))
-    return result
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--car", action="append", default=[], dest="cars")
@@ -142,7 +124,6 @@ def main() -> int:
         service_config = build_service_json(
             args.cars, args.pdu_config, args.people
         )
-        runtime_args = build_runtime_args(args.cars, args.output, args.people)
     except (KeyError, ValueError) as exc:
         raise SystemExit(f"ERROR: {exc}") from exc
 
@@ -151,15 +132,7 @@ def main() -> int:
         json.dumps(service_config, ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(
-        json.dumps(
-            {
-                "service_config_path": str(args.output),
-                "runtime_args": runtime_args,
-            },
-            ensure_ascii=True,
-        )
-    )
+    print(json.dumps({"service_config_path": str(args.output)}, ensure_ascii=True))
     return 0
 
 

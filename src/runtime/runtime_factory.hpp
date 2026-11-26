@@ -38,6 +38,14 @@ using JoyEventReaderFactory = std::function<
 using AckermannDriveEventReaderFactory = std::function<
     std::shared_ptr<IAckermannDriveEventReader>(
         const RuntimeAckermannControllerConfig&)>;
+struct AsyncServiceComponents {
+    std::shared_ptr<ICommandSource> source;
+    std::shared_ptr<IController> controller;
+    std::shared_ptr<IStatePublisher> publisher;
+};
+
+using AckermannServiceFactory = std::function<
+    std::optional<AsyncServiceComponents>(const RuntimeAckermannControllerConfig&)>;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
 using MirrorBodyStateReaderFactory = std::function<
     std::shared_ptr<IMirrorBodyStateReader>(const RuntimeMirrorBodyConfig&)>;
@@ -76,6 +84,9 @@ using GeomFrictionReaderFactory = std::function<
     /// required when a plugin lists "pdus", the PDU writers store into them.
     , const PluginPduChannels* plugin_pdu_channels = nullptr
 #endif
+    , const AckermannServiceFactory& ackermann_service_factory = {}
+    , std::vector<AsyncServiceComponents> person_services = {}
+    , std::shared_ptr<IStatePublisher> person_state_publisher = {}
     );
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN

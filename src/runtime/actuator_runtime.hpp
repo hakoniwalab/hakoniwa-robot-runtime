@@ -64,6 +64,15 @@ public:
     [[nodiscard]] RuntimeStepReport step(bool publish = true);
 
     /**
+     * One Hakoniwa step: `substeps` physics steps. The command sources are
+     * polled only in the first one and the publishers run only after the last
+     * one; controllers, the arbiter and the plant run in every one.
+     * Returns the last physics step's report, with source_statuses of the first.
+     * @throws std::invalid_argument when substeps is 0 (nothing runs).
+     */
+    [[nodiscard]] RuntimeStepReport step_hakoniwa(std::uint32_t substeps);
+
+    /**
      * Resets component/physical state and sets the Plant's actual simulation time.
      * Hakoniwa Core reset uses zero; local Viewer reset can preserve Asset time.
      */
@@ -102,6 +111,10 @@ private:
         std::string_view,
         std::shared_ptr<const IControllerInput>>;
 
+    [[nodiscard]] RuntimeStepReport step_impl(
+        bool publish
+        , bool poll_inputs
+        );
     [[nodiscard]] RobotState read_current_state() const;
     [[nodiscard]] RuntimeStepContext prepare_step_context(
         const RobotState& current_state) const;
