@@ -14,6 +14,7 @@ Current Runtime-owned schemas:
 - `components/sensor-instances.schema.json`
 - `components/sensor-output.schema.json`
 - `input/logical-joy-layout.schema.json`
+- `runtime/asset-manifest.schema.json` for Robot Runtime asset manifests, including optional `services` entries
 - `runtime/actuator-runtime.schema.json`
 
 These files are the source of truth for the corresponding Runtime-owned contracts. Consumers should reference the stable `https://hakoniwa.dev/schemas/...` IDs and resolve them to this repository during local validation.

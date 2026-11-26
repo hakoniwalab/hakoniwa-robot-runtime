@@ -89,6 +89,7 @@ using GeomFrictionReaderFactory = std::function<
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     , const AckermannServiceFactory& ackermann_service_factory = {}
     , std::vector<AsyncServiceComponents> person_services = {}
+    , std::shared_ptr<IStatePublisher> person_state_publisher = {}
 #endif
     );
 

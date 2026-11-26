@@ -190,6 +190,37 @@ private:
     std::ofstream log_;
 };
 
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+class PersonStatePublisher final : public runtime::IStatePublisher {
+public:
+    explicit PersonStatePublisher(std::function<bool(std::string&)> write)
+        : write_(std::move(write)) {}
+
+    std::string_view id() const noexcept override { return "person-state"; }
+
+    runtime::ComponentStatus publish(
+        const runtime::RobotState&, const runtime::RuntimeStepContext&) noexcept override
+    {
+        const std::string component_id(id());
+        try {
+            std::string error;
+            const bool ok = write_(error);
+            return {component_id, ok ? runtime::ComponentState::Ready
+                                     : runtime::ComponentState::Error, std::move(error)};
+        } catch (const std::exception& error) {
+            return {component_id, runtime::ComponentState::Error, error.what()};
+        } catch (...) {
+            return {component_id, runtime::ComponentState::Error, "failed to publish person state"};
+        }
+    }
+
+    void reset() noexcept override {}
+
+private:
+    std::function<bool(std::string&)> write_;
+};
+#endif
+
 } // namespace
 #endif
 
@@ -232,12 +263,60 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
     }
 #endif
 
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    if (config.ackermann_rpc_use_service && config.ackermann_rpc_inputs.empty()) {
-        throw std::invalid_argument("AckermannStep service route requires an Ackermann RPC vehicle");
+#if !defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) || !HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    if (!runtime_definition.services.empty()) {
+        throw std::invalid_argument("manifest services require a build with HAKO_ENABLE_ASYNC_SERVICE");
     }
-    if (config.person_rpc_use_service && config.person_rpc_inputs.empty()) {
-        throw std::invalid_argument("PersonStep service route requires a Person RPC input");
+#endif
+
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+    std::unordered_set<std::string> rpc_requested(
+        config.ackermann_rpc_inputs.begin(), config.ackermann_rpc_inputs.end());
+    if (rpc_requested.size() != config.ackermann_rpc_inputs.size()) {
+        throw std::invalid_argument("duplicate Ackermann RPC vehicle");
+    }
+    std::vector<std::string> people = config.person_rpc_inputs;
+    const std::unordered_set<std::string> legacy_people(people.begin(), people.end());
+    if (legacy_people.size() != people.size()) {
+        throw std::invalid_argument("duplicate PersonStep person");
+    }
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    for (const auto& service : runtime_definition.services) {
+        const auto& robot = service.pdu_robot;
+        const bool ackermann = service.type == runtime::RuntimeServiceType::AckermannStep;
+        const auto expected_name = ackermann
+            ? adapters::hakoniwa::ackermann_step_service_name(robot)
+            : adapters::hakoniwa::person_step_service_name(robot);
+        if (service.name != expected_name) {
+            throw std::invalid_argument("service " + service.name
+                + " must use the name " + expected_name + " for " + robot);
+        }
+        const auto* legacy_flag = ackermann ? "--ackermann-rpc-input" : "--person-rpc-input";
+        const bool is_legacy_input = ackermann ? rpc_requested.contains(robot) : legacy_people.contains(robot);
+        if (is_legacy_input) {
+            throw std::invalid_argument(robot + " is declared by both "
+                + legacy_flag + " and manifest service " + service.name);
+        }
+        if (!ackermann) {
+            people.push_back(robot);
+            continue;
+        }
+        const auto& controllers = runtime_definition.ackermann_controllers;
+        if (std::none_of(controllers.begin(), controllers.end(), [&robot](const auto& controller) {
+                return controller.pdu_robot == robot;
+            })) {
+            throw std::invalid_argument("Ackermann RPC vehicle has no controller: " + robot);
+        }
+        rpc_requested.insert(robot);
+    }
+#endif
+    const bool has_rpc = !rpc_requested.empty() || !people.empty();
+    const bool has_service_definition = !config.async_rpc_service_definition_path.empty();
+    if (has_rpc != has_service_definition) {
+        throw std::invalid_argument("RPC inputs and manifest services must be paired with --rpc-service-config");
+    }
+    if (people.empty() && !config.person_contact_log_path.empty()) {
+        throw std::invalid_argument("--person-contact-log requires a PersonStep input");
     }
 #endif
     auto resources_factory =
@@ -246,9 +325,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
          endpoint_name = std::move(config.endpoint_name),
          lockstep_keys = config.lockstep_inputs,
          rpc_vehicles = config.ackermann_rpc_inputs,
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-         use_ackermann_service = config.ackermann_rpc_use_service,
-         use_person_service = config.person_rpc_use_service,
+#if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
+         rpc_requested = std::move(rpc_requested),
+         people = std::move(people),
 #endif
          rpc_people = config.person_rpc_inputs,
          person_state_robot = config.person_state_robot,
@@ -269,16 +348,12 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
         std::unordered_map<std::string,
             std::shared_ptr<adapters::hakoniwa::AckermannDriveRpcEventReader>>
             rpc_readers;
-        std::unordered_set<std::string> rpc_requested(
-            rpc_vehicles.begin(), rpc_vehicles.end());
-        if (rpc_requested.size() != rpc_vehicles.size()) {
-            throw std::invalid_argument("duplicate Ackermann RPC vehicle");
-        }
 #endif
         try {
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
             runtime::AckermannServiceFactory ackermann_service_factory;
             std::vector<runtime::AsyncServiceComponents> person_services;
+            std::shared_ptr<runtime::IStatePublisher> person_state_publisher;
             std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
             std::vector<std::shared_ptr<runtime::AsyncServiceCommandSource>> lockstep_services;
 #endif
@@ -295,27 +370,20 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     }
                 }
             }
-            for (const auto& vehicle : rpc_vehicles) {
+            for (const auto& vehicle : rpc_requested) {
                 if (!state_id_by_vehicle.contains(vehicle)) {
                     throw std::invalid_argument(
                         "Ackermann RPC vehicle has no MultiDOF state binding: " + vehicle);
                 }
             }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+            std::unordered_map<std::string, std::size_t> ackermann_service_ids;
             std::vector<std::string> service_names;
-            std::unordered_map<std::string, int> service_ids;
-            const auto add_service = [&](std::string name) {
-                service_ids.emplace(name, static_cast<int>(service_names.size()));
-                service_names.push_back(std::move(name));
-            };
-            if (use_ackermann_service) {
-                for (const auto& vehicle : rpc_vehicles) {
-                    add_service(adapters::hakoniwa::ackermann_step_service_name(vehicle));
-                }
-            }
-            if (use_person_service) {
-                for (const auto& person : rpc_people) {
-                    add_service(adapters::hakoniwa::person_step_service_name(person));
+            for (std::size_t index = 0; index < definition.services.size(); ++index) {
+                const auto& service = definition.services[index];
+                service_names.push_back(service.name);
+                if (service.type == runtime::RuntimeServiceType::AckermannStep) {
+                    ackermann_service_ids.emplace(service.pdu_robot, index);
                 }
             }
             if (!service_names.empty()) {
@@ -323,37 +391,35 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     asset_name, std::move(service_names));
             }
             const auto make_service_components = [&](
-                const std::string& name, std::shared_ptr<runtime::IAsyncService> service) {
+                std::size_t index, std::shared_ptr<runtime::IAsyncService> service) {
+                const auto& config = definition.services[index];
                 auto source = std::make_shared<runtime::AsyncServiceCommandSource>(
-                    name, service_ids.at(name), service_server, std::move(service), true);
-                lockstep_services.push_back(source);
+                    config.name, static_cast<int>(index), service_server, std::move(service), config.lockstep);
+                if (config.lockstep) {
+                    lockstep_services.push_back(source);
+                }
                 return runtime::AsyncServiceComponents {
                     source,
-                    std::make_shared<runtime::AsyncServiceController>(name + ":controller", source),
-                    std::make_shared<runtime::AsyncServiceResponsePublisher>(name + ":response", source),
+                    std::make_shared<runtime::AsyncServiceController>(config.name + ":controller", source),
+                    std::make_shared<runtime::AsyncServiceResponsePublisher>(config.name + ":response", source),
                 };
             };
-            if (use_ackermann_service) {
+            if (!ackermann_service_ids.empty()) {
                 ackermann_service_factory =
                     [&](const runtime::RuntimeAckermannControllerConfig& drive)
                         -> std::optional<runtime::AsyncServiceComponents> {
                     const auto& vehicle = drive.pdu_robot;
-                    const auto name = adapters::hakoniwa::ackermann_step_service_name(vehicle);
-                    if (!service_ids.contains(name)) {
+                    const auto service = ackermann_service_ids.find(vehicle);
+                    if (service == ackermann_service_ids.end()) {
                         return std::nullopt;
                     }
-                    return make_service_components(name,
+                    return make_service_components(service->second,
                         std::make_shared<adapters::hakoniwa::AckermannStepService>(
                             rpc_readers.at(vehicle), state_id_by_vehicle.at(vehicle)));
                 };
             }
 #endif
-            std::unordered_set<std::string> person_requested(
-                rpc_people.begin(), rpc_people.end());
-            if (person_requested.size() != rpc_people.size()) {
-                throw std::invalid_argument("duplicate PersonStep person");
-            }
-            for (const auto& person : rpc_people) {
+            for (const auto& person : people) {
                 const auto initial = std::find_if(
                     definition.person_initial_poses.begin(),
                     definition.person_initial_poses.end(),
@@ -367,7 +433,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         : initial->yaw_rad);
             }
             std::function<bool(std::string&)> publish_people;
-            if (!rpc_people.empty()) {
+            if (!people.empty()) {
                 auto person_joint_writer = std::make_shared<
                     adapters::hakoniwa::JointStatePduWriter>(
                         *endpoint, person_state_robot, "joint_states");
@@ -376,15 +442,15 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                         *endpoint, person_state_robot, "vehicle_states");
                 auto person_contact_output = std::make_shared<PersonContactOutput>(
                     *endpoint,
-                    rpc_people,
+                    people,
                     person_state_robot,
                     person_contact_log_path);
-                publish_people = [plant, rpc_people, person_joint_writer,
+                publish_people = [plant, people, person_joint_writer,
                     person_body_writer, person_contact_output](std::string& error) {
                     runtime::JointStateOutput joints;
                     runtime::MultiDofJointStateOutput bodies;
                     bodies.frame_id = "city_map";
-                    for (const auto& person : rpc_people) {
+                    for (const auto& person : people) {
                         const auto state = plant->person_state(person);
                         joints.simulation_time_usec =
                             state.simulation_time_usec;
@@ -423,28 +489,26 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 };
             }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-            if (use_person_service) {
-                for (const auto& person : rpc_people) {
-                    adapters::hakoniwa::PersonStepService::PublishOutputs publish_outputs;
-                    if (person == rpc_people.back()) {
-                        publish_outputs = [publish_people] {
-                            std::string error;
-                            if (!publish_people(error)) {
-                                throw std::runtime_error(error);
-                            }
-                        };
-                    }
-                    person_services.push_back(make_service_components(
-                        adapters::hakoniwa::person_step_service_name(person),
-                        std::make_shared<adapters::hakoniwa::PersonStepService>(person,
-                            [plant, person](const auto& command) {
-                                return plant->apply_person_command(person, command);
-                            },
-                            [plant, person](std::uint32_t code) {
-                                return plant->person_state(person, code);
-                            },
-                            std::move(publish_outputs))));
+            for (std::size_t index = 0; index < definition.services.size(); ++index) {
+                const auto& service = definition.services[index];
+                if (service.type != runtime::RuntimeServiceType::PersonStep) {
+                    continue;
                 }
+                const auto& person = service.pdu_robot;
+                person_services.push_back(make_service_components(index,
+                    std::make_shared<adapters::hakoniwa::PersonStepService>(person,
+                        [plant, person](const auto& command) {
+                            return plant->apply_person_command(person, command);
+                        },
+                        [plant, person](std::uint32_t code) {
+                            return plant->person_state(person, code);
+                        })));
+            }
+            if (!person_services.empty()) {
+                // An asynchronous person may have no reply on this tick.
+                // Publish viewer state and contacts once independently of replies.
+                person_state_publisher = std::make_shared<PersonStatePublisher>(
+                    std::exchange(publish_people, {}));
             }
 #endif
 #endif
@@ -574,6 +638,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
                 , ackermann_service_factory
                 , std::move(person_services)
+                , std::move(person_state_publisher)
 #endif
                 );
 
@@ -594,11 +659,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     }
                 }
             }
-            if (!rpc_requested.empty()
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-                && !use_ackermann_service
-#endif
-            ) {
+            if (!rpc_vehicles.empty()) {
                 std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> channels;
                 channels.reserve(rpc_vehicles.size());
                 for (const auto& vehicle : rpc_vehicles) {
@@ -656,11 +717,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     });
                 async_rpc_inputs.push_back(std::move(input));
             }
-            if (!person_requested.empty()
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-                && !use_person_service
-#endif
-            ) {
+            if (!rpc_people.empty()) {
                 std::vector<std::shared_ptr<runner::IAsyncRpcChannel>> channels;
                 channels.reserve(rpc_people.size());
                 for (const auto& person : rpc_people) {
@@ -703,7 +760,8 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                                     request.channel,
                                     code == result_codes->end()
                                         ? 0U : code->second));
-                        return request.channel != rpc_people.back() || publish_people(error);
+                        return !publish_people || request.channel != rpc_people.back()
+                            || publish_people(error);
                     });
                 async_rpc_inputs.push_back(std::move(input));
             }

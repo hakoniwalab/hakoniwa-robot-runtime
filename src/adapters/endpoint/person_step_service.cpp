@@ -19,11 +19,10 @@ std::string read_text(const char (&text)[HAKO_STRING_SIZE])
 } // namespace
 
 PersonStepService::PersonStepService(std::string person, ApplyCommand apply_command,
-    ReadState read_state, PublishOutputs publish_outputs)
+    ReadState read_state)
     : person_(std::move(person)),
       apply_command_(std::move(apply_command)),
-      read_state_(std::move(read_state)),
-      publish_outputs_(std::move(publish_outputs))
+      read_state_(std::move(read_state))
 {
     if (person_.empty() || !apply_command_ || !read_state_) {
         throw std::invalid_argument("PersonStep requires a person and plant bindings");
@@ -61,13 +60,7 @@ runtime::AsyncServiceStepResult PersonStepService::on_step(
 bool PersonStepService::on_response(
     const runtime::RobotState&, const runtime::RuntimeStepContext&, std::span<std::byte> packet)
 {
-    if (!encode_person_step_response(person_, step_, read_state_(result_code_), packet)) {
-        return false;
-    }
-    if (publish_outputs_) {
-        publish_outputs_();
-    }
-    return true;
+    return encode_person_step_response(person_, step_, read_state_(result_code_), packet);
 }
 
 void PersonStepService::reset()

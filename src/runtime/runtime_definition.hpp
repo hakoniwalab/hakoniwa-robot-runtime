@@ -285,6 +285,15 @@ struct RuntimeSensorOutputConfig {
 };
 #endif
 
+enum class RuntimeServiceType { AckermannStep, PersonStep };
+
+struct RuntimeServiceConfig {
+    std::string name;
+    RuntimeServiceType type;
+    std::string pdu_robot;
+    bool lockstep {false};
+};
+
 struct RuntimeDefinition {
     std::string model_path;
     std::vector<RuntimeInitialBodyPoseConfig> initial_body_poses;
@@ -296,6 +305,7 @@ struct RuntimeDefinition {
     std::vector<RuntimeTrajectoryControllerConfig> trajectory_controllers;
     std::vector<RuntimeManualControllerConfig> manual_controllers;
     std::vector<RuntimeAckermannControllerConfig> ackermann_controllers;
+    std::vector<RuntimeServiceConfig> services;
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
     std::vector<RuntimePluginControllerConfig> plugin_controllers;
 #endif

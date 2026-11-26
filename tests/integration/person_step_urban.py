@@ -1,9 +1,12 @@
-"""Exercise one Urban car and one person on each PersonStep route."""
+"""Exercise manifest services with two Urban cars and one person."""
 
+from contextlib import ExitStack
+from copy import deepcopy
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -16,10 +19,13 @@ import xml.etree.ElementTree as ET
 
 DELTA_USEC = 1_000
 STEPS = 80
-CAR = "Car-1"
+CARS = ("Car-1", "Car-2")
 PERSON = "Walker"
 ASSET = "PersonStepUrbanClient"
 RESPONSE_BODY_OFFSET = 272
+MANIFEST = "urban-car-asset-manifest.json"
+SERVICE_MANIFEST = "urban-car-service-manifest.json"
+ASYNC_MANIFEST = "urban-car-async-manifest.json"
 
 
 def prepare(urban, work, mujoco_library):
@@ -31,9 +37,12 @@ def prepare(urban, work, mujoco_library):
 
     car = work / "config/car"
     car.mkdir(parents=True)
-    vehicles = multi_car.resolve_config(urban / "recipes/experiments/urban-car-one.yaml")["vehicles"]
-    vehicle, = vehicles
-    vehicle.update(name=CAR, prefix="car_1_")
+    template, = multi_car.resolve_config(urban / "recipes/experiments/urban-car-one.yaml")["vehicles"]
+    vehicles = []
+    for index, car_name in enumerate(CARS, start=1):
+        vehicle = deepcopy(template)
+        vehicle.update(name=car_name, prefix=f"car_{index}_")
+        vehicles.append(vehicle)
     model = car / "urban-car.xml"
     multi_car.materialize_vehicle_fleet_model(model, vehicles)
     tree = ET.parse(model)
@@ -62,10 +71,14 @@ def prepare(urban, work, mujoco_library):
     # The production lookup assumes a source-tree build directory named build.
     with patch.object(multi_car, "mujoco_library", return_value=mujoco_library):
         assert urban_people.apply_rpc(work, composition, {}, "conductor") == [PERSON]
+    for filename, lockstep in ((SERVICE_MANIFEST, True), (ASYNC_MANIFEST, False)):
+        shutil.copyfile(car / MANIFEST, car / filename)
+        multi_car.configure_step_services(
+            car / filename, vehicles=CARS, people=[PERSON], lockstep=lockstep)
     return car
 
 
-def client(pdu_config, service_config, output, hako_cmd, check_gate):
+def client(pdu_config, service_config, output, hako_cmd, mode):
     import hakopy
     from hakoniwa_pdu.pdu_msgs.hako_srv_msgs.pdu_conv_AckermannStepRequestPacket import (
         pdu_to_py_AckermannStepRequestPacket, py_to_pdu_AckermannStepRequestPacket,
@@ -101,7 +114,10 @@ def client(pdu_config, service_config, output, hako_cmd, check_gate):
         response = decode(raw)
         assert response.header.result_code == 0
         assert response.body.result_code == 0 and response.body.step == step
-        assert response.body.sim_time_usec == (step + 1) * DELTA_USEC
+        if mode == "async":
+            assert response.body.sim_time_usec > 10 * DELTA_USEC
+        else:
+            assert response.body.sim_time_usec == (step + 1) * DELTA_USEC
         if decode is pdu_to_py_PersonStepResponsePacket:
             assert len(response.body.joints.name) == 6
             assert response.body.joints.header.frame_id == "city_map"
@@ -117,48 +133,78 @@ def client(pdu_config, service_config, output, hako_cmd, check_gate):
 
     def run(_context):
         try:
-            car = hakopy.asset_service_client_create(ASSET, f"CarService/AckermannStep/{CAR}", "car")
-            person = hakopy.asset_service_client_create(ASSET, f"PersonService/PersonStep/{PERSON}", "person")
-            assert car is not None and person is not None
-            with (output / "car.bin").open("wb") as car_trace, (output / "person.bin").open("wb") as person_trace:
-                for step in range(STEPS):
-                    def drive(body):
-                        body.drive.speed = 2.0 if step < 40 else 1.0
-                        body.drive.steering_angle = 0.1
+            handles = {
+                name: hakopy.asset_service_client_create(ASSET, f"CarService/AckermannStep/{name}", name)
+                for name in CARS
+            }
+            handles[PERSON] = hakopy.asset_service_client_create(
+                ASSET, f"PersonService/PersonStep/{PERSON}", PERSON)
+            assert all(handle is not None for handle in handles.values())
+            if mode == "async":
+                for _ in range(10):
+                    assert hakopy.usleep(DELTA_USEC)
+                elapsed = master_time()
+                assert elapsed >= 10 * DELTA_USEC, elapsed
+                print(f"Core advanced to {elapsed} us before any RPC request", flush=True)
 
-                    def animate(body):
-                        body.cmd_vel.linear.x = 1.0 if step < 20 else 0.0
-                        body.animation = ("walk", "wave", "sit", "sit_talk")[step // 20]
+            response_decoders = {
+                **dict.fromkeys(CARS, pdu_to_py_AckermannStepResponsePacket),
+                PERSON: pdu_to_py_PersonStepResponsePacket,
+            }
+            steps = 1 if mode == "async" else STEPS
+            with ExitStack() as files:
+                traces = {
+                    name: files.enter_context((output / f"{name}.bin").open("wb"))
+                    for name in handles
+                }
+                for step in range(steps):
+                    order = list(handles)
+                    check_missing = mode == "check-gate" and 1 <= step <= len(order)
+                    if check_missing:
+                        # Withhold a different service on each tick so every
+                        # gate member is necessary, independent of send order.
+                        order.append(order.pop(step - 1))
 
-                    send(car, step, pdu_to_py_AckermannStepRequestPacket,
-                         py_to_pdu_AckermannStepRequestPacket, drive)
-                    if check_gate and step == 1:
-                        # Let the previous time notification settle, then check
-                        # both Core time and the lack of a post-physics reply.
-                        time.sleep(0.12)
-                        before = master_time()
-                        time.sleep(0.35)
-                        after = master_time()
-                        assert before == after, (before, after)
-                        assert (hakopy.asset_service_client_poll(car)
-                                == hakopy.HAKO_SERVICE_CLIENT_API_EVENT_NONE)
-                        print(f"Core held at {before} us with only Car-1 at step 1", flush=True)
-                    send(person, step, pdu_to_py_PersonStepRequestPacket,
-                         py_to_pdu_PersonStepRequestPacket, animate)
-                    pending = [
-                        (car, pdu_to_py_AckermannStepResponsePacket, car_trace),
-                        (person, pdu_to_py_PersonStepResponsePacket, person_trace),
-                    ]
+                    for index, name in enumerate(order):
+                        if name == PERSON:
+                            def animate(body):
+                                body.cmd_vel.linear.x = 1.0 if step < 20 else 0.0
+                                body.animation = ("walk", "wave", "sit", "sit_talk")[step // 20]
+
+                            send(handles[name], step, pdu_to_py_PersonStepRequestPacket,
+                                 py_to_pdu_PersonStepRequestPacket, animate)
+                        else:
+                            def drive(body):
+                                body.drive.speed = (2.0 if step < 40 else 1.0) + CARS.index(name)
+                                body.drive.steering_angle = 0.1 if name == CARS[0] else -0.1
+
+                            send(handles[name], step, pdu_to_py_AckermannStepRequestPacket,
+                                 py_to_pdu_AckermannStepRequestPacket, drive)
+                        if check_missing and index == len(order) - 2:
+                            time.sleep(0.12)
+                            before = master_time()
+                            time.sleep(0.25)
+                            after = master_time()
+                            assert before == after == step * DELTA_USEC, (before, after)
+                            for waiting in order[:-1]:
+                                assert (hakopy.asset_service_client_poll(handles[waiting])
+                                        == hakopy.HAKO_SERVICE_CLIENT_API_EVENT_NONE)
+                            print(f"Core held at {before} us waiting for {order[-1]}", flush=True)
+                    pending = list(handles)
                     deadline = time.monotonic() + 6
                     while pending:
                         pending = [
-                            item for item in pending if not receive(item[0], item[1], step, item[2])
+                            name for name in pending
+                            if not receive(handles[name], response_decoders[name], step, traces[name])
                         ]
                         if pending:
                             assert time.monotonic() < deadline, step
-                            time.sleep(0.001)
+                            if mode == "async":
+                                assert hakopy.usleep(DELTA_USEC)
+                            else:
+                                time.sleep(0.001)
                     assert hakopy.usleep(DELTA_USEC)
-            print(f"DONE {STEPS} mixed steps", flush=True)
+            print(f"DONE {steps} mixed steps", flush=True)
             while hakopy.usleep(DELTA_USEC):
                 pass
             return 0
@@ -178,19 +224,22 @@ def client(pdu_config, service_config, output, hako_cmd, check_gate):
     return bool(errors)
 
 
-def wait_for(log, marker, process, timeout=20):
+def wait_for(log, marker, process, timeout=20, *, allow_clean_exit=False):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         contents = log.read_text(errors="replace")
         if marker in contents:
             return
-        if process.poll() is not None:
+        status = process.poll()
+        if allow_clean_exit and status == 0:
+            return
+        if status is not None:
             break
         time.sleep(0.05)
     raise RuntimeError(f"{log} missing {marker!r}\n{contents}")
 
 
-def run_route(build, foundation, car, service_config, run_dir, service, check_gate):
+def run_route(build, foundation, car, service_config, run_dir, route, check_gate=False):
     run_dir.mkdir()
     mmap = run_dir / "mmap"
     mmap.mkdir()
@@ -220,28 +269,37 @@ def run_route(build, foundation, car, service_config, run_dir, service, check_ga
     started = False
     try:
         launch("conductor", [build / "hako-async-rpc-integration-conductor"], "CONDUCTOR started")
+        manifest = {"legacy": MANIFEST, "service": SERVICE_MANIFEST, "async": ASYNC_MANIFEST}[route]
         args = [
-            build / "bin/urban-car-hakoniwa-asset", "--manifest", car / "urban-car-asset-manifest.json",
+            build / "bin/urban-car-hakoniwa-asset", "--manifest", car / manifest,
             "--no-viewer", "--external-conductor", "--realtime-sync-cycle-msec", "0",
-            "--physics-substeps", "4", "--ackermann-rpc-input", CAR, "--person-rpc-input", PERSON,
-            "--rpc-service-config", service_config, "--person-contact-log", run_dir / "contacts.jsonl",
+            "--physics-substeps", "4", "--rpc-service-config", service_config,
+            "--person-contact-log", run_dir / "contacts.jsonl",
         ]
-        if service:
-            args += ["--ackermann-rpc-use-service", "--person-rpc-use-service"]
-        server, _ = launch("server", args, "Starting Hakoniwa Runner:")
+        if route == "legacy":
+            for name in CARS:
+                args.extend(("--ackermann-rpc-input", name))
+            args.extend(("--person-rpc-input", PERSON))
+        server, server_log = launch("server", args, "Starting Hakoniwa Runner:")
         client_process, client_log = launch("client", [
             sys.executable, __file__, "--client", car / "urban-car-pdudef.json",
-            service_config, run_dir, hako_cmd, str(int(check_gate)),
+            service_config, run_dir, hako_cmd, "check-gate" if check_gate else route,
         ], "CLIENT registered")
         core("start")
         started = True
-        wait_for(client_log, f"DONE {STEPS} mixed steps", client_process)
+        steps = 1 if route == "async" else STEPS
+        wait_for(client_log, f"DONE {steps} mixed steps", client_process)
         core("stop")
         started = False
-        assert server.wait(timeout=8) == 0
+        if route == "async":
+            # With continuous stepping Core can acknowledge Stop inside
+            # sleep_no_wait() and keep the asset registered for Reset.
+            wait_for(server_log, "WAIT RESET", server, timeout=8, allow_clean_exit=True)
+        else:
+            assert server.wait(timeout=8) == 0
         # hakopy.start() stays registered for Reset after acknowledging Stop.
         for line in client_log.read_text(errors="replace").splitlines():
-            if line.startswith(("Core held", "Python PersonStep")):
+            if line.startswith(("Core held", "Core advanced", "Python PersonStep")):
                 print(f"{run_dir.name}: {line}", flush=True)
     finally:
         if started:
@@ -259,7 +317,73 @@ def run_route(build, foundation, car, service_config, run_dir, service, check_ga
                     process.wait()
 
 
-def main(build, foundation, urban, mujoco_library):
+def check_manifest_contract(build, foundation, car, service_config, work):
+    from jsonschema import Draft202012Validator
+    schema_path = Path(__file__).resolve().parents[2] / "schemas/runtime/asset-manifest.schema.json"
+    schema = json.loads(schema_path.read_text())
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    manifest = json.loads((car / SERVICE_MANIFEST).read_text())
+    validator.validate(manifest)
+    legacy = json.loads((car / MANIFEST).read_text())
+    validator.validate(legacy)
+    validator.validate(json.loads((car / ASYNC_MANIFEST).read_text()))
+    assert {key: value for key, value in manifest.items() if key != "services"} == legacy
+
+    def rejected(label, replacement, reason, extra_args=()):
+        path = car / f"invalid-{label}.json"
+        path.write_text(json.dumps(replacement))
+        result = subprocess.run([
+            build / "bin/urban-car-hakoniwa-asset", "--manifest", path,
+            "--no-viewer", "--external-conductor", "--rpc-service-config", service_config,
+            *extra_args,
+        ], capture_output=True, text=True, timeout=8)
+        assert result.returncode != 0 and reason in result.stderr, (label, result.stderr)
+        print(f"Rejected {label}: {reason}", flush=True)
+
+    invalid = deepcopy(manifest)
+    invalid["services"][0]["lockstep"] = "true"
+    assert not validator.is_valid(invalid)
+    rejected("lockstep-string", invalid, "lockstep must be a boolean")
+    print("Runtime asset schema accepted old, lockstep and async manifests and rejected string lockstep")
+
+    rejected("legacy-car-conflict", manifest, "Car-1 is declared by both",
+             ("--ackermann-rpc-input", "Car-1"))
+    rejected("legacy-person-conflict", manifest, "Walker is declared by both",
+             ("--person-rpc-input", PERSON))
+
+    invalid = deepcopy(manifest)
+    invalid["services"][0]["type"] = "unknown"
+    rejected("unknown-type", invalid, "unknown service type")
+    invalid = deepcopy(manifest)
+    invalid["services"][0].update(name="CarService/AckermannStep/Missing", pdu_robot="Missing")
+    rejected("missing-vehicle", invalid, "Ackermann RPC vehicle has no controller: Missing")
+    invalid = deepcopy(manifest)
+    invalid["services"][2].update(name="PersonService/PersonStep/Missing", pdu_robot="Missing")
+    rejected("missing-person", invalid, "person Missing is missing MuJoCo object")
+    invalid = deepcopy(manifest)
+    output = next(component for component in invalid["components"]
+                  if component["type"] == "multi_dof_joint_state")
+    state = json.loads(Path(output["config"]).read_text())
+    for section in ("spec", "mjcf_binding"):
+        state[section]["bodies"] = [body for body in state[section]["bodies"]
+                                    if body["name"] != CARS[0]]
+    state_path = car / "missing-car-state.json"
+    state_path.write_text(json.dumps(state))
+    output["config"] = str(state_path)
+    rejected("missing-multidof", invalid, "Ackermann RPC vehicle has no MultiDOF state binding: Car-1")
+    for flag in ("--ackermann-rpc-use-service", "--person-rpc-use-service"):
+        result = subprocess.run([build / "bin/urban-car-hakoniwa-asset", flag],
+                                capture_output=True, text=True, timeout=8)
+        assert result.returncode != 0 and f"Unknown or incomplete argument: {flag}" in result.stderr
+
+    async_run = work / "async"
+    run_route(build, foundation, car, service_config, async_run, "async")
+    first_contact = json.loads((async_run / "contacts.jsonl").read_text().splitlines()[0])
+    assert first_contact["time_sec"] < 0.01
+
+
+def main(build, foundation, urban, mujoco_library, *, contract):
     work = Path(tempfile.mkdtemp(prefix="hako-person-step-urban."))
     print(f"Integration logs: {work}", flush=True)
     os.environ.update(
@@ -273,14 +397,17 @@ def main(build, foundation, urban, mujoco_library):
     subprocess.run([
         sys.executable, Path(__file__).resolve().parents[2] / "tools/gen_rpc_service_config.py",
         "--pdu-config", car / "urban-car-pdudef.json", "--output", service,
-        "--car", CAR, "--person", PERSON,
+        "--car", CARS[0], "--car", CARS[1], "--person", PERSON,
     ], check=True)
+    if contract:
+        check_manifest_contract(build, foundation, car, service, work)
+        return
     baseline = {}
     for label in ("legacy-1", "legacy-2", "service-1", "service-2"):
         directory = work / label
-        run_route(build, foundation, car, service, directory, label.startswith("service"),
+        run_route(build, foundation, car, service, directory, label.split("-")[0],
                   check_gate=label == "service-1")
-        for filename in ("person.bin", "car.bin", "contacts.jsonl"):
+        for filename in (*(f"{name}.bin" for name in (*CARS, PERSON)), "contacts.jsonl"):
             data = (directory / filename).read_bytes()
             assert data, (label, filename)
             assert data == baseline.setdefault(filename, data), (label, filename)
@@ -290,5 +417,5 @@ def main(build, foundation, urban, mujoco_library):
 if __name__ == "__main__":
     if sys.argv[1] == "--client":
         pdu_config, service_config, output, hako_cmd = map(Path, sys.argv[2:6])
-        raise SystemExit(client(pdu_config, service_config, output, hako_cmd, sys.argv[6] == "1"))
-    main(*map(Path, sys.argv[1:]))
+        raise SystemExit(client(pdu_config, service_config, output, hako_cmd, sys.argv[6]))
+    main(*map(Path, sys.argv[1:5]), contract="--contract" in sys.argv[5:])

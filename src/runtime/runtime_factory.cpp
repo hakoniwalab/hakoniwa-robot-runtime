@@ -47,6 +47,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
     , const AckermannServiceFactory& ackermann_service_factory
     , std::vector<AsyncServiceComponents> person_services
+    , std::shared_ptr<IStatePublisher> person_state_publisher
 #endif
     )
 {
@@ -471,6 +472,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 #endif
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
+    if (person_state_publisher) {
+        publishers.push_back(std::move(person_state_publisher));
+    }
     for (auto& service : person_services) {
         publishers.push_back(std::move(service.publisher));
     }

@@ -162,6 +162,7 @@ prepare_urban() {
         "$FOUNDATION/python/bin/python3" - "$URBAN_DIR" "$WORK_DIR/car" "${VEHICLES[@]}" <<'PY'
 from copy import deepcopy
 from pathlib import Path
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 import multi_car
@@ -188,25 +189,34 @@ for body in world.findall("body"):
 ET.SubElement(world, "geom", name="test-ground", type="plane", size="20 20 0.1")
 tree.write(model)
 multi_car.materialize_runtime(model, work, vehicles)
+manifest = work / "urban-car-asset-manifest.json"
+configured = work / "urban-car-service-manifest.json"
+shutil.copyfile(manifest, configured)
+multi_car.configure_step_services(configured, vehicles=[vehicle["name"] for vehicle in vehicles],
+                                  lockstep=True)
 PY
     "$FOUNDATION/python/bin/python3" "$SOURCE_DIR/../../tools/gen_rpc_service_config.py" \
         --pdu-config "$WORK_DIR/car/urban-car-pdudef.json" --output "$SERVICE_CONFIG" "${service_args[@]}"
 }
 
 start_urban() {
-    local run=$1 index
-    local rpc_args=()
-    shift
-    # Reverse CLI order to exercise the old batch and new manifest order independently.
-    for ((index = ${#VEHICLES[@]} - 1; index >= 0; --index)); do
-        rpc_args+=(--ackermann-rpc-input "${VEHICLES[index]}")
-    done
+    local run=$1 route=$2 index
+    local rpc_args=(--rpc-service-config "$SERVICE_CONFIG")
+    local manifest="$WORK_DIR/car/urban-car-asset-manifest.json"
+    if [[ "$route" == service ]]; then
+        manifest="$WORK_DIR/car/urban-car-service-manifest.json"
+    else
+        # Reverse CLI order to exercise the old batch and new manifest order independently.
+        for ((index = ${#VEHICLES[@]} - 1; index >= 0; --index)); do
+            rpc_args+=(--ackermann-rpc-input "${VEHICLES[index]}")
+        done
+    fi
     begin_run "$run"
     "$BUILD_DIR/bin/urban-car-hakoniwa-asset" \
-        --manifest "$WORK_DIR/car/urban-car-asset-manifest.json" \
+        --manifest "$manifest" \
         --asset-name AckermannUrban --no-viewer --external-conductor \
         --realtime-sync-cycle-msec 0 --physics-substeps 4 \
-        "${rpc_args[@]}" --rpc-service-config "$SERVICE_CONFIG" "$@" \
+        "${rpc_args[@]}" \
         >"$run/server.log" 2>&1 &
     SERVER_PID=$!
     PIDS+=("$SERVER_PID")
@@ -214,10 +224,9 @@ start_urban() {
 }
 
 run_urban() {
-    local run="$WORK_DIR/$1" vehicle index
+    local run="$WORK_DIR/$1" route=$2 vehicle index
     local client_pids=()
-    shift
-    start_urban "$run" "$@"
+    start_urban "$run" "$route"
     for vehicle in "${VEHICLES[@]}"; do
         "$BUILD_DIR/hako-ackermann-step-urban-client" "$SERVICE_CONFIG" "$run/state-$vehicle.bin" "$vehicle" \
             >"$run/client-$vehicle.log" 2>&1 &
@@ -238,7 +247,7 @@ run_urban() {
 
 run_urban_startup() {
     local run="$WORK_DIR/startup" client_pid
-    start_urban "$run" --ackermann-rpc-use-service
+    start_urban "$run" service
     "$BUILD_DIR/hako-ackermann-step-startup-client" \
         "$WORK_DIR/car/urban-car-pdudef.json" "$SERVICE_CONFIG" >"$run/client.log" 2>&1 &
     client_pid=$!
@@ -282,10 +291,10 @@ else
         run_urban_startup
         exit 0
     fi
-    run_urban legacy-1
-    run_urban legacy-2
-    run_urban service-1 --ackermann-rpc-use-service
-    run_urban service-2 --ackermann-rpc-use-service
+    run_urban legacy-1 legacy
+    run_urban legacy-2 legacy
+    run_urban service-1 service
+    run_urban service-2 service
     for vehicle in "${VEHICLES[@]}"; do
         trace="state-$vehicle.bin"
         cmp "$WORK_DIR/legacy-1/$trace" "$WORK_DIR/legacy-2/$trace"

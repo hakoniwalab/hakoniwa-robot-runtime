@@ -11,10 +11,7 @@ class PersonStepService final : public runtime::IAsyncService {
 public:
     using ApplyCommand = std::function<std::uint32_t(const PersonStepCommand&)>;
     using ReadState = std::function<PersonStepState(std::uint32_t)>;
-    using PublishOutputs = std::function<void()>;
-
-    PersonStepService(std::string person, ApplyCommand apply_command,
-        ReadState read_state, PublishOutputs publish_outputs = {});
+    PersonStepService(std::string person, ApplyCommand apply_command, ReadState read_state);
 
     bool on_request(std::span<const std::byte> request) override;
     runtime::AsyncServiceStepResult on_step(
@@ -28,7 +25,6 @@ private:
     std::string person_;
     ApplyCommand apply_command_;
     ReadState read_state_;
-    PublishOutputs publish_outputs_;
     std::uint64_t step_ {0};
     std::uint32_t result_code_ {0};
 };

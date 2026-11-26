@@ -35,15 +35,10 @@ struct ManifestFactoryConfig {
     std::vector<std::string> person_rpc_inputs;
     /** Robot carrying the viewer-compatible people state PDUs. */
     std::string person_state_robot {"UrbanPeople"};
-    /** Core service definition JSON; required when any RPC input is non-empty. */
+    /** Core service definition JSON for legacy RPC inputs and manifest services. */
     std::string async_rpc_service_definition_path;
     /** Optional JSONL destination for person contact edges. */
     std::string person_contact_log_path;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-    /** Use the lockstep service pipeline for ackermann_rpc_inputs. */
-    bool ackermann_rpc_use_service {false};
-    bool person_rpc_use_service {false};
-#endif
 };
 
 /**
