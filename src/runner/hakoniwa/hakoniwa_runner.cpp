@@ -190,11 +190,8 @@ public:
 
     bool sleep_before_first_step() const noexcept override
     {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_ASYNC_SERVICE
-        if (has_async_service_lockstep()) {
-            return true;
-        }
-#endif
+        // PDU lockstep needs its initial sync. Service clients can wait for
+        // the first reply before advancing their own time.
         return !resources.lockstep_inputs.empty();
     }
 

@@ -43,14 +43,18 @@ AckermannStepService::AckermannStepService(
 
 bool AckermannStepService::on_request(std::span<const std::byte> request)
 {
-    if (!packet_metadata(request, sizeof(Hako_AckermannStepRequestPacket))) {
+    constexpr auto body_offset = offsetof(Hako_AckermannStepRequestPacket, body);
+    // Python's generated packet ends at the last field. C++ also rounds
+    // the struct size up to its alignment, adding trailing padding.
+    constexpr auto body_size = offsetof(Hako_AckermannStepRequest, drive)
+        + offsetof(Hako_AckermannDrive, jerk) + sizeof(Hako_AckermannDrive::jerk);
+    if (!packet_metadata(request, body_offset + body_size)) {
         return false;
     }
     // Core owns the request header. Read the fixed-size Ackermann body after
     // validating the envelope, without decoding the header strings again.
     Hako_AckermannStepRequest wire {};
-    std::memcpy(&wire, request.data() + HAKO_PDU_META_DATA_SIZE()
-        + offsetof(Hako_AckermannStepRequestPacket, body), sizeof(wire));
+    std::memcpy(&wire, request.data() + HAKO_PDU_META_DATA_SIZE() + body_offset, body_size);
     HakoCpp_AckermannStepRequest decoded {};
     cpp_pdu2cpp_AckermannStepRequest(nullptr, wire, decoded);
     reader_->apply({

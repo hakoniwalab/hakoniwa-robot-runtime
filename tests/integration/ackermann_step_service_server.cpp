@@ -8,6 +8,7 @@
 
 #include "hako_asset_service.h"
 
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 
@@ -19,13 +20,17 @@ using ::hakoniwa::robot_runtime::runner::hakoniwa::CoreAsyncServiceServer;
 namespace {
 
 constexpr char kAsset[] = "AckermannRpcServer";
-constexpr char kVehicle[] = "A";
 constexpr hako_time_t kDelta = 1000;
 
 class Plant final : public IActuatorPlant {
 public:
-    explicit Plant(std::shared_ptr<AckermannDriveRpcEventReader> reader)
-        : reader_(std::move(reader)) {}
+    struct Vehicle {
+        std::string name;
+        std::shared_ptr<AckermannDriveRpcEventReader> reader;
+        double speed {0};
+    };
+
+    explicit Plant(std::vector<Vehicle> vehicles) : vehicles_(std::move(vehicles)) {}
 
     std::uint64_t delta_time_usec() const noexcept override { return kDelta; }
 
@@ -33,20 +38,25 @@ public:
     {
         RobotState result;
         result.sample_time_usec = time_;
-        result.bodies.push_back({
-            .body_id = kVehicle, .position = {static_cast<double>(time_ / kDelta) - 1.0, 0, 0},
-            .linear_velocity = {speed_, 0, 0},
-        });
+        for (const auto& vehicle : vehicles_) {
+            result.bodies.push_back({
+                .body_id = vehicle.name,
+                .position = {static_cast<double>(time_ / kDelta) - 1.0, 0, 0},
+                .linear_velocity = {vehicle.speed, 0, 0},
+            });
+        }
         return result;
     }
 
     RobotState step(const std::vector<ActuatorCommand>&) override
     {
-        const auto command = reader_->take_latest();
-        if (!command) {
-            throw std::runtime_error("expected one new Ackermann command");
+        for (auto& vehicle : vehicles_) {
+            const auto command = vehicle.reader->take_latest();
+            if (!command) {
+                throw std::runtime_error("expected a new Ackermann command for " + vehicle.name);
+            }
+            vehicle.speed = command->speed_m_s;
         }
-        speed_ = command->speed_m_s;
         time_ += kDelta;
         return read_state();
     }
@@ -54,35 +64,51 @@ public:
     RobotState reset(std::uint64_t time) override
     {
         time_ = time;
-        speed_ = 0;
+        for (auto& vehicle : vehicles_) {
+            vehicle.speed = 0;
+        }
         return read_state();
     }
 
 private:
-    std::shared_ptr<AckermannDriveRpcEventReader> reader_;
+    std::vector<Vehicle> vehicles_;
     std::uint64_t time_ {0};
-    double speed_ {0};
 };
 
 class Callbacks final : public IHakoniwaAssetDriverCallbacks {
 public:
-    Callbacks()
+    explicit Callbacks(const std::vector<std::string>& vehicle_names)
     {
-        const auto name = ackermann_step_service_name(kVehicle);
-        server_ = std::make_shared<CoreAsyncServiceServer>(kAsset, std::vector {name});
-        auto reader = std::make_shared<AckermannDriveRpcEventReader>();
-        auto service = std::make_shared<AckermannStepService>(reader, kVehicle);
-        auto source = std::make_shared<AsyncServiceCommandSource>(
-            name, 0, server_, std::move(service), true);
-        auto controller = std::make_shared<AsyncServiceController>("service", source);
-        auto publisher = std::make_shared<AsyncServiceResponsePublisher>("reply", source);
-        gate_ = std::make_unique<AsyncServiceLockstepGate>(std::vector {source});
+        std::vector<std::string> service_names;
+        for (const auto& vehicle : vehicle_names) {
+            service_names.push_back(ackermann_step_service_name(vehicle));
+        }
+        server_ = std::make_shared<CoreAsyncServiceServer>(kAsset, service_names);
+        std::vector<Plant::Vehicle> vehicles;
+        std::vector<std::shared_ptr<AsyncServiceCommandSource>> gate_sources;
+        std::vector<std::shared_ptr<ICommandSource>> sources;
+        std::vector<std::shared_ptr<IController>> controllers;
+        std::vector<std::shared_ptr<IStatePublisher>> publishers;
+        for (std::size_t index = 0; index < vehicle_names.size(); ++index) {
+            const auto& vehicle = vehicle_names[index];
+            const auto& name = service_names[index];
+            auto reader = std::make_shared<AckermannDriveRpcEventReader>();
+            auto service = std::make_shared<AckermannStepService>(reader, vehicle);
+            auto source = std::make_shared<AsyncServiceCommandSource>(
+                name, static_cast<int>(index), server_, std::move(service), true);
+            vehicles.push_back({vehicle, std::move(reader)});
+            gate_sources.push_back(source);
+            sources.push_back(source);
+            controllers.push_back(std::make_shared<AsyncServiceController>(name + ":controller", source));
+            publishers.push_back(std::make_shared<AsyncServiceResponsePublisher>(name + ":reply", source));
+        }
+        AsyncServiceLockstepConfig config;
+        config.timeout = std::chrono::seconds(3);
+        gate_ = std::make_unique<AsyncServiceLockstepGate>(std::move(gate_sources), config);
         runtime_ = std::make_unique<ActuatorRuntime>(
-            std::vector<std::shared_ptr<ICommandSource>> {source},
-            std::vector<std::shared_ptr<IController>> {controller},
+            std::move(sources), std::move(controllers),
             std::make_shared<PriorityCommandArbiter>(std::vector<ControllerPriority> {}),
-            std::make_shared<Plant>(reader),
-            std::vector<std::shared_ptr<IStatePublisher>> {publisher});
+            std::make_shared<Plant>(std::move(vehicles)), std::move(publishers));
     }
 
     int on_initialize() noexcept override
@@ -112,8 +138,10 @@ public:
     {
         try {
             const auto report = runtime_->step_hakoniwa(1);
-            if (report.publisher_statuses.at(0).state != ComponentState::Ready) {
-                return fail(report.publisher_statuses.at(0).detail);
+            for (const auto& status : report.publisher_statuses) {
+                if (status.state != ComponentState::Ready) {
+                    return fail(status.component_id + ": " + status.detail);
+                }
             }
             std::cout << "STEP count=" << ++steps_ << std::endl;
             return 0;
@@ -145,8 +173,10 @@ private:
 
 int main(int argc, char** argv)
 {
-    if (argc != 3) return 2;
-    Callbacks callbacks;
+    if (argc < 3) return 2;
+    std::vector<std::string> vehicles(argv + 3, argv + argc);
+    if (vehicles.empty()) vehicles.emplace_back("A");
+    Callbacks callbacks(vehicles);
     HakoniwaAssetDriver driver({kAsset, argv[1], kDelta, HAKO_ASSET_MODEL_PLANT}, callbacks);
     if (driver.register_asset() != 0 || hako_asset_service_initialize(argv[2]) != 0) {
         return 1;

@@ -189,6 +189,33 @@ void malformed_request_returns_invalid()
     assert(!pipeline.server->has_writer && !pipeline.reader->take_latest());
 }
 
+void accepts_request_without_cpp_tail_padding()
+{
+    ServicePipeline pipeline;
+    const AckermannDriveCommand command {
+        .steering_angle_rad = 0.25,
+        .steering_angle_velocity_rad_s = 0.5,
+        .speed_m_s = 5.0,
+        .acceleration_m_s2 = 2.0,
+        .jerk_m_s3 = 1.5,
+    };
+    auto packet = request_packet(41, command);
+    // The generated Python converter writes 300 bytes after the metadata,
+    // ending at the last field of drive, without C++ tail alignment.
+    constexpr auto size = HAKO_PDU_META_DATA_SIZE() + 300;
+    HakoPduMetaDataType metadata {};
+    std::memcpy(&metadata, packet.data(), sizeof(metadata));
+    metadata.heap_off = size;
+    metadata.total_size = size;
+    std::memcpy(packet.data(), &metadata, sizeof(metadata));
+
+    assert(!pipeline.service->on_request(std::span(packet).first(size - 1)));
+    assert(pipeline.service->on_request(std::span(packet).first(size)));
+    const auto applied = pipeline.reader->take_latest();
+    assert(applied);
+    assert(encode_ackermann_command(*applied) == encode_ackermann_command(command));
+}
+
 void commands_match_from_first_substep()
 {
     const RuntimeAckermannControllerConfig config {
@@ -250,6 +277,7 @@ int main()
 {
     same_response_bytes();
     malformed_request_returns_invalid();
+    accepts_request_without_cpp_tail_padding();
     commands_match_from_first_substep();
     std::cout << "AckermannStep service P1-1 through P1-3 passed\n";
 }

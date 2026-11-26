@@ -68,7 +68,7 @@ public:
         sleeps.push_back(times());
         hakoniwa_usec_ += static_cast<std::uint64_t>(usec);
         // Simulate a normal external stop after the first post-step sleep.
-        return sleeps.size() == 2 ? EINTR : 0;
+        return EINTR;
     }
 
 #if defined(HAKO_ENABLE_ASYNC_RPC_INPUT) && HAKO_ENABLE_ASYNC_RPC_INPUT
@@ -246,13 +246,13 @@ void test_runner_waits_without_advancing()
     assert(fixture.runner.start() == 0);
     assert(fixture.runner.wait() == 0);
 
-    // The first synchronization sleep advances Core with no physics. All
-    // gate polls then see the same times until the first request arrives.
-    assert(fixture.api->sleeps == (std::vector<Times> {{0, 0}, {kStepUsec, kStepUsec}}));
-    assert(fixture.server->polls == std::vector<Times>(4, {kStepUsec, 0}));
+    // With service-only lockstep the first sleep follows the first physics
+    // step. While the first batch is missing, both times stay at zero.
+    assert(fixture.api->sleeps == (std::vector<Times> {{0, kStepUsec}}));
+    assert(fixture.server->polls == std::vector<Times>(4, {0, 0}));
     assert(fixture.server->reads == 1);
-    assert(fixture.server->replies == (std::vector<Times> {{kStepUsec, kStepUsec}}));
-    assert(fixture.api->times() == (Times {2 * kStepUsec, kStepUsec}));
+    assert(fixture.server->replies == (std::vector<Times> {{0, kStepUsec}}));
+    assert(fixture.api->times() == (Times {kStepUsec, kStepUsec}));
     assert(!fixture.api->force_stopped);
 }
 
@@ -271,14 +271,14 @@ void test_runner_stops_on_gate_timeout()
     assert(wait_result != 0);
     assert(fixture.api->force_stopped);
     assert(errors.str().find(kServiceName) != std::string::npos);
-    assert(fixture.api->sleeps == (std::vector<Times> {{0, 0}}));
+    assert(fixture.api->sleeps.empty());
     assert(!fixture.server->polls.empty());
     for (const auto times : fixture.server->polls) {
-        assert(times == (Times {kStepUsec, 0}));
+        assert(times == (Times {0, 0}));
     }
     assert(fixture.server->reads == 0);
     assert(fixture.server->replies.empty());
-    assert(fixture.api->times() == (Times {kStepUsec, 0}));
+    assert(fixture.api->times() == (Times {0, 0}));
 }
 
 } // namespace
