@@ -4,7 +4,7 @@
 
 **Robot Runtime のソースは、1 行も変えません。** 自分のプラグイン（`.so`）を作り、マニフェストに書くだけで、Robot Runtime が起動のときに自動で読み込みます。
 
-> **状態（2026-11-26）**：第 3 稿。プラグインの仕組みは Robot Runtime の main に入っています（hakoniwalab/hakoniwa-robot-runtime#67）。この手順書のもとになったサンプル（`examples/service_plugins/servoj_like/`）は、Linux と macOS（Apple Silicon）で、本物の hakoniwa-core-pro と SO-101 で 5 つの動きが通ることを確かめています。この第 3 稿そのものを、手順書だけを見て追う確かめは、これからです。
+> **状態（2026-11-26）**：第 3 稿。プラグインの仕組みは Robot Runtime の main に入っています（hakoniwalab/hakoniwa-robot-runtime#67）。この手順書のもとになったサンプル（`examples/service_plugins/servoj_like/`）は、Linux と macOS（Apple Silicon）で、本物の hakoniwa-core-pro と SO-101 で 5 つの動きが通ることを確かめています。この第 3 稿は、初めて読む人が手順書だけを見て macOS（Apple Silicon）で最後まで追い、画面なしで 3 回とも期待どおりの出力になることを確かめています（Linux での手順書の確かめは、まだです）。
 
 仕組みの説明は [design-async-rpc.md](design-async-rpc.md)、マニフェストの書き方は [configuration.md](configuration.md) の 2.4 節にあります。
 
@@ -21,11 +21,13 @@
 
 **前提**
 - Business Pack の Foundation（hakoniwa-core-pro `e0fa56f` 以降、hakoniwa-pdu-endpoint、`hakoniwa-pdu` 1.7.1 以降、Python と cffi）が入っていること。Foundation は Business Pack の手順で作ります。手で作ると、つまずきやすい点が多いためです（付録 B）。
-- 並べて clone しておくもの：hakoniwa-robot-runtime、hakoniwa-robot-arm、hakoniwa-mujoco-robots、hakoniwa-sensor-adapter、hakoniwa-pdu-registry、hakoniwa-pdu-rpc。
+- 並べて clone しておくもの：hakoniwa-robot-runtime、hakoniwa-robot-arm、hakoniwa-mujoco-robots、hakoniwa-sensor-adapter、hakoniwa-pdu-registry、hakoniwa-pdu-rpc。どれも main で確かめています。
 - SO-101 のモデル（Business Pack の Model Forge の出力。`so101.xml` と `assets/`）。
 - Docker（手順 2.3 で使う）。macOS では Homebrew の `glfw`。
 
-この手順書では、場所を次の変数で書きます。自分の環境に合わせて、最初に一度だけ設定してください（すべて絶対パス）。
+この手順書では、場所を次の変数で書きます。自分の環境に合わせて、最初に一度だけ設定してください（すべて絶対パス）。**最後まで、同じシェルで続けてください。** 後の節は、前の節で決めた変数（`SRC_REF`、`PDU_TYPES`、`PDU_PY`、`PLUGIN`、`SHLIB`）を使います。別の端末で続けるときは、6.2 の頭の「変数のまとめ」を貼り直してください。
+
+**待ち時間を減らすには**：6.1 のビルド（数分かかる）は、2〜5 節に依存しません。別の端末で、0 節の変数を設定してから先に走らせておけます。
 
 ```bash
 B=$HOME/work                                   # リポジトリを並べた場所
@@ -69,6 +71,8 @@ EOF
 自分の型だけを生成します。hakoniwa-pdu-registry の追跡されるファイル（`pdu/`、`config/`）は変わりません。
 
 ### 2.1 .srv を Hakoniwa の .msg に変える
+
+2 節の `python3` は、ホストの Python です（Foundation の `$PYTHON` ではありません）。要るのは 2.3 の PyYAML だけです。
 
 ```bash
 cd "$REGISTRY"
@@ -115,6 +119,7 @@ packages:
 EOF
 
 cd "$REGISTRY"
+rm -rf .cache/my-pdu      # 前の生成の残りを消す（古い型が混ざらないように）
 python3 -c 'import yaml' 2>/dev/null || {
   python3 -m venv "$WORK/venv-fetch" && "$WORK/venv-fetch/bin/pip" install -q -r tools/requirements-fetch.txt
   export PATH="$WORK/venv-fetch/bin:$PATH"
@@ -124,7 +129,8 @@ python3 tools/generate_from_sources.py \
   --output-dir .cache/my-pdu \
   my_robot_srvs_msgs/ServoJRequestPacket \
   my_robot_srvs_msgs/ServoJResponsePacket
-rm -rf "$REGISTRY/output_msgs/my_robot_srvs_msgs"     # 取ってきた元（追跡されない）を片付ける
+# 道具が registry の中に取ってきた .msg の写し（git に追跡されない）を片付ける
+rm -rf "$REGISTRY/output_msgs/my_robot_srvs_msgs"
 git status --short -- pdu/ config/                    # 何も出なければ、registry は変わっていない
 ```
 
@@ -199,6 +205,8 @@ ls -l "$PLUGIN"
 - macOS でも、ファイル名は `.so` になります（CMake の MODULE ライブラリのため）。
 
 ## 5. マニフェストと service.json を書く
+
+**サンプルの `run.py`（6.2）を使う場合、ここは手で書かなくてかまいません。** `run.py` が、実行のたびに、この 2 つを自動で書きます。この節は、何が書かれるのかを知るため、また自分の腕で手で書くときのために読んでください。
 
 ### 5.1 マニフェスト
 
@@ -277,6 +285,11 @@ cmake --build "$WORK/build-arm" --target robot-arm-hakoniwa-asset --parallel 4
 サンプルの `run.py` が、5.1・5.2 を書き、腕を起動し、クライアントの登録を待って `hako-cmd start` し、`client.py` で 5 回呼んで、止めるまでを、1 回で行います。
 
 ```bash
+# 変数のまとめ（同じシェルで続けているなら、そのままでよい）
+PDU_PY=$WORK/local-python
+PLUGIN=$WORK/build-plugin/libmy_servoj.so
+SHLIB=so; [[ $(uname -s) == Darwin ]] && SHLIB=dylib
+
 export ROBOT_ARM PREFIX SO101_MODEL PLUGIN
 export ARM_ASSET="$WORK/build-arm/bin/robot-arm-hakoniwa-asset"
 export HAKO_PDU_RPC_LIBRARY="$WORK/build-rpc/src/libhakoniwa_pdu_rpc.$SHLIB"
@@ -290,9 +303,11 @@ else
 fi
 DEMO=$RUNTIME/examples/service_plugins/servoj_like
 
-"$PYTHON" "$DEMO/run.py" "$WORK/run-$(date +%Y%m%d-%H%M%S)"                 # ビューアあり
-# "$PYTHON" "$DEMO/run.py" "$WORK/run-$(date +%Y%m%d-%H%M%S)" --no-viewer   # 画面なし
+"$PYTHON" "$DEMO/run.py" "$WORK/run-$(date +%Y%m%d-%H%M%S)" --no-viewer   # 画面なし（まずこちらで）
+# "$PYTHON" "$DEMO/run.py" "$WORK/run-$(date +%Y%m%d-%H%M%S)"             # ビューアあり（ウィンドウが開く）
 ```
+
+1 回およそ 10 秒です。core-pro の INFO の行に混じって、最後のほうに次の 5 行が出ます。`Warning: Log message truncated to fit 256 byte limit.` は何度も出ますが、core-pro のログが長いだけなので、気にしなくてかまいません。
 
 期待される出力：
 
