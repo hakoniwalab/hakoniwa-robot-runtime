@@ -128,6 +128,9 @@ bool resolve_manifest(
             "manifest root must be an object: "
             + normalized.string());
     }
+    if (root.contains("services")) {
+        return fail(error_message, "manifest root 'services' was replaced by 'robots'");
+    }
 
     ResolvedManifest resolved;
     std::string model;
@@ -177,7 +180,7 @@ bool resolve_manifest(
         pdu_definition_path.string(),
         runtime_config_path.string(),
         root.at("components").dump(),
-        root.value("services", json::array()).dump(),
+        root.value("robots", json::array()).dump(),
     };
 
     output = std::move(resolved);

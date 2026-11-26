@@ -3,7 +3,6 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
-#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -176,20 +175,21 @@ bool load_person_initial_poses(
 }
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-bool load_service_plugin(const json& service, const fs::path& base_path,
+bool load_service_plugin(const json& robot, const fs::path& base_path,
     RuntimeServiceConfig& config, std::string* error)
 {
-    if (!service.contains("plugin") || !service.at("plugin").is_object()) {
-        return fail(error, "service " + config.name + " needs a plugin object");
+    const auto& name = config.pdu_robot;
+    const auto& plugin = robot.at("plugin");
+    if (!plugin.is_object()) {
+        return fail(error, "robot " + name + " needs a plugin object");
     }
-    const auto& plugin = service.at("plugin");
     for (const auto& [field, value] : plugin.items()) {
         if (field != "library" && field != "config") {
-            return fail(error, "unknown plugin field " + field + " in service " + config.name);
+            return fail(error, "unknown plugin field " + field + " in robot " + name);
         }
     }
     std::string library;
-    if (!required_string(plugin, "library", library, error, "service " + config.name + " plugin")) {
+    if (!required_string(plugin, "library", library, error, "robot " + name + " plugin")) {
         return false;
     }
     const auto path = resolve(base_path, library);
@@ -198,75 +198,31 @@ bool load_service_plugin(const json& service, const fs::path& base_path,
     }
     config.plugin_library = path.string();
     config.plugin_config_json = plugin.contains("config") ? plugin.at("config").dump() : "{}";
-    if (service.contains("priority")) {
-        const auto& value = service.at("priority");
+    if (robot.contains("priority")) {
+        const auto& value = robot.at("priority");
         if (!value.is_number_integer()
-            || (value.is_number_unsigned() && value.get<std::uint64_t>() > std::numeric_limits<std::int32_t>::max())
+            || (value.is_number_unsigned()
+                && value.get<std::uint64_t>() > std::numeric_limits<std::int32_t>::max())
             || value.get<std::int64_t>() < std::numeric_limits<std::int32_t>::min()
             || value.get<std::int64_t>() > std::numeric_limits<std::int32_t>::max()) {
-            return fail(error, "service " + config.name + " priority must be a 32-bit integer");
+            return fail(error, "robot " + name + " priority must be a 32-bit integer");
         }
         config.priority = value.get<std::int32_t>();
     }
     return true;
 }
-
-bool same_robot_plugin(const RuntimeServiceConfig& first, const RuntimeServiceConfig& current,
-    std::string* error)
-{
-    const auto mismatch = [&](const char* field) {
-        return fail(error, "plugin services for robot " + current.pdu_robot + " must use the same "
-            + field + ": " + first.name + " and " + current.name);
-    };
-    if (first.plugin_library != current.plugin_library) {
-        return mismatch("library");
-    }
-    if (first.plugin_config_json != current.plugin_config_json) {
-        return mismatch("config");
-    }
-    if (first.priority != current.priority) {
-        return mismatch("priority");
-    }
-    return true;
-}
 #endif
 
-bool load_services(std::string_view services_json, [[maybe_unused]] const fs::path& base_path,
-    RuntimeDefinition& definition, std::string* error)
+bool load_robot_services(const json& robot, const RuntimeServiceConfig& robot_config,
+    std::unordered_set<std::string>& service_names, RuntimeDefinition& definition, std::string* error)
 {
-    const auto services = json::parse(services_json, nullptr, false);
-    if (!services.is_array()) {
-        return fail(error, "manifest services must be an array");
+    if (!robot.contains("services") || !robot.at("services").is_array()) {
+        return fail(error, "robot " + robot_config.pdu_robot + " services must be an array");
     }
-
-    std::unordered_set<std::string> names;
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-    std::unordered_map<std::string, std::size_t> first_plugin_rows;
-#endif
-    for (const auto& service : services) {
-        RuntimeServiceConfig config {};
-        std::string type;
-        if (!required_string(service, "name", config.name, error, "service")
-            || !required_string(service, "type", type, error, "service " + config.name)
-            || !required_string(service, "pdu_robot", config.pdu_robot, error,
-                "service " + config.name)) {
+    for (const auto& service : robot.at("services")) {
+        auto config = robot_config;
+        if (!required_string(service, "name", config.name, error, "service")) {
             return false;
-        }
-        if (type == "ackermann_step") {
-            config.type = RuntimeServiceType::AckermannStep;
-        } else if (type == "person_step") {
-            config.type = RuntimeServiceType::PersonStep;
-        } else if (type == "plugin") {
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-            config.type = RuntimeServiceType::Plugin;
-            if (!load_service_plugin(service, base_path, config, error)) {
-                return false;
-            }
-#else
-            return fail(error, "service plugins are disabled: " + config.name);
-#endif
-        } else {
-            return fail(error, "unknown service type " + type + " for " + config.name);
         }
         for (const auto& [field, value] : service.items()) {
             if (field == "lockstep") {
@@ -274,23 +230,72 @@ bool load_services(std::string_view services_json, [[maybe_unused]] const fs::pa
                     return fail(error, "service " + config.name + " lockstep must be a boolean");
                 }
                 config.lockstep = value.get<bool>();
-            } else if (field != "name" && field != "type" && field != "pdu_robot"
-                && !(config.type == RuntimeServiceType::Plugin && (field == "plugin" || field == "priority"))) {
+            } else if (field != "name") {
                 return fail(error, "unknown field " + field + " in service " + config.name);
             }
         }
-        if (!names.insert(config.name).second) {
+        if (!service_names.insert(config.name).second) {
             return fail(error, "duplicate service name: " + config.name);
         }
-#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
-        if (config.type == RuntimeServiceType::Plugin) {
-            const auto [first, inserted] = first_plugin_rows.emplace(config.pdu_robot, definition.services.size());
-            if (!inserted && !same_robot_plugin(definition.services[first->second], config, error)) {
-                return false;
+        definition.services.push_back(std::move(config));
+    }
+    return true;
+}
+
+bool load_robots(std::string_view robots_json, [[maybe_unused]] const fs::path& base_path,
+    RuntimeDefinition& definition, std::string* error)
+{
+    const auto robots = json::parse(robots_json, nullptr, false);
+    if (!robots.is_array()) {
+        return fail(error, "manifest robots must be an array");
+    }
+
+    std::unordered_set<std::string> robot_names;
+    std::unordered_set<std::string> service_names;
+    for (const auto& robot : robots) {
+        RuntimeServiceConfig config {};
+        if (!required_string(robot, "name", config.pdu_robot, error, "robot")) {
+            return false;
+        }
+        if (!robot_names.insert(config.pdu_robot).second) {
+            return fail(error, "duplicate robot name: " + config.pdu_robot);
+        }
+
+        const bool has_plugin = robot.contains("plugin");
+        for (const auto& [field, value] : robot.items()) {
+            if (field != "name" && field != "services" && field != "builtin" && field != "plugin"
+                && !(has_plugin && field == "priority")) {
+                return fail(error, "unknown field " + field + " in robot " + config.pdu_robot);
             }
         }
+        if (has_plugin == robot.contains("builtin")) {
+            return fail(error, "robot " + config.pdu_robot + " must specify exactly one of plugin or builtin");
+        }
+        if (has_plugin) {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+            config.type = RuntimeServiceType::Plugin;
+            if (!load_service_plugin(robot, base_path, config, error)) {
+                return false;
+            }
+#else
+            return fail(error, "service plugins are disabled: " + config.pdu_robot);
 #endif
-        definition.services.push_back(std::move(config));
+        } else {
+            std::string builtin;
+            if (!required_string(robot, "builtin", builtin, error, "robot " + config.pdu_robot)) {
+                return false;
+            }
+            if (builtin == "ackermann_step") {
+                config.type = RuntimeServiceType::AckermannStep;
+            } else if (builtin == "person_step") {
+                config.type = RuntimeServiceType::PersonStep;
+            } else {
+                return fail(error, "unknown builtin " + builtin + " for robot " + config.pdu_robot);
+            }
+        }
+        if (!load_robot_services(robot, config, service_names, definition, error)) {
+            return false;
+        }
     }
     return true;
 }
@@ -585,7 +590,7 @@ bool resolve_runtime_definition(
 
     RuntimeDefinition definition;
     definition.model_path = input.model_path;
-    if (!detail::load_services(input.services_json, context.base_path, definition, error_message)
+    if (!detail::load_robots(input.robots_json, context.base_path, definition, error_message)
         || !detail::load_initial_body_poses(
             context.runtime_root, definition, error_message)
         || !detail::load_person_initial_poses(

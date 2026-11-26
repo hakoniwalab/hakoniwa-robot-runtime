@@ -47,3 +47,5 @@ SHM 対応の PDU RPC と、センサを有効にした Robot Arm をビルド�
 手順書の [6.2 節](../../../docs/howto-add-async-service.md#62-動かす) で環境変数を設定し、`run.py --no-viewer` で 5 つの動作を確かめます。
 デスクトップで MuJoCo ウィンドウを開くには、新しい実行ディレクトリを指定し、`--no-viewer` を外します。
 `run.py` は実行ディレクトリにマニフェスト、RPC 設定、Core のログを書き、動作後に止めます。
+マニフェストの `robots` に共有ライブラリを使う `SO101` を置き、`services` に
+`ArmService/ServoJ/SO101` を登録します。

@@ -166,10 +166,21 @@ add_test(NAME hako-robot-plugin-test COMMAND hako-robot-plugin-test
     "$<TARGET_FILE:robot_small_table>" "$<TARGET_FILE:robot_missing_step>"
     "$<TARGET_FILE:robot_no_cancel>" "$<TARGET_FILE:robot_failing_step>")
 
-# The manifest side of a plugin service row.
+# The manifest side of plugin and builtin robots.
 add_robot_plugin_test(hako-service-plugin-test ${RUNTIME_ROOT}/tests/test_service_plugin.cpp)
 add_test(NAME hako-service-plugin-test COMMAND hako-service-plugin-test
     "$<TARGET_FILE:robot_fixture>" "$<TARGET_FILE:hold_target>")
+
+add_executable(hako-manifest-root-test
+    ${RUNTIME_ROOT}/tests/test_manifest_root.cpp
+    ${RUNTIME_ROOT}/src/factory/manifest_factory_manifest.cpp)
+target_compile_features(hako-manifest-root-test PRIVATE cxx_std_20)
+target_include_directories(hako-manifest-root-test PRIVATE ${HAKO_RUNTIME_INCLUDE_DIR} ${HAKO_RUNTIME_SRC_DIR})
+target_include_directories(hako-manifest-root-test SYSTEM PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/old-services-manifest.json"
+    CONTENT [=[{"robots":[],"services":[]}]=])
+add_test(NAME hako-manifest-root-test COMMAND hako-manifest-root-test
+    "${CMAKE_CURRENT_BINARY_DIR}/old-services-manifest.json")
 
 # Stage 2c-3: the declaration JSON next to a plugin and the startup validator.
 add_robot_plugin_test(hako-robot-plugin-declaration-test ${RUNTIME_ROOT}/tests/test_robot_plugin_declaration.cpp)
