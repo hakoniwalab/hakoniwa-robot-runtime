@@ -286,13 +286,16 @@ struct RuntimeSensorOutputConfig {
 };
 #endif
 
-enum class RuntimeServiceType { AckermannStep, PersonStep };
+enum class RuntimeServiceType { AckermannStep, PersonStep, Plugin };
 
 struct RuntimeServiceConfig {
     std::string name;
     RuntimeServiceType type;
     std::string pdu_robot;
     bool lockstep {false};
+    std::string plugin_library;
+    std::string plugin_config_json;
+    std::int32_t priority {16};
 };
 
 struct RuntimeDefinition {

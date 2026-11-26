@@ -45,7 +45,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     , const PluginPduChannels* plugin_pdu_channels
 #endif
     , const AckermannServiceFactory& ackermann_service_factory
-    , std::vector<AsyncServiceComponents> person_services
+    , std::vector<AsyncServiceComponents> additional_services
     , std::shared_ptr<IStatePublisher> person_state_publisher
     )
 {
@@ -123,7 +123,10 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     priorities.reserve(controllers.capacity());
     // PersonStep applies commands directly to the plant's existing person
     // inputs. Keep their request order ahead of the other input sources.
-    for (auto& service : person_services) {
+    for (auto& service : additional_services) {
+        if (service.priority) {
+            priorities.push_back({std::string(service.controller->id()), *service.priority, {}});
+        }
         sources.push_back(std::move(service.source));
         controllers.push_back(std::move(service.controller));
     }
@@ -468,7 +471,7 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     if (person_state_publisher) {
         publishers.push_back(std::move(person_state_publisher));
     }
-    for (auto& service : person_services) {
+    for (auto& service : additional_services) {
         publishers.push_back(std::move(service.publisher));
     }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE

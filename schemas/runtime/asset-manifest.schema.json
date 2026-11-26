@@ -45,12 +45,33 @@
       "properties": {
         "name": {
           "$ref": "#/$defs/nonempty_string",
-          "description": "Registered Core service name. Use CarService/AckermannStep/<pdu_robot> or PersonService/PersonStep/<pdu_robot> according to type."
+          "description": "Registered Core service name. Built-in routes use CarService/AckermannStep/<pdu_robot> or PersonService/PersonStep/<pdu_robot>. Plugins may use any registered service name."
         },
-        "type": { "enum": ["ackermann_step", "person_step"] },
+        "type": { "enum": ["ackermann_step", "person_step", "plugin"] },
         "pdu_robot": { "$ref": "#/$defs/nonempty_string" },
-        "lockstep": { "type": "boolean", "default": false }
-      }
+        "lockstep": { "type": "boolean", "default": false },
+        "plugin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library"],
+          "properties": {
+            "library": {
+              "$ref": "#/$defs/nonempty_string",
+              "description": "Shared library path relative to this manifest, or an absolute path."
+            },
+            "config": { "description": "JSON value passed to the plugin.", "default": {} }
+          }
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 16
+        }
+      },
+      "if": { "properties": { "type": { "const": "plugin" } } },
+      "then": { "required": ["plugin"] },
+      "else": { "not": { "anyOf": [{ "required": ["plugin"] }, { "required": ["priority"] }] } }
     }
   }
 }

@@ -18,6 +18,9 @@ std::string kind_name(const std::uint32_t kind)
     if (kind == HAKO_PLUGIN_KIND_CONTROLLER) {
         return "controller";
     }
+    if (kind == HAKO_PLUGIN_KIND_SERVICE) {
+        return "service";
+    }
     if (kind == HAKO_PLUGIN_KIND_DATA_ADAPTER) {
         return "data adapter";
     }
@@ -27,7 +30,7 @@ std::string kind_name(const std::uint32_t kind)
 /** True for the kinds this host can load. The data adapter is reserved. */
 bool kind_supported(const std::uint32_t kind)
 {
-    return kind == HAKO_PLUGIN_KIND_CONTROLLER;
+    return kind == HAKO_PLUGIN_KIND_CONTROLLER || kind == HAKO_PLUGIN_KIND_SERVICE;
 }
 
 } // namespace
@@ -82,6 +85,15 @@ const HakoControllerPluginV1& PluginLibrary::controller_table() const
     return *reinterpret_cast<const HakoControllerPluginV1*>(header_);
 }
 
+const HakoServicePluginV1& PluginLibrary::service_table() const
+{
+    if (header_->kind != HAKO_PLUGIN_KIND_SERVICE) {
+        throw std::logic_error(
+            "Robot Runtime plugin " + path_ + " is not a service plugin");
+    }
+    return *reinterpret_cast<const HakoServicePluginV1*>(header_);
+}
+
 void PluginLibrary::load(const std::uint32_t expected_kind)
 {
     const std::string prefix = "Robot Runtime plugin " + path_;
@@ -125,10 +137,12 @@ void PluginLibrary::load(const std::uint32_t expected_kind)
                 + " plugin; this component needs a "
                 + kind_name(expected_kind) + " plugin");
         }
-        plugin_id_ = header_->plugin_id != nullptr ? header_->plugin_id : "unknown";
         if (expected_kind == HAKO_PLUGIN_KIND_CONTROLLER) {
             validate_controller_table();
+        } else {
+            validate_service_table();
         }
+        plugin_id_ = header_->plugin_id != nullptr ? header_->plugin_id : "unknown";
     } catch (...) {
         close();
         throw;
@@ -161,6 +175,42 @@ void PluginLibrary::validate_controller_table() const
         || table.destroy == nullptr) {
         throw std::runtime_error(
             prefix + " has a controller table with a null function");
+    }
+}
+
+void PluginLibrary::validate_service_table() const
+{
+    const std::string prefix = "Robot Runtime plugin " + path_;
+    if (header_->abi_version != HAKO_SERVICE_PLUGIN_ABI_VERSION) {
+        throw std::runtime_error(
+            prefix + " has service ABI version "
+            + std::to_string(header_->abi_version) + "; this build needs "
+            + std::to_string(HAKO_SERVICE_PLUGIN_ABI_VERSION)
+            + " (rebuild the plugin against the same service_plugin.h)");
+    }
+    if (header_->struct_size < sizeof(HakoServicePluginV1)) {
+        throw std::runtime_error(
+            prefix + " has a service table of "
+            + std::to_string(header_->struct_size) + " bytes; this build needs at least "
+            + std::to_string(sizeof(HakoServicePluginV1)));
+    }
+    const auto& table = service_table();
+    const char* missing = nullptr;
+    if (!table.create) {
+        missing = "create";
+    } else if (!table.on_request) {
+        missing = "on_request";
+    } else if (!table.on_step) {
+        missing = "on_step";
+    } else if (!table.on_response) {
+        missing = "on_response";
+    } else if (!table.reset) {
+        missing = "reset";
+    } else if (!table.destroy) {
+        missing = "destroy";
+    }
+    if (missing) {
+        throw std::runtime_error(prefix + " is missing required service function " + missing);
     }
 }
 

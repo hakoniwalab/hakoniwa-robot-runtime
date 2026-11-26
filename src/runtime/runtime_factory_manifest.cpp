@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <unordered_set>
 #include <utility>
 
@@ -173,8 +174,45 @@ bool load_person_initial_poses(
     return true;
 }
 
-bool load_services(
-    std::string_view services_json, RuntimeDefinition& definition, std::string* error)
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+bool load_service_plugin(const json& service, const fs::path& base_path,
+    RuntimeServiceConfig& config, std::string* error)
+{
+    if (!service.contains("plugin") || !service.at("plugin").is_object()) {
+        return fail(error, "service " + config.name + " needs a plugin object");
+    }
+    const auto& plugin = service.at("plugin");
+    for (const auto& [field, value] : plugin.items()) {
+        if (field != "library" && field != "config") {
+            return fail(error, "unknown plugin field " + field + " in service " + config.name);
+        }
+    }
+    std::string library;
+    if (!required_string(plugin, "library", library, error, "service " + config.name + " plugin")) {
+        return false;
+    }
+    const auto path = resolve(base_path, library);
+    if (!regular_file(path, error)) {
+        return false;
+    }
+    config.plugin_library = path.string();
+    config.plugin_config_json = plugin.contains("config") ? plugin.at("config").dump() : "{}";
+    if (service.contains("priority")) {
+        const auto& value = service.at("priority");
+        if (!value.is_number_integer()
+            || (value.is_number_unsigned() && value.get<std::uint64_t>() > std::numeric_limits<std::int32_t>::max())
+            || value.get<std::int64_t>() < std::numeric_limits<std::int32_t>::min()
+            || value.get<std::int64_t>() > std::numeric_limits<std::int32_t>::max()) {
+            return fail(error, "service " + config.name + " priority must be a 32-bit integer");
+        }
+        config.priority = value.get<std::int32_t>();
+    }
+    return true;
+}
+#endif
+
+bool load_services(std::string_view services_json, [[maybe_unused]] const fs::path& base_path,
+    RuntimeDefinition& definition, std::string* error)
 {
     const auto services = json::parse(services_json, nullptr, false);
     if (!services.is_array()) {
@@ -195,6 +233,15 @@ bool load_services(
             config.type = RuntimeServiceType::AckermannStep;
         } else if (type == "person_step") {
             config.type = RuntimeServiceType::PersonStep;
+        } else if (type == "plugin") {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+            config.type = RuntimeServiceType::Plugin;
+            if (!load_service_plugin(service, base_path, config, error)) {
+                return false;
+            }
+#else
+            return fail(error, "service plugins are disabled: " + config.name);
+#endif
         } else {
             return fail(error, "unknown service type " + type + " for " + config.name);
         }
@@ -204,7 +251,8 @@ bool load_services(
                     return fail(error, "service " + config.name + " lockstep must be a boolean");
                 }
                 config.lockstep = value.get<bool>();
-            } else if (field != "name" && field != "type" && field != "pdu_robot") {
+            } else if (field != "name" && field != "type" && field != "pdu_robot"
+                && !(config.type == RuntimeServiceType::Plugin && (field == "plugin" || field == "priority"))) {
                 return fail(error, "unknown field " + field + " in service " + config.name);
             }
         }
@@ -506,7 +554,7 @@ bool resolve_runtime_definition(
 
     RuntimeDefinition definition;
     definition.model_path = input.model_path;
-    if (!detail::load_services(input.services_json, definition, error_message)
+    if (!detail::load_services(input.services_json, context.base_path, definition, error_message)
         || !detail::load_initial_body_poses(
             context.runtime_root, definition, error_message)
         || !detail::load_person_initial_poses(

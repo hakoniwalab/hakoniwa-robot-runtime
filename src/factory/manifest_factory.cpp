@@ -32,6 +32,10 @@
 #include "adapters/endpoint/person_step_service.hpp"
 #include "runner/hakoniwa/core_async_service_server.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+#include "hako_srv_msgs/pdu_ctype_ServiceResponseHeader.h"
+#include "runtime/service/service_plugin_adapter.hpp"
+#endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR) && HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR
 #include "adapters/physics/mujoco/mujoco_sensor_stage.hpp"
 #include "runtime/publisher/sensor_joint_state_publisher.hpp"
@@ -245,7 +249,17 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
 
     std::unordered_set<std::string> rpc_requested;
     std::vector<std::string> people;
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+    std::unordered_map<std::string, std::shared_ptr<plugin::PluginLibrary>> service_plugins;
+#endif
     for (const auto& service : runtime_definition.services) {
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+        if (service.type == runtime::RuntimeServiceType::Plugin) {
+            service_plugins.emplace(service.name,
+                plugin::PluginLibrary::open(service.plugin_library, HAKO_PLUGIN_KIND_SERVICE));
+            continue;
+        }
+#endif
         const auto& robot = service.pdu_robot;
         const bool ackermann = service.type == runtime::RuntimeServiceType::AckermannStep;
         const auto expected_name = ackermann
@@ -282,6 +296,9 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
          lockstep_keys = config.lockstep_inputs,
          rpc_requested = std::move(rpc_requested),
          people = std::move(people),
+#if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+         service_plugins = std::move(service_plugins),
+#endif
          person_state_robot = config.person_state_robot,
          person_contact_log_path = config.person_contact_log_path,
          asset_name]() mutable
@@ -301,7 +318,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
             rpc_readers;
         try {
             runtime::AckermannServiceFactory ackermann_service_factory;
-            std::vector<runtime::AsyncServiceComponents> person_services;
+            std::vector<runtime::AsyncServiceComponents> additional_services;
             std::shared_ptr<runtime::IStatePublisher> person_state_publisher;
             std::shared_ptr<runner::hakoniwa::CoreAsyncServiceServer> service_server;
             auto plant = std::make_shared<
@@ -450,7 +467,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                     continue;
                 }
                 const auto& person = service.pdu_robot;
-                person_services.push_back(make_service_components(index,
+                additional_services.push_back(make_service_components(index,
                     std::make_shared<adapters::hakoniwa::PersonStepService>(person,
                         [plant, person](const auto& command) {
                             return plant->apply_person_command(person, command);
@@ -459,13 +476,36 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                             return plant->person_state(person, code);
                         })));
             }
-            if (!person_services.empty()) {
+            if (!additional_services.empty()) {
                 // An asynchronous person may have no reply on this tick.
                 // Publish viewer state and contacts once independently of replies.
                 person_state_publisher = std::make_shared<PersonStatePublisher>(
                     std::exchange(publish_people, {}));
             }
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN) && HAKONIWA_ROBOT_RUNTIME_ENABLE_CONTROLLER_PLUGIN
+            for (std::size_t index = 0; index < definition.services.size(); ++index) {
+                const auto& service = definition.services[index];
+                if (service.type != runtime::RuntimeServiceType::Plugin) {
+                    continue;
+                }
+                std::vector<std::string> actuator_ids;
+                for (const auto& actuator : definition.actuators) {
+                    if (actuator.pdu_robot == service.pdu_robot) {
+                        actuator_ids.push_back(actuator.component_id);
+                    }
+                }
+                auto instance = std::make_shared<runtime::ServicePlugin>(
+                    service_plugins.at(service.name), service.name, service.plugin_config_json,
+                    std::move(actuator_ids), plant->delta_time_usec() * 1000,
+                    HAKO_PDU_META_DATA_SIZE(), sizeof(Hako_ServiceResponseHeader));
+                auto components = make_service_components(index, instance);
+                if (instance->has_update()) {
+                    components.controller = std::make_shared<runtime::ServicePluginController>(
+                        std::move(components.controller), std::move(instance));
+                }
+                components.priority = service.priority;
+                additional_services.push_back(std::move(components));
+            }
             // Sensor PDUs of the controller plugins: the plugins read the
             // bytes the sensor writers encode for the endpoint.
             const auto plugin_pdu_channels = runtime::make_plugin_pdu_channels(definition);
@@ -591,7 +631,7 @@ std::unique_ptr<runner::IRunner> ManifestFactory::create(
                 , &plugin_pdu_channels
 #endif
                 , ackermann_service_factory
-                , std::move(person_services)
+                , std::move(additional_services)
                 , std::move(person_state_publisher)
                 );
 

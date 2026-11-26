@@ -161,10 +161,11 @@ set(HAKO_RUNTIME_SENSOR_MANIFEST_SOURCES
     "${HAKO_RUNTIME_SRC_DIR}/runtime/sensor/sensor_catalog.cpp"
 )
 
-# Controller Plugin sources (HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE).
+# Dynamic controller and service plugin sources (HAKO_RUNTIME_CONTROLLER_PLUGIN_DEFINE).
 set(HAKO_RUNTIME_CONTROLLER_PLUGIN_SOURCES
     "${HAKO_RUNTIME_SRC_DIR}/plugin/plugin_library.cpp"
     "${HAKO_RUNTIME_SRC_DIR}/runtime/controller/plugin_controller.cpp"
+    "${HAKO_RUNTIME_SRC_DIR}/runtime/service/service_plugin_adapter.cpp"
 )
 
 set(HAKO_RUNTIME_CONTROLLER_PLUGIN_MANIFEST_SOURCES "${HAKO_RUNTIME_SRC_DIR}/runtime/runtime_factory_plugin.cpp")

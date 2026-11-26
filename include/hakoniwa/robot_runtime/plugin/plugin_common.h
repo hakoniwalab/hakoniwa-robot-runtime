@@ -6,7 +6,7 @@
  * hako_robot_runtime_plugin_v1, which returns a pointer to a table in static
  * storage. Every table starts with HakoPluginHeaderV1; the host reads `kind`
  * first and only then treats the pointer as the table of that kind
- * (controller_plugin.h for HAKO_PLUGIN_KIND_CONTROLLER).
+ * (controller_plugin.h or service_plugin.h).
  *
  * Only C types cross this boundary: no C++ object, no standard-library type,
  * no exception, and no memory allocated on one side and freed on the other.
@@ -21,7 +21,7 @@
  *   - `struct_size` is at least the size of that kind's table as the host
  *     knows it (a plugin may append members; an older host ignores them).
  *
- * Lifecycle (common to every kind; the host calls these in this order):
+ * Controller lifecycle (service_plugin.h describes the service lifecycle):
  *   create     once, while the simulation is stopped, on the creating thread
  *   on_start   at the start event, on the simulation thread
  *   (kind)     the kind's own functions while running, on the simulation thread
@@ -34,9 +34,8 @@
  * passed to create. The host keeps the shared library open while any instance
  * created from it still exists.
  *
- * Errors: every function that can fail returns 0 on success. On failure it
- * returns non-zero and writes a NUL-terminated message into the caller's
- * `error` buffer (at most `error_size` bytes, truncated).
+ * Errors: each hook documents its return value. Hooks with an `error`
+ * buffer can write a NUL-terminated message (at most `error_size` bytes).
  *
  * Memory: whoever allocates frees. Pointers passed across the boundary are
  * valid only during the call that receives them.
@@ -82,7 +81,7 @@ typedef struct HakoPluginHeaderV1 {
     /* ABI version of the table of this kind (for example
      * HAKO_CONTROLLER_PLUGIN_ABI_VERSION). */
     uint32_t abi_version;
-    /* HAKO_PLUGIN_KIND_CONTROLLER or HAKO_PLUGIN_KIND_DATA_ADAPTER. */
+    /* The kind constant specified by the table's header. */
     uint32_t kind;
     /* The header revision the plugin was built with, for logs. */
     const char* interface_revision;
@@ -134,7 +133,7 @@ typedef struct HakoTickV1 {
     uint64_t step_index;
     /* Physics step [ns]. */
     uint64_t physics_step_ns;
-    /* Controller plugins: 1 when this component's commands were selected in
+    /* 1 when this component's commands were selected in
      * the previous physics step (0 while another control has taken over). */
     uint8_t selected;
     /* 1 on the first call after create or reset. */
