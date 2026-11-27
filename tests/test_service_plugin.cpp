@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <iostream>
 #include <stdexcept>
 
 #include <nlohmann/json.hpp>
@@ -54,33 +55,71 @@ RuntimeServiceConfig parse_manifest(std::filesystem::path path, const char* wron
         {"id", "joint"}, {"kind", "actuator"}, {"type", "joint_position_actuator"},
         {"config", actuator_path.string()}, {"pdu_robot", "robot"},
     }});
-    const auto entries = [&](const std::string& library) {
+    // Stage 2c-5: the manifest lists robots; each robot names its plugin (shared library or
+    // builtin) and its services in order. The service index is the position in that list.
+    const auto robots = [&](const std::string& library) {
         using nlohmann::json;
         return json::array({
-            {{"name", "any/route"}, {"type", "plugin"}, {"pdu_robot", "robot"},
-                {"priority", 16}, {"plugin", {{"library", library}, {"config", {{"mode", "test"}}}}}},
-            {{"name", "CarService/AckermannStep/car"}, {"type", "ackermann_step"}, {"pdu_robot", "car"}},
-            {{"name", "PersonService/PersonStep/person"}, {"type", "person_step"}, {"pdu_robot", "person"}},
+            {{"name", "robot"}, {"priority", 16},
+                {"plugin", {{"library", library}, {"config", {{"mode", "test"}}}}},
+                {"services", json::array({
+                    {{"name", "any/route"}},
+                    {{"name", "any/stop"}, {"lockstep", false}},
+                })}},
+            {{"name", "car"}, {"builtin", "ackermann_step"},
+                {"services", json::array({{{"name", "CarService/AckermannStep/car"}, {"lockstep", true}}})}},
+            {{"name", "person"}, {"builtin", "person_step"},
+                {"services", json::array({{{"name", "PersonService/PersonStep/person"}}})}},
         });
     };
     RuntimeFactoryInput input {base.string(), "test.xml", pdu_path.string(), runtime_path.string(),
-        actuator.dump(), entries(path.filename().string()).dump()};
+        actuator.dump(), robots(path.filename().string()).dump()};
     RuntimeDefinition definition;
     std::string error;
     assert(resolve_runtime_definition(input, definition, &error));
-    assert(definition.services.size() == 3);
+    // The robots become the same internal service rows as before, in manifest order.
+    assert(definition.services.size() == 4);
     const auto config = definition.services.front();
+    assert(config.name == "any/route" && config.pdu_robot == "robot");
     assert(config.type == RuntimeServiceType::Plugin && config.priority == 16);
     assert(config.plugin_library == path && config.plugin_config_json == "{\"mode\":\"test\"}");
+    assert(definition.services[1].name == "any/stop" && definition.services[1].pdu_robot == "robot");
+    assert(definition.services[1].type == RuntimeServiceType::Plugin && definition.services[1].priority == 16);
+    assert(definition.services[2].type == RuntimeServiceType::AckermannStep);
+    assert(definition.services[2].pdu_robot == "car" && definition.services[2].lockstep);
+    assert(definition.services[3].type == RuntimeServiceType::PersonStep);
+    assert(definition.services[3].pdu_robot == "person" && !definition.services[3].lockstep);
 
-    input.services_json = entries(std::filesystem::path(wrong_kind).filename().string()).dump();
+    input.robots_json = robots(std::filesystem::path(wrong_kind).filename().string()).dump();
     assert(resolve_runtime_definition(input, definition, &error));
     expect_load_error(definition.services.front().plugin_library.c_str(), "needs a service plugin");
-    auto invalid = entries(path.filename().string());
+
+    const auto expect_refused = [&](nlohmann::json manifest_robots, std::string_view part) {
+        input.robots_json = manifest_robots.dump();
+        assert(!resolve_runtime_definition(input, definition, &error));
+        if (error.find(part) == std::string::npos) {
+            std::cerr << "unexpected error: " << error << " (wanted: " << part << ")\n";
+            assert(false);
+        }
+    };
+    auto invalid = robots(path.filename().string());
     invalid[0]["priority"] = 2147483648LL;
-    input.services_json = invalid.dump();
-    assert(!resolve_runtime_definition(input, definition, &error));
-    assert(error.find("priority") != error.npos);
+    expect_refused(invalid, "priority");
+    invalid = robots(path.filename().string());
+    invalid[1]["builtin"] = "teleporter";
+    expect_refused(invalid, "teleporter");
+    invalid = robots(path.filename().string());
+    invalid[1]["plugin"] = {{"library", path.filename().string()}};
+    expect_refused(invalid, "builtin");  // a robot names a builtin or a plugin, not both
+    invalid = robots(path.filename().string());
+    invalid[2]["services"][0]["name"] = "any/route";
+    expect_refused(invalid, "any/route");  // service names are unique
+    invalid = robots(path.filename().string());
+    invalid[0]["name"] = "car";
+    expect_refused(invalid, "car");  // robot names are unique
+    invalid = robots(path.filename().string());
+    invalid[0]["services"][0]["type"] = "plugin";
+    expect_refused(invalid, "type");  // the old per-service fields are gone
     return config;
 }
 

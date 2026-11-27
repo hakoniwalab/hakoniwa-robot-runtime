@@ -208,8 +208,8 @@ private:
 サンプルのように `cancel` を使わない場合は、その宣言を省きます。
 ファイルの末尾で `HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like)` を無名名前空間の外に書き、読み込み口を公開します。
 
-Runtime は `pdu_robot` ごとにインスタンスを 1 つ作ります。
-サービス番号は、マニフェストの `services` のうち、同じ `pdu_robot` の行を上から数えた順です。
+Runtime は、マニフェストの `robots` の 1 項目（ロボット 1 台）ごとに、インスタンスを 1 つ作ります。
+サービス番号は、そのロボットの `services` の一覧を上から数えた順です。
 先頭は 0 です。この順に `RobotContext::services` に入ります。
 サービスが複数ある場合は、各 `bind` に対応する番号を渡します。
 `bind` で指定した型は、`service.json` の `type` とそろえます。
@@ -299,20 +299,18 @@ CMake はライブラリの拡張子を `.plugin.json` に替えた名前で、�
 
 ### 5.1 マニフェスト
 
-Robot Arm の `recipes/so101/asset-manifest.json` の `services` に次の行を足します。
+Robot Arm の `recipes/so101/asset-manifest.json` に次の `robots` を足します。
 
 ```json
-"services": [
-  { "name": "ArmService/ServoJ/SO101", "type": "plugin", "pdu_robot": "SO101",
-    "plugin": { "library": "/abs/path/to/libmy_servoj.so" },
-    "lockstep": false, "priority": 16 }
+"robots": [
+  { "name": "SO101", "plugin": { "library": "/abs/path/to/libmy_servoj.so" }, "priority": 16,
+    "services": [{ "name": "ArmService/ServoJ/SO101", "lockstep": false }] }
 ]
 ```
 
 `plugin.library` は手順 4 の共有ライブラリです。
 相対パスで書くと、マニフェストのディレクトリから解決されます。
-同じ `pdu_robot` のプラグイン行を増やすと、1 台のロボットが複数のサービスを持ちます。
-その行の `plugin.library`、`plugin.config`、`priority` はそろえます。
+複数のサービスを公開するときは、同じロボットの `services` にサービス番号順に並べます。
 ServoJ はロックステップを無効にし、優先度は手動の 20 と軌道の 10 の間の 16 にします。
 
 ### 5.2 Core の `service.json`

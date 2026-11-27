@@ -18,9 +18,9 @@
       "type": "array",
       "items": { "$ref": "#/$defs/component" }
     },
-    "services": {
+    "robots": {
       "type": "array",
-      "items": { "$ref": "#/$defs/service" }
+      "items": { "$ref": "#/$defs/robot" }
     }
   },
   "$defs": {
@@ -38,18 +38,21 @@
         "description": { "type": "string" }
       }
     },
-    "service": {
+    "robot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "pdu_robot"],
+      "required": ["name", "services"],
       "properties": {
         "name": {
           "$ref": "#/$defs/nonempty_string",
-          "description": "Registered Core service name. Built-in routes use CarService/AckermannStep/<pdu_robot> or PersonService/PersonStep/<pdu_robot>. Plugins may use any registered service name."
+          "description": "Unique robot name matching the PDU robot."
         },
-        "type": { "enum": ["ackermann_step", "person_step", "plugin"] },
-        "pdu_robot": { "$ref": "#/$defs/nonempty_string" },
-        "lockstep": { "type": "boolean", "default": false },
+        "builtin": { "enum": ["ackermann_step", "person_step"] },
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/service" },
+          "description": "Services in index order."
+        },
         "plugin": {
           "type": "object",
           "additionalProperties": false,
@@ -69,9 +72,21 @@
           "default": 16
         }
       },
-      "if": { "properties": { "type": { "const": "plugin" } } },
-      "then": { "required": ["plugin"] },
-      "else": { "not": { "anyOf": [{ "required": ["plugin"] }, { "required": ["priority"] }] } }
+      "if": { "required": ["plugin"] },
+      "then": { "not": { "required": ["builtin"] } },
+      "else": { "required": ["builtin"], "not": { "required": ["priority"] } }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonempty_string",
+          "description": "Registered Core service name, unique across all robots."
+        },
+        "lockstep": { "type": "boolean", "default": false }
+      }
     }
   }
 }

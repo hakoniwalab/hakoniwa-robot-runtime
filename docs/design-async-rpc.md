@@ -297,7 +297,11 @@ Arbiter の決まり（優先度の一番高いグループを丸ごと選ぶ）
 
 **置き場所（2026-11-26 見直し）**：「このステップの入力が全員そろうまで、ステップを始めない」は RPC に限らない、**共通ルート（ランナー）の機能**。非同期 RPC のコアが持つのは、「**自分の入力は、このステップの分がもう来ているか**」に答える口の実装だけ（下の「分担」）。最初は非同期 RPC のコアに置いていた（段 H の `AsyncServiceLockstepGate`）が、ほかの口（command source など）と同じ並びにするため、こう分け直す。
 
-**指定する場所（2026-11-26 決定）**：robot-runtime の**アセットのマニフェスト**に、サービスごとの欄を置く（例 `"services": [{"name": "CarService/AckermannStep/Car-1", "lockstep": true}]`）。ロックステップは Runtime の振る舞いなので、core-pro のサービス定義（`service.json`）には混ぜない。既定は `false`（非同期）。ServoJ のような非同期のサービスは `false` のまま。ほかのコントローラの優先度・グループもマニフェストで書く方向（第 6.1 節）と揃える。段 P1 の実装は、まだ起動の引数（`--ackermann-rpc-use-service`）で選び、車のサービスはコードの中で常にロックステップ。段 M（第 7 節）でマニフェストの指定に置き換える。サービスのコード（`on_request`・`on_step`・`on_response`）は、非同期でもロックステップでも同じになる。
+**指定する場所（2026-11-26 決定）**：アセットのマニフェストの `robots[].services[]` に `lockstep` を書く。
+既定は `false`（非同期）。車で有効にする例は [設定ガイドの 2.4 節](configuration.md#24-services) を参照。
+ロックステップの設定は Runtime が読み、core-pro の `service.json` は RPC の型や接続先を定義する。
+段 P1 の起動引数（`--ackermann-rpc-use-service`）は段 M（第 7 節）でマニフェストの指定に置き換えた。
+サービスのコード（`on_request`・`on_step`・`on_response`）は、非同期でもロックステップでも共通。
 
 **決まり（交互に投げ合う）**
 

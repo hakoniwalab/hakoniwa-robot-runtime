@@ -30,9 +30,11 @@ def prepare(run_dir, recipe):
     for component in manifest["components"]:
         component["config"] = str(recipe / component["config"])
     service_name = "ArmService/ServoJ/SO101"
-    manifest["services"] = [{
-        "name": service_name, "type": "plugin", "pdu_robot": "SO101",
-        "plugin": {"library": os.environ["PLUGIN"]}, "lockstep": False, "priority": 16,
+    manifest["robots"] = [{
+        "name": "SO101",
+        "plugin": {"library": os.environ["PLUGIN"]},
+        "priority": 16,
+        "services": [{"name": service_name, "lockstep": False}],
     }]
     write_json(run_dir / "asset-manifest.json", manifest)
     write_json(run_dir / "service.json", {

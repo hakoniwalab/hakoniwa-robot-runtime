@@ -20,7 +20,7 @@ struct RuntimeFactoryInput {
     std::string pdu_definition_path;
     std::string runtime_config_path;
     std::string components_json;
-    std::string services_json {"[]"};
+    std::string robots_json {"[]"};
 };
 
 /** Resolve and validate the Runtime-specific portion of one manifest. */

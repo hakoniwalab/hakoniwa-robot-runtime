@@ -42,7 +42,7 @@ def prepare(urban, directory):
     multi_car.materialize_runtime(model, directory, [vehicle])
     unnotify(directory / "urban-car-comm.json", CAR, "ackermann_cmd")
     publish_every_step(directory / "urban-fleet-multi-dof-state.json", DELTA_USEC / 1_000)
-    assert "services" not in json.loads((directory / MANIFEST).read_text())
+    assert "robots" not in json.loads((directory / MANIFEST).read_text())
 
 
 def client(config, output):

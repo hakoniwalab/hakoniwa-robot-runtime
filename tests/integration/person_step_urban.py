@@ -75,8 +75,13 @@ def prepare(urban, work, mujoco_library):
         assert urban_people.apply_rpc(work, composition, {}, "conductor") == [PERSON]
     for filename, lockstep in ((SERVICE_MANIFEST, True), (ASYNC_MANIFEST, False)):
         shutil.copyfile(car / MANIFEST, car / filename)
+        # A manifest reused from before stage 2c-5 may still carry the old services list.
+        stale = json.loads((car / filename).read_text())
+        stale["services"] = [{"name": "CarService/AckermannStep/stale", "type": "ackermann_step"}]
+        (car / filename).write_text(json.dumps(stale))
         multi_car.configure_step_services(
             car / filename, vehicles=CARS, people=[PERSON], lockstep=lockstep)
+        assert "services" not in json.loads((car / filename).read_text())
     return car
 
 
@@ -325,8 +330,20 @@ def check_manifest_contract(build, foundation, car, service_config, work):
     validator.validate(manifest)
     base = json.loads((car / MANIFEST).read_text())
     validator.validate(base)
-    validator.validate(json.loads((car / ASYNC_MANIFEST).read_text()))
-    assert {key: value for key, value in manifest.items() if key != "services"} == base
+    async_manifest = json.loads((car / ASYNC_MANIFEST).read_text())
+    validator.validate(async_manifest)
+    routes = [
+        (CARS[0], "ackermann_step", "CarService/AckermannStep"),
+        (CARS[1], "ackermann_step", "CarService/AckermannStep"),
+        (PERSON, "person_step", "PersonService/PersonStep"),
+    ]
+    for candidate, lockstep in ((manifest, True), (async_manifest, False)):
+        assert {key: value for key, value in candidate.items() if key != "robots"} == base
+        options = {"lockstep": True} if lockstep else {}
+        assert candidate["robots"] == [
+            {"name": name, "builtin": builtin, "services": [{"name": f"{prefix}/{name}", **options}]}
+            for name, builtin, prefix in routes
+        ]
 
     def rejected(label, replacement, reason):
         path = car / f"invalid-{label}.json"
@@ -339,19 +356,21 @@ def check_manifest_contract(build, foundation, car, service_config, work):
         print(f"Rejected {label}: {reason}", flush=True)
 
     invalid = deepcopy(manifest)
-    invalid["services"][0]["lockstep"] = "true"
+    invalid["robots"][0]["services"][0]["lockstep"] = "true"
     assert not validator.is_valid(invalid)
     rejected("lockstep-string", invalid, "lockstep must be a boolean")
     print("Runtime asset schema accepted base, lockstep and async manifests and rejected string lockstep")
 
     invalid = deepcopy(manifest)
-    invalid["services"][0]["type"] = "unknown"
-    rejected("unknown-type", invalid, "unknown service type")
+    invalid["robots"][0]["builtin"] = "unknown"
+    rejected("unknown-builtin", invalid, "unknown builtin")
     invalid = deepcopy(manifest)
-    invalid["services"][0].update(name="CarService/AckermannStep/Missing", pdu_robot="Missing")
+    invalid["robots"][0]["name"] = "Missing"
+    invalid["robots"][0]["services"][0]["name"] = "CarService/AckermannStep/Missing"
     rejected("missing-vehicle", invalid, "Ackermann RPC vehicle has no controller: Missing")
     invalid = deepcopy(manifest)
-    invalid["services"][2].update(name="PersonService/PersonStep/Missing", pdu_robot="Missing")
+    invalid["robots"][2]["name"] = "Missing"
+    invalid["robots"][2]["services"][0]["name"] = "PersonService/PersonStep/Missing"
     rejected("missing-person", invalid, "person Missing is missing MuJoCo object")
     invalid = deepcopy(manifest)
     output = next(component for component in invalid["components"]

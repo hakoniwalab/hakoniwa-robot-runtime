@@ -73,7 +73,7 @@ manifestへ設定してください。Runtimeは拡張子とファイル存在�
 
 `$schema`、`schema_version`、`description` 等の metadata を付与しても構いませんが、現在の Runtime 実装が直接意味解釈する必須 field は上表です。
 
-任意の項目として `services` があります（2.4 節）。
+任意の項目として `robots` があります（2.4 節）。以前の `services` の一覧は `robots` に置き換わり、書くと起動を断ります。
 
 <a id="22-components"></a>
 
@@ -138,23 +138,33 @@ Applicationだけが `HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1` を定義し、セ
 
 <a id="24-services"></a>
 
-### 2.4 `services`（非同期 RPC のサービス）
+### 2.4 `robots`（非同期 RPC のサービス）
 
-`services` は、このアセットが hakoniwa-core-pro のサービスとして受け付ける RPC の一覧です（任意）。書かなければ、サービスは作られず、core-pro のサービスの初期化もしません（pub/sub だけのロボットは、今までどおり）。設計は [design-async-rpc.md](design-async-rpc.md) を見てください。
+`robots` に、このアセットで RPC を受け付けるロボットを並べます。
+pub/sub だけのロボットは `components` で設定し、`robots` は省略できます。
+サービスが 0 件なら、core-pro のサービスは初期化しません。
+マニフェスト直下の旧キー `services` は `robots` に置き換わりました。
+設計は [design-async-rpc.md](design-async-rpc.md) を見てください。
 
 ```json
-"services": [
-  { "name": "CarService/AckermannStep/Car-1", "type": "ackermann_step", "pdu_robot": "Car-1", "lockstep": true },
-  { "name": "PersonService/PersonStep/Person-1", "type": "person_step", "pdu_robot": "Person-1", "lockstep": true }
+"robots": [
+  { "name": "Car-1", "builtin": "ackermann_step",
+    "services": [{ "name": "CarService/AckermannStep/Car-1", "lockstep": true }] },
+  { "name": "Person-1", "builtin": "person_step",
+    "services": [{ "name": "PersonService/PersonStep/Person-1", "lockstep": true }] }
 ]
 ```
 
 | field | 意味 |
 | --- | --- |
-| `name` | core-pro に登録するサービス名。`type` に合わせて `CarService/AckermannStep/<pdu_robot>` または `PersonService/PersonStep/<pdu_robot>` |
-| `type` | `ackermann_step`（車。要求は `hako_srv_msgs/AckermannStep`）または `person_step`（人） |
-| `pdu_robot` | 対象のロボット名。PDU の robot 名と同じ |
-| `lockstep` | `true` なら、ロックステップのサービスにする（既定 `false`） |
+| `name` | 一意なロボット名。PDU のロボット名と同じ |
+| `builtin` / `plugin` | どちらか一方を指定。組み込みは `ackermann_step`（車）または `person_step`（人） |
+| `services[].name` | core-pro に登録するサービス名。全ロボットで一意 |
+| `services[].lockstep` | `true` ならロックステップ（既定 `false`） |
+
+組み込みのサービス名は `CarService/AckermannStep/<ロボット名>` または
+`PersonService/PersonStep/<ロボット名>` です。
+サービス番号は各ロボットの `services` 内の位置で、0 から始まります。
 
 - core-pro のサービスの定義（`service.json`）は、`tools/gen_rpc_service_config.py --car <name> --person <name> --pdu-config <pdu_def> --output <file>` で、同じ名前から作れます。1 つのサービスに、クライアントは 1 つです（`maxClients: 1`。core-pro のサーバは 1 度に 1 クライアントの番しか読まないため。hakoniwalab/hakoniwa-core-pro#115）。
 - **ロックステップのサービス**：物理のステップは、要求が来たときに進みます。ステップの門は、PDU のロックステップの入力と同じものです（両方そろうまで待つ）。サービスは 0 ステップで終わり、応答は物理の後の状態です。クライアントは、応答を受けてから次の要求を送ります（応答の前に次の要求を送るのは誤り）。
@@ -165,16 +175,15 @@ Applicationだけが `HAKONIWA_ROBOT_RUNTIME_ENABLE_SENSOR=1` を定義し、セ
 #### 共有ライブラリのサービスプラグイン
 
 ```json
-"services": [
-  { "name": "ArmService/ServoJ/SO101", "type": "plugin", "pdu_robot": "SO101",
-    "plugin": { "library": "libmy_servoj.so" }, "lockstep": false, "priority": 16 }
+"robots": [
+  { "name": "SO101", "plugin": { "library": "libmy_servoj.so" }, "priority": 16,
+    "services": [{ "name": "ArmService/ServoJ/SO101", "lockstep": false }] }
 ]
 ```
 
 `plugin.library` の相対パスはマニフェストのディレクトリから解決します。
-同じ `pdu_robot` のプラグイン行は、1 台のロボットのサービスになります。
-その行の `plugin.library`、`plugin.config`、`priority` はそろえます。
-各サービスの番号は、そのロボットの行が並ぶ順です。
+`plugin.config` はプラグインに渡す JSON 値で、既定は `{}` です。
+`priority` は共有ライブラリのロボットだけに指定できる 32 ビット符号付き整数で、既定は `16` です。
 
 共有ライブラリと同じ場所に、拡張子を `.plugin.json` に替えた宣言ファイルを置きます。
 `libmy_servoj.so` や `libmy_servoj.dylib` なら、宣言ファイルは `libmy_servoj.plugin.json` です。

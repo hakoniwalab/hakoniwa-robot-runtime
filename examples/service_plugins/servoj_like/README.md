@@ -15,7 +15,7 @@ SO-101 の肩を +0.5、-0.5、0 rad に振り、肘を +0.8 rad まで曲げて
 `servoj_like.cpp` に `ServoJRobot` の実装と、サービス型と入口を定義するマクロがそろっています。
 自分のプラグインを書くときは、手順書の [3.1 節](../../../docs/howto-add-async-service.md#31-c-クラスを書く) に沿ってコピーを編集します。
 別の `.cpp` を使う場合は、コピー先の `CMakeLists.txt` の `add_library` でソース名を替えます。
-`bind` で HakoCpp の要求・応答メソッドを登録します。サービス番号は同じ `pdu_robot` のマニフェスト行の順で、0 から始まります。
+`bind` で HakoCpp の要求・応答メソッドを登録します。サービス番号は、マニフェストのそのロボットの `services` の一覧の順で、0 から始まります。
 `step` はマニフェストのアクチュエータ順に `step.position(i)` で開始角（rad）を読み、位置指令を出します。
 時刻は `step.tick().sim_time_ns`（ns）で読みます。
 目標角は各アクチュエータの範囲内で受け付けます。
@@ -47,3 +47,5 @@ SHM 対応の PDU RPC と、センサを有効にした Robot Arm をビルド�
 手順書の [6.2 節](../../../docs/howto-add-async-service.md#62-動かす) で環境変数を設定し、`run.py --no-viewer` で 5 つの動作を確かめます。
 デスクトップで MuJoCo ウィンドウを開くには、新しい実行ディレクトリを指定し、`--no-viewer` を外します。
 `run.py` は実行ディレクトリにマニフェスト、RPC 設定、Core のログを書き、動作後に止めます。
+マニフェストの `robots` に共有ライブラリを使う `SO101` を置き、`services` に
+`ArmService/ServoJ/SO101` を登録します。
