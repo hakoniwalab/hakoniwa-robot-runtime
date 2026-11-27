@@ -9,6 +9,7 @@
 #include "runtime/actuator_runtime.hpp"
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#include "runtime/service/robot_plugin_declaration.hpp"
 #include "runtime/service/service_plugin_adapter.hpp"
 
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
@@ -226,10 +227,37 @@ void a_refused_request_is_invalid(const std::string& path)
     assert(f.server->replies == std::vector {AsyncServiceResultCode::Invalid});
 }
 
-// Binding a service type the robot does not have fails create with the types named.
-void binding_the_wrong_type_fails_create(const std::string& path)
+void invalid_bindings_fail_create(const std::string& path, const std::string& unlisted_path)
 {
-    expect_error([&] { (void)Fixture(path); }, "hako_srv_msgs/GetWorldTime");
+    const auto library = plugin::PluginLibrary::open(path, HAKO_PLUGIN_KIND_SERVICE);
+    const auto declaration = parse_robot_plugin_declaration(library->service_table().declaration_json);
+    assert(declaration.service_types == std::vector<std::string> {"hako_srv_msgs/AddTwoInts"});
+    assert(declaration.plant_operations.body_motion);
+    assert(!declaration.plant_operations.surface_friction && !declaration.plant_operations.humanoid_motion);
+
+    auto config = adder_config();
+    config.services.clear();
+    expect_error([&] { (void)ServicePlugin(library, config); },
+        "robot R1 has no service of type hako_srv_msgs/AddTwoInts");
+
+    config = adder_config();
+    config.services.push_back({"Robot/AddOther/R1", "hako_srv_msgs/AddTwoInts", false});
+    expect_error([&] { (void)ServicePlugin(library, config); }, "use the index overload of bind");
+    config.config_json = R"("indexed")";
+    (void)ServicePlugin(library, config);
+
+    config = adder_config();
+    config.config_json = R"("double")";
+    expect_error([&] { (void)ServicePlugin(library, config); }, "Robot/Add/R1 is already bound");
+
+    config.config_json = R"("unbound")";
+    expect_error([&] { (void)ServicePlugin(library, config); },
+        "declared service type hako_srv_msgs/AddTwoInts but did not bind it");
+
+    config = adder_config();
+    const auto unlisted = plugin::PluginLibrary::open(unlisted_path, HAKO_PLUGIN_KIND_SERVICE);
+    expect_error([&] { (void)ServicePlugin(unlisted, config); },
+        "bound undeclared service type hako_srv_msgs/AddTwoInts");
 }
 
 // An exception from step() is reported as the robot's step failure.
@@ -255,11 +283,11 @@ void an_exception_in_the_constructor_fails_create(const std::string& path)
 
 int main(int argc, char** argv)
 {
-    // argv: adder, adder_wrong_type, adder_throwing_step
+    // argv: adder, adder_unlisted, adder_throwing_step
     assert(argc == 4);
     a_cpp_robot_answers_with_hakocpp_types(argv[1]);
     a_refused_request_is_invalid(argv[1]);
-    binding_the_wrong_type_fails_create(argv[2]);
+    invalid_bindings_fail_create(argv[1], argv[2]);
     an_exception_in_step_is_reported(argv[3]);
     an_exception_in_the_constructor_fails_create(argv[1]);
     std::cout << "robot plugin template: all passed" << std::endl;

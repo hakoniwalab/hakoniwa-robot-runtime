@@ -16,12 +16,13 @@ ServoJ、Stop、GetAngle の PDU 型は同じ `my_robot_srvs_msgs` パッケー�
 `servoj_like.cpp` に `ServoJRobot` の実装と、サービス型と入口を定義するマクロがそろっています。
 自分のプラグインを書くときは、手順書の [3.1 節](../../../docs/howto-add-async-service.md#31-c-クラスを書く) に沿ってコピーを編集します。
 別の `.cpp` を使う場合は、コピー先の `CMakeLists.txt` の `add_library` でソース名を替えます。
-`bind` で HakoCpp の要求・応答メソッドを登録します。サービス番号は、マニフェストのそのロボットの `services` の一覧の順で、0 から始まります。
+`bind` でサービス型に HakoCpp の要求・応答メソッドを登録します。
+`step` で使うサービス番号は `bind` が返します。
 
 ```cpp
-bind<ServoJService>(0, &ServoJRobot::on_goal, &ServoJRobot::reply_goal);
-bind<StopService>(1, &ServoJRobot::on_stop, &ServoJRobot::reply_stop);
-bind<GetAngleService>(2, &ServoJRobot::on_get_angle, &ServoJRobot::reply_get_angle);
+servo_service = bind<ServoJService>(&ServoJRobot::on_goal, &ServoJRobot::reply_goal);
+stop_service = bind<StopService>(&ServoJRobot::on_stop, &ServoJRobot::reply_stop);
+get_angle_service = bind<GetAngleService>(&ServoJRobot::on_get_angle, &ServoJRobot::reply_get_angle);
 ```
 
 `step` はマニフェストのアクチュエータ順に `step.position(i)` で開始角（rad）を読み、位置指令を出します。
@@ -30,7 +31,14 @@ Stop の `mode = 0` は補間を打ち切り、そのステップの物理更新
 GetAngle は同じく物理更新前の角度とそのステップの時刻を保存し、ステップの末尾に返します。
 目標角は各アクチュエータの範囲内で受け付けます。
 初回は `tick.selected` が 0 です。指令を出したあとに `commanded_ && !tick.selected` が成り立つと、指令を止めます。
-`HAKO_ROBOT_PLUGIN` が入口を作り、生成したコンバーターが PDU を読み書きします。
+公開する型は `HAKO_ROBOT_PLUGIN` に並べます。
+
+```cpp
+HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like, ServoJService, StopService, GetAngleService)
+```
+
+左右の腕などで同じ型を複数使う場合は `bind<Service>(index, …)` で区別します。
+番号は、そのロボットの `services` の先頭が 0 です。
 C の関数テーブルを直接使う場合は、手順書の [3.3 節](../../../docs/howto-add-async-service.md#33-c-の関数テーブルを使う上級者向け) を参照してください。
 
 ## 3. プラグインをビルドする
@@ -43,12 +51,8 @@ cmake -S "$DEMO" -B "$WORK/build-plugin" -DCMAKE_BUILD_TYPE=Release \
   -DHAKO_SERVOJ_PDU_TYPES="$PDU_TYPES" -DHAKO_PDU_REGISTRY_TYPES="$REGISTRY/pdu/types"
 cmake --build "$WORK/build-plugin" --parallel "$JOBS"
 PLUGIN="$WORK/build-plugin/libmy_servoj.so"
-ls -l "$PLUGIN" "$WORK/build-plugin/libmy_servoj.plugin.json"
+ls -l "$PLUGIN"
 ```
-
-CMake は `my_servoj.plugin.json` を `libmy_servoj.plugin.json` として共有ライブラリの隣にコピーします。
-宣言の `service_types` は `my_robot_srvs_msgs/ServoJ`、`my_robot_srvs_msgs/Stop`、`my_robot_srvs_msgs/GetAngle` です。
-ライブラリを移すときは宣言ファイルも一緒に移します。
 
 ## 4. 腕と RPC をビルドして動かす
 
@@ -69,6 +73,16 @@ SHM 対応の PDU RPC と、センサを有効にした Robot Arm をビルド�
     ]
   }
 ]
+```
+
+`run.py` はサービス名と型宣言から Core の `service.json` を生成します。
+`PDU_OUT` に `pdu_size/` がある生成先を指定します。
+設定ファイルの生成だけなら、次のコマンドを使います。
+
+```bash
+"$PYTHON" "$RUNTIME/tools/gen_rpc_service_config.py" \
+  --manifest "$RUN_DIR/asset-manifest.json" --pdu-out "$PDU_OUT" \
+  --clients "$RUN_DIR/clients.json" --output "$RUN_DIR/service.json"
 ```
 
 Core の `service.json` はサービスごとにクライアントを 1 件登録します。各 `baseSize` は生成した `pdu_size` に 8 バイトを足した値です。

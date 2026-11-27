@@ -4,7 +4,7 @@ SO-101 の腕に ServoJ、Stop、GetAngle の 3 つのサービスを足しま�
 ServoJ は目標を受け付けると応答し、腕はそのあとも目標まで動きます。
 Stop はその時点の関節角を保持し、GetAngle は関節角とシミュレーション時刻を返します。
 プラグインは、HakoCpp の型で要求を受け取り、応答を返す C++ クラスとして書きます。
-Robot Runtime のアプリは、起動時に共有ライブラリと宣言 JSON を読み込みます。
+起動時に、Robot Runtime は共有ライブラリの関数テーブルから宣言を読みます。
 
 ## 0. 準備する
 
@@ -80,10 +80,12 @@ SRV
 3 サービスの生成済みの型が手元にあれば、そのパスを設定して 2.4 節の確認へ進みます。
 ServoJ の型だけを持っている場合は、2.1〜2.3 節で 3 サービスの型を生成します。
 `PDU_TYPES` は `my_robot_srvs_msgs/pdu_cpptype_conv_ServoJRequestPacket.hpp` を含む型のルートです。
+`PDU_OUT` は `pdu_size/` がある生成先のルートです。
 `PDU_PY` は `servoj_pdu/` の親ディレクトリです。
 
 ```bash
-PDU_TYPES=/path/to/generated/types
+PDU_OUT=/path/to/generated
+PDU_TYPES="$PDU_OUT/types"
 PDU_PY=/path/to/generated/python-parent
 ```
 
@@ -136,9 +138,10 @@ PATHS
   python3 -m generators.generate_hako_pdu_msgs.main "$WORK/selected-types.txt" \
     --search-path-file "$WORK/search-paths.txt" --output-dir "$WORK/my-pdu" --incremental
 )
-PDU_TYPES="$WORK/my-pdu/types"
+PDU_OUT="$WORK/my-pdu"
+PDU_TYPES="$PDU_OUT/types"
 for service in ServoJ Stop GetAngle; do
-  size_dir="$WORK/my-pdu/pdu_size/my_robot_srvs_msgs"
+  size_dir="$PDU_OUT/pdu_size/my_robot_srvs_msgs"
   printf '%s 要求 %s bytes、応答 %s bytes\n' "$service" \
     "$(cat "$size_dir/${service}RequestPacket.txt")" "$(cat "$size_dir/${service}ResponsePacket.txt")"
 done
@@ -162,6 +165,7 @@ mkdir -p "$PDU_PY/servoj_pdu"
 for service in ServoJ Stop GetAngle; do
   for packet in "${service}RequestPacket" "${service}ResponsePacket"; do
     test -f "$PDU_TYPES/my_robot_srvs_msgs/pdu_cpptype_conv_$packet.hpp"
+    test -f "$PDU_OUT/pdu_size/my_robot_srvs_msgs/$packet.txt"
     PYTHONPATH="$PDU_PY" "$PYTHON" -c "from servoj_pdu.my_robot_srvs_msgs import pdu_conv_$packet"
   done
 done
@@ -169,11 +173,11 @@ done
 
 ## 3. プラグインと宣言を書く
 
-まずはサンプルの 3 ファイルを作業ディレクトリに写します。
+まずはサンプルの 2 ファイルを作業ディレクトリに写します。
 
 ```bash
 mkdir -p "$WORK/plugin"
-cp "$DEMO/servoj_like.cpp" "$DEMO/CMakeLists.txt" "$DEMO/my_servoj.plugin.json" "$WORK/plugin/"
+cp "$DEMO/servoj_like.cpp" "$DEMO/CMakeLists.txt" "$WORK/plugin/"
 ```
 
 ### 3.1 C++ クラスを書く
@@ -218,7 +222,8 @@ explicit RobotPlugin(const RobotContext& context);
 ```
 
 `step`、`reset`、`cancel` は決まった名前です。`step` は必須で、`reset` と `cancel` は必要に応じて上書きします。
-要求と応答のメソッド名は自由です。末尾に `const` が付かないメンバー関数を使い、`bind` でサービス番号に結び付けます。
+要求と応答のメソッド名は自由です。
+末尾に `const` が付かないメンバー関数を使い、`bind` でサービス型に結び付けます。
 
 次の宣言に沿ってメソッドを実装します。処理の中身は、コピーした `servoj_like.cpp` を参照します。
 
@@ -227,9 +232,9 @@ class ServoJRobot final : public RobotPlugin {
 public:
     explicit ServoJRobot(const RobotContext& context) : RobotPlugin(context)
     {
-        bind<ServoJService>(0, &ServoJRobot::on_goal, &ServoJRobot::reply_goal);
-        bind<StopService>(1, &ServoJRobot::on_stop, &ServoJRobot::reply_stop);
-        bind<GetAngleService>(2, &ServoJRobot::on_get_angle, &ServoJRobot::reply_get_angle);
+        servo_service = bind<ServoJService>(&ServoJRobot::on_goal, &ServoJRobot::reply_goal);
+        stop_service = bind<StopService>(&ServoJRobot::on_stop, &ServoJRobot::reply_stop);
+        get_angle_service = bind<GetAngleService>(&ServoJRobot::on_get_angle, &ServoJRobot::reply_get_angle);
     }
 
     void step(StepView& step) override;
@@ -237,6 +242,10 @@ public:
     void cancel(std::size_t service) override;
 
 private:
+    std::size_t servo_service {};
+    std::size_t stop_service {};
+    std::size_t get_angle_service {};
+
     bool on_goal(const ServoJService::Request& request);
     ServoJService::Response reply_goal(const StateView& state);
     bool on_stop(const StopService::Request& request);
@@ -247,13 +256,18 @@ private:
 ```
 
 サンプルのように `cancel` を使わない場合は、その宣言を省きます。
-ファイルの末尾で `HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like)` を無名名前空間の外に書き、読み込み口を公開します。
+ファイルの末尾で、無名名前空間の外にサービス型を並べます。
 
-Runtime は、マニフェストの `robots` の 1 項目（ロボット 1 台）ごとに、インスタンスを 1 つ作ります。
-サービス番号は、そのロボットの `services` の一覧を上から数えた順です。
-先頭は 0 です。この順に `RobotContext::services` に入ります。
-サービスが複数ある場合は、各 `bind` に対応する番号を渡します。
-`bind` で指定した型は、`service.json` の `type` とそろえます。
+```cpp
+HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like, ServoJService, StopService, GetAngleService)
+```
+
+Runtime はロボット 1 台につき 1 インスタンスを作ります。
+`bind` は、そのロボットのサービスを型で探します。
+`step.service_state` と `step.finish` には `bind` が返したサービス番号を渡します。
+左右の腕などで 1 台に同じ型のサービスが複数ある場合は、
+`bind<Service>(index, …)` で区別します。
+この番号は、そのロボットの `services` の先頭を 0 とした位置です。
 
 #### 3.1.3 状態を読んで指令を出す
 
@@ -300,17 +314,15 @@ if (commanded_ && !tick.selected) {
 
 ### 3.2 宣言を書く
 
-`my_servoj.plugin.json` の `service_types` には扱える RPC 型を並べます。
+`HAKO_ROBOT_PLUGIN` に並べた型が関数テーブルの `service_types` になります。
+宣言した型と結び付けた型が一致しない場合は、インスタンスの生成時にエラーになります。
+Plant 操作を出すクラスは、次のように公開メンバーを足します。
 
-```json
-{
-  "service_types": ["my_robot_srvs_msgs/ServoJ", "my_robot_srvs_msgs/Stop", "my_robot_srvs_msgs/GetAngle"]
-}
+```cpp
+static constexpr std::string_view plant_operations = R"(["surface_friction"])";
 ```
 
-`plant_operations` にはプラグインが出す Plant 操作を並べます。
 指定できる操作は `surface_friction`、`body_motion`、`humanoid_motion` です。
-サンプルが出すのは関節指令だけなので、この項目は省略します。
 
 ### 3.3 C の関数テーブルを使う（上級者向け）
 
@@ -318,7 +330,7 @@ C で書く場合やパケットを直接扱う場合は、[service_plugin.h](..
 の `HakoServicePluginV1` を実装し、`HAKO_ROBOT_PLUGIN_ENTRY` で公開します。
 入出力はメタデータを含む PDU パケットです。
 バッファのサイズを確認し、Core の応答ヘッダーを保ち、応答に合うメタデータを書きます。
-宣言 JSON とビルド後の配置は同じです。
+宣言 JSON はテーブルの `declaration_json` に設定します。
 
 ## 4. プラグインをビルドする
 
@@ -332,17 +344,15 @@ cmake -S "$WORK/plugin" -B "$WORK/build-plugin" -DCMAKE_BUILD_TYPE=Release \
   -DHAKO_PDU_REGISTRY_TYPES="$REGISTRY/pdu/types"
 cmake --build "$WORK/build-plugin" --parallel "$JOBS"
 PLUGIN="$WORK/build-plugin/libmy_servoj.so"
-ls -l "$PLUGIN" "$WORK/build-plugin/libmy_servoj.plugin.json"
+ls -l "$PLUGIN"
 ```
 
 サンプルは CMake の MODULE を使うので、Linux と macOS でライブラリは `libmy_servoj.so` です。
-CMake はライブラリの拡張子を `.plugin.json` に替えた名前で、その隣に宣言をコピーします。
-ライブラリと宣言は同じディレクトリに置いて配布します。
 
-## 5. マニフェストと `service.json` を書く
+## 5. マニフェストを書き、`service.json` を生成する
 
 6.2 節の `run.py` は両方のファイルを毎回作ります。
-手で設定するときは、この節と `run.py` の `prepare()` を参照します。
+自分で設定するときは、この節と `run.py` の `prepare()` を参照します。
 
 ### 5.1 マニフェスト
 
@@ -363,7 +373,7 @@ Robot Arm の `recipes/so101/asset-manifest.json` に次の `robots` を足し�
 
 `plugin.library` は手順 4 の共有ライブラリです。
 相対パスで書くと、マニフェストのディレクトリから解決されます。
-複数のサービスを公開するときは、同じロボットの `services` にサービス番号順に並べます。
+同じロボットで公開するサービス名を `services` に並べます。
 このサンプルは実時間で動かし、3 サービスとも `lockstep: false` を設定します。
 優先度は手動の 20 と軌道の 10 の間の 16 にします。
 
@@ -374,46 +384,21 @@ Stop が効くステップは到着時刻で決まるため、実行間で同じ
 
 ### 5.2 Core の `service.json`
 
-```json
-{
-  "pduMetaDataSize": 24,
-  "services": [{
-    "name": "ArmService/ServoJ/SO101", "type": "my_robot_srvs_msgs/ServoJ", "maxClients": 1,
-    "pduSize": {
-      "server": { "baseSize": 336, "heapSize": 0 },
-      "client": { "baseSize": 280, "heapSize": 0 }
-    },
-    "clients": [{ "name": "ServoJClient", "client_endpoint": {
-      "nodeId": "servoj-python", "protocol": "shm", "assetName": "ServoJClientAsset",
-      "deltaTimeUsec": 2000, "coreConfig": "/abs/path/to/core.json" } }]
-  }, {
-    "name": "ArmService/Stop/SO101", "type": "my_robot_srvs_msgs/Stop", "maxClients": 1,
-    "pduSize": {
-      "server": { "baseSize": 280, "heapSize": 0 },
-      "client": { "baseSize": 280, "heapSize": 0 }
-    },
-    "clients": [{ "name": "ServoJClient", "client_endpoint": {
-      "nodeId": "servoj-python", "protocol": "shm", "assetName": "ServoJClientAsset",
-      "deltaTimeUsec": 2000, "coreConfig": "/abs/path/to/core.json" } }]
-  }, {
-    "name": "ArmService/GetAngle/SO101", "type": "my_robot_srvs_msgs/GetAngle", "maxClients": 1,
-    "pduSize": {
-      "server": { "baseSize": 280, "heapSize": 0 },
-      "client": { "baseSize": 336, "heapSize": 0 }
-    },
-    "clients": [{ "name": "ServoJClient", "client_endpoint": {
-      "nodeId": "servoj-python", "protocol": "shm", "assetName": "ServoJClientAsset",
-      "deltaTimeUsec": 2000, "coreConfig": "/abs/path/to/core.json" } }]
-  }]
-}
+```bash
+"$PYTHON" "$RUNTIME/tools/gen_rpc_service_config.py" \
+  --manifest "$RUN_DIR/asset-manifest.json" --pdu-out "$PDU_OUT" \
+  --clients "$RUN_DIR/clients.json" --output "$RUN_DIR/service.json"
 ```
 
-マニフェストと `service.json` の `name` をそろえます。
-`service.json` の `type` は RPC の型で、宣言 JSON の `service_types` に含めます。
-Runtime は起動時にこの型と、宣言した Plant 操作を使えるかどうかを確かめます。
-宣言ファイルが無い場合や、宣言と設定が合わない場合は起動が止まります。
-`server.baseSize` は生成した要求パケットの `pdu_size` に 8 バイトを足した値です。
-`client.baseSize` は応答パケットの `pdu_size` に 8 バイトを足した値です。
+`RUN_DIR` にはマニフェストとクライアント設定を置いたディレクトリを指定します。
+`clients.json` は Core のクライアント 1 件を含む配列です。
+SO-101 の設定は `run.py` が書きます。
+生成器は、サービス名の中央（`ArmService/ServoJ/SO101` なら `ServoJ`）に一致する型を宣言から探します。
+別の形式の名前を使う場合や候補が複数ある場合は、マニフェストのサービスに
+`"type": "my_robot_srvs_msgs/ServoJ"` を指定します。
+`server.baseSize` と `client.baseSize` は、それぞれ要求と応答の `pdu_size` に 8 バイトを足した値です。
+可変長のデータがある型は、`--heap-sizes` に JSON を渡します。
+各サービス型の `server` と `client` に必要なバイト数を書きます。
 
 | サービス | 要求パケット | 応答パケット | `server.baseSize` | `client.baseSize` |
 | --- | ---: | ---: | ---: | ---: |
@@ -467,7 +452,7 @@ cmake --build "$WORK/build-arm" --target robot-arm-hakoniwa-asset --parallel "$J
 実行ごとに新しいディレクトリを指定します。
 
 ```bash
-export ROBOT_ARM PREFIX SO101_MODEL PLUGIN
+export ROBOT_ARM PREFIX SO101_MODEL PLUGIN PDU_OUT
 export ARM_ASSET="$WORK/build-arm/bin/robot-arm-hakoniwa-asset"
 export HAKO_PDU_RPC_LIBRARY="$WORK/build-rpc/src/libhakoniwa_pdu_rpc.$SHLIB"
 export PYTHONPATH="$RPC/python:$PDU_PY:$REGISTRY${PYTHONPATH:+:$PYTHONPATH}"

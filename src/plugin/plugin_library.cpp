@@ -65,9 +65,6 @@ std::shared_ptr<PluginLibrary> PluginLibrary::open_builtin(
     require_supported_kind(path, expected_kind);
     std::shared_ptr<PluginLibrary> library(new PluginLibrary(path));
     library->validate(plugin->entry, expected_kind);
-    if (plugin->declaration_json != nullptr) {
-        library->builtin_declaration_json_.emplace(plugin->declaration_json);
-    }
     return library;
 }
 
@@ -84,16 +81,6 @@ PluginLibrary::~PluginLibrary()
 const std::string& PluginLibrary::path() const noexcept
 {
     return path_;
-}
-
-bool PluginLibrary::is_builtin() const noexcept
-{
-    return handle_ == nullptr;
-}
-
-const std::optional<std::string>& PluginLibrary::builtin_declaration_json() const noexcept
-{
-    return builtin_declaration_json_;
 }
 
 const std::string& PluginLibrary::plugin_id() const noexcept
@@ -224,10 +211,11 @@ void PluginLibrary::validate_service_table() const
             + std::to_string(header_->struct_size) + " bytes; this build needs at least "
             + std::to_string(sizeof(HakoServicePluginV1)));
     }
-    // The earlier single-service table used version 1 too, with different hook positions.
-    if (header_->interface_revision != nullptr && std::string_view(header_->interface_revision) == "service-plugin/1") {
+    if (header_->interface_revision == nullptr
+        || std::string_view(header_->interface_revision) != HAKO_SERVICE_PLUGIN_INTERFACE_REVISION) {
         throw std::runtime_error(
-            prefix + " has a legacy service ABI version 1 table; rebuild the plugin against service_plugin.h");
+            prefix + " needs service interface revision " HAKO_SERVICE_PLUGIN_INTERFACE_REVISION
+            + " (rebuild the plugin against service_plugin.h)");
     }
     const auto& table = service_table();
     const char* missing = nullptr;

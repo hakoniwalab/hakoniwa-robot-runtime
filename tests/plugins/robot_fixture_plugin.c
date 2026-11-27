@@ -186,6 +186,7 @@ static const HakoServicePluginV1 table = {
 #endif
         HAKO_SERVICE_PLUGIN_INTERFACE_REVISION, "robot-fixture"
     },
+    "{\"service_types\":[\"t/Move\",\"t/Stop\"],\"plant_operations\":[\"surface_friction\",\"humanoid_motion\"]}",
     create, destroy, on_request,
 #ifdef FIXTURE_NO_CANCEL
     NULL,

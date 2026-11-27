@@ -29,7 +29,7 @@ extern "C" {
 
 #define HAKO_PLUGIN_KIND_SERVICE 3u
 #define HAKO_SERVICE_PLUGIN_ABI_VERSION 1u
-#define HAKO_SERVICE_PLUGIN_INTERFACE_REVISION "service-plugin/1-robot"
+#define HAKO_SERVICE_PLUGIN_INTERFACE_REVISION "service-plugin/1-robot-declaration"
 
 /* HakoServiceSlotV1.state, set by the framework. */
 #define HAKO_SERVICE_STATE_IDLE      0u
@@ -205,6 +205,9 @@ typedef struct HakoServiceSlotV1 {
 
 typedef struct HakoServicePluginV1 {
     HakoPluginHeaderV1 header;
+
+    /* NUL-terminated JSON in static storage: service_types and optional plant_operations. */
+    const char* declaration_json;
 
     /* The robot's control data, or NULL with an optional NUL-terminated error. */
     HakoRobotPlugin* (*create)(const HakoRobotCreateV1* args, char* error, size_t error_size);

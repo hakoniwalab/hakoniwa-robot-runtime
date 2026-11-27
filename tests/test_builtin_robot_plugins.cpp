@@ -5,6 +5,7 @@
 #undef NDEBUG
 
 #include "plugin/plugin_library.hpp"
+#include "runtime/service/robot_plugin_declaration.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -30,6 +31,18 @@ int main()
         assert(table.create && table.destroy && table.on_request && table.on_step && table.on_response
             && table.reset);
         assert(library->plugin_id() != "unknown");
+        assert(table.declaration_json != nullptr);
+        const auto declaration = runtime::parse_robot_plugin_declaration(table.declaration_json);
+        if (name == "ackermann_step") {
+            assert(declaration.service_types == std::vector<std::string> {"hako_srv_msgs/AckermannStep"});
+            assert(declaration.plant_operations.surface_friction);
+            assert(!declaration.plant_operations.humanoid_motion);
+        } else {
+            assert(declaration.service_types == std::vector<std::string> {"hako_srv_msgs/PersonStep"});
+            assert(declaration.plant_operations.humanoid_motion);
+            assert(!declaration.plant_operations.surface_friction);
+        }
+        assert(!declaration.plant_operations.body_motion);
     }
     std::cout << "builtin robot plugins: all passed" << std::endl;
     return 0;

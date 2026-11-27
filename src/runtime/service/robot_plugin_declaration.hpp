@@ -2,7 +2,6 @@
 
 #include "runtime/service/service_plugin_adapter.hpp"
 
-#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,7 +14,6 @@ struct RobotPluginDeclaration {
 };
 
 RobotPluginDeclaration parse_robot_plugin_declaration(std::string_view json);
-std::filesystem::path robot_plugin_declaration_path(const std::filesystem::path& library);
 std::vector<std::string> validate_robot_plugin(std::string_view robot, const RobotPluginDeclaration& declaration,
     const std::vector<RobotServiceSpec>& services, const PlantCapabilities& plant);
 

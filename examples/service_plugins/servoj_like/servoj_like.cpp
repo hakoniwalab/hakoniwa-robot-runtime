@@ -23,10 +23,6 @@ HAKO_ROBOT_SERVICE(my_robot_srvs_msgs, Stop);
 HAKO_ROBOT_SERVICE(my_robot_srvs_msgs, GetAngle);
 
 constexpr std::size_t joint_count = 6;
-constexpr std::size_t servo_service = 0;
-constexpr std::size_t stop_service = 1;
-constexpr std::size_t get_angle_service = 2;
-
 class ServoJRobot final : public plugin::RobotPlugin {
 public:
     explicit ServoJRobot(const plugin::RobotContext& context) : RobotPlugin(context)
@@ -37,9 +33,9 @@ public:
         if (context.services.size() != 3) {
             throw std::runtime_error("expected ServoJ, Stop and GetAngle services");
         }
-        bind<ServoJService>(servo_service, &ServoJRobot::on_goal, &ServoJRobot::reply_goal);
-        bind<StopService>(stop_service, &ServoJRobot::on_stop, &ServoJRobot::reply_stop);
-        bind<GetAngleService>(get_angle_service, &ServoJRobot::on_get_angle, &ServoJRobot::reply_get_angle);
+        servo_service = bind<ServoJService>(&ServoJRobot::on_goal, &ServoJRobot::reply_goal);
+        stop_service = bind<StopService>(&ServoJRobot::on_stop, &ServoJRobot::reply_stop);
+        get_angle_service = bind<GetAngleService>(&ServoJRobot::on_get_angle, &ServoJRobot::reply_get_angle);
     }
 
     void step(plugin::StepView& step) override
@@ -160,6 +156,9 @@ private:
         }
     }
 
+    std::size_t servo_service {};
+    std::size_t stop_service {};
+    std::size_t get_angle_service {};
     std::array<double, joint_count> start_ {};
     std::array<double, joint_count> held_ {};
     HakoCpp_ServoJRequest goal_ {};
@@ -171,4 +170,4 @@ private:
 
 } // namespace
 
-HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like)
+HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like, ServoJService, StopService, GetAngleService)

@@ -8,6 +8,7 @@
 #include "runtime/arbiter/priority_command_arbiter.hpp"
 #include "runtime/controller/hold_controller.hpp"
 #include "runtime/service/async_service_pipeline.hpp"
+#include "runtime/service/robot_plugin_declaration.hpp"
 #include "runtime/service/service_plugin_adapter.hpp"
 
 #include <cassert>
@@ -292,9 +293,22 @@ int main(int argc, char** argv)
     const std::string dynamic_path = argv[1];
 
     // The same definition, loaded as a shared library and as a builtin, behaves the same.
-    const auto dynamic = run_scenario(plugin::PluginLibrary::open(dynamic_path, HAKO_PLUGIN_KIND_SERVICE));
-    const auto builtin = run_scenario(
-        plugin::PluginLibrary::open_builtin("robot_fixture", HAKO_PLUGIN_KIND_SERVICE, kBuiltins));
+    const auto dynamic_library = plugin::PluginLibrary::open(dynamic_path, HAKO_PLUGIN_KIND_SERVICE);
+    const auto builtin_library = plugin::PluginLibrary::open_builtin(
+        "robot_fixture", HAKO_PLUGIN_KIND_SERVICE, kBuiltins);
+    for (const auto& library : {dynamic_library, builtin_library}) {
+        require_robot_plugin_declaration(*library, fixture_config(), {true, false, true});
+        try {
+            require_robot_plugin_declaration(*library, fixture_config(), {true, false, false});
+            assert(false && "expected the table declaration to require humanoid_motion");
+        } catch (const std::invalid_argument& error) {
+            const std::string_view message = error.what();
+            assert(message.find(library->path()) != message.npos);
+            assert(message.find("humanoid_motion") != message.npos);
+        }
+    }
+    const auto dynamic = run_scenario(dynamic_library);
+    const auto builtin = run_scenario(builtin_library);
     assert(dynamic == builtin);
     assert(dynamic.frictions == 1 && dynamic.humanoid_motions == 1);
 

@@ -230,6 +230,14 @@ bool load_robot_services(const json& robot, const RuntimeServiceConfig& robot_co
                     return fail(error, "service " + config.name + " lockstep must be a boolean");
                 }
                 config.lockstep = value.get<bool>();
+            } else if (field == "type") {
+                // The generator consumes this hint. Runtime uses the type registered with Core.
+                const auto* type = value.get_ptr<const std::string*>();
+                const auto separator = type ? type->find('/') : std::string::npos;
+                if (separator == std::string::npos || separator == 0 || separator + 1 == type->size()
+                    || type->find('/', separator + 1) != std::string::npos) {
+                    return fail(error, "service " + config.name + " type must be package/Service");
+                }
             } else if (field != "name") {
                 return fail(error, "unknown field " + field + " in service " + config.name);
             }
