@@ -66,7 +66,8 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
     }
 #endif
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
-    if (!definition.mirror_bodies.empty() && !mirror_reader_factory) {
+    if (!mirror_reader_factory
+        && std::ranges::any_of(definition.mirror_bodies, &RuntimeMirrorBodyConfig::has_input)) {
         throw std::invalid_argument(
             "Mirror state reader factory is required by the Runtime definition");
     }
@@ -165,6 +166,9 @@ std::unique_ptr<ActuatorRuntime> build_runtime(
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE
     for (const auto& mirror : definition.mirror_bodies) {
+        if (!mirror.has_input) {
+            continue;
+        }
         auto reader = mirror_reader_factory(mirror);
         if (reader == nullptr) {
             throw std::invalid_argument(

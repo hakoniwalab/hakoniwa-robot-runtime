@@ -11,7 +11,9 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -258,6 +260,55 @@ void test_factory_wires_geom_friction_as_directive()
     assert(rejected);
 }
 
+void test_factory_skips_mirror_without_input()
+{
+    RuntimeDefinition definition;
+    definition.mirror_bodies.push_back({
+        .component_id = "registered-mirror",
+        .mirror_id = "Car-1",
+        .has_input = false,
+    });
+    auto plant = std::make_shared<RecordingPlant>();
+    const auto unused_actuator_reader =
+        [](const RuntimeActuatorConfig&) -> std::shared_ptr<IFloat64EventReader> {
+        return nullptr;
+    };
+    auto runtime = build_runtime(definition, plant, unused_actuator_reader);
+    const auto report = runtime->step();
+    assert(report.source_statuses.empty());
+    assert(report.controller_statuses.empty());
+    assert(report.directive_controller_statuses.empty());
+    assert(report.plant_operations.body_motions.empty());
+
+    definition.mirror_bodies.push_back({
+        .component_id = "topic-mirror",
+        .mirror_id = "Drone-1",
+        .pdu_robot = "Drone-1",
+        .pose_pdu_name = "pos",
+    });
+    bool factory_required = false;
+    try {
+        (void)build_runtime(definition, plant, unused_actuator_reader);
+    } catch (const std::invalid_argument& error) {
+        factory_required = std::string_view(error.what()).starts_with("Mirror state reader factory is required");
+    }
+    assert(factory_required);
+
+    std::vector<std::string> reader_requests;
+    bool null_reader_rejected = false;
+    try {
+        (void)build_runtime(definition, plant, unused_actuator_reader, {}, {}, {}, {}, {},
+            [&](const RuntimeMirrorBodyConfig& config) -> std::shared_ptr<IMirrorBodyStateReader> {
+                reader_requests.push_back(config.component_id);
+                return nullptr;
+            });
+    } catch (const std::invalid_argument& error) {
+        null_reader_rejected = std::string_view(error.what()) == "Mirror reader factory returned null: topic-mirror";
+    }
+    assert(null_reader_rejected);
+    assert(reader_requests == std::vector<std::string> {"topic-mirror"});
+}
+
 } // namespace
 
 int main()
@@ -265,5 +316,6 @@ int main()
     test_directive_bypasses_arbiter_and_rejects_invalid_values();
     test_operations_group_each_kind();
     test_factory_wires_geom_friction_as_directive();
+    test_factory_skips_mirror_without_input();
     return 0;
 }
