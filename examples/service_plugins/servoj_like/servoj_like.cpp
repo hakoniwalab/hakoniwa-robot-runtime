@@ -26,14 +26,14 @@ public:
         if (context.actuators.size() != joint_count) {
             throw std::invalid_argument("expected six SO-101 actuators");
         }
+        if (context.services.size() != 1) {
+            throw std::runtime_error("expected one ServoJ service");
+        }
         bind<ServoJService>(servo_service, &ServoJRobot::on_goal, &ServoJRobot::reply);
     }
 
     void step(plugin::StepView& step) override
     {
-        if (context().services.size() != 1) {
-            throw std::runtime_error("expected one ServoJ service");
-        }
         const auto& tick = step.tick();
         const auto state = step.service_state(servo_service);
         if (state == plugin::ServiceState::Canceling) {

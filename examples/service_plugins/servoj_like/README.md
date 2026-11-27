@@ -12,14 +12,21 @@ SO-101 の肩を +0.5、-0.5、0 rad に振り、肘を +0.8 rad まで曲げて
 
 ## 2. C++ プラグインを見る
 
-`servoj_like.cpp` の `ServoJRobot` は `RobotPlugin` を継承します。
-`bind` で `HakoCpp_ServoJRequest` を受けるメソッドと、`HakoCpp_ServoJResponse` を返すメソッドを登録します。
-`step` が、渡されたアクチュエータ順に位置指令を出します。
+`servoj_like.cpp` に `ServoJRobot` の実装と、サービス型と入口を定義するマクロがそろっています。
+自分のプラグインを書くときは、手順書の [3.1 節](../../../docs/howto-add-async-service.md#31-c-クラスを書く) に沿ってコピーを編集します。
+別の `.cpp` を使う場合は、コピー先の `CMakeLists.txt` の `add_library` でソース名を替えます。
+`bind` で HakoCpp の要求・応答メソッドを登録します。サービス番号は同じ `pdu_robot` のマニフェスト行の順で、0 から始まります。
+`step` はマニフェストのアクチュエータ順に `step.position(i)` で開始角（rad）を読み、位置指令を出します。
+時刻は `step.tick().sim_time_ns`（ns）で読みます。
 目標角は各アクチュエータの範囲内で受け付けます。
+初回は `tick.selected` が 0 です。指令を出したあとに `commanded_ && !tick.selected` が成り立つと、指令を止めます。
 `HAKO_ROBOT_PLUGIN` が入口を作り、生成したコンバーターが PDU を読み書きします。
 C の関数テーブルを直接使う場合は、手順書の [3.3 節](../../../docs/howto-add-async-service.md#33-c-の関数テーブルを使う上級者向け) を参照してください。
 
 ## 3. プラグインをビルドする
+
+独自の CMake でも、サンプルと同じく `cxx_std_20` を指定します。
+Robot Runtime の `include`、生成した型のルート、PDU Registry の `pdu/types` をインクルード先に指定します。
 
 ```bash
 cmake -S "$DEMO" -B "$WORK/build-plugin" -DCMAKE_BUILD_TYPE=Release \
