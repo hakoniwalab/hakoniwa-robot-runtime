@@ -523,7 +523,12 @@ freejointへ反映します。Mirror commandはArbiterを経由しません。
 }
 ```
 
-- `pose` は必須です。`Twist.linear` をposition、`Twist.angular` を
+`input` を省略すると、MirrorはPlantに登録するだけで、pluginが発行する
+`body_motion` operationで移動します。この場合、Manifest componentの
+`pdu_robot` も省略できます。`input` を指定すると、従来どおりPDUで
+pose / velocityを受信します。
+
+- `input` を指定した場合、`pose` は必須です。`Twist.linear` をposition、`Twist.angular` を
   XYZ Euler angleとして扱います。
 - `velocity` は任意です。指定時は `frame` に `world` または `body` を
   明示します。外部Droneとの標準契約、およびDrone Core / Proの `velocity`

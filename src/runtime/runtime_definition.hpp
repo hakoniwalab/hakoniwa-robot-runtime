@@ -184,6 +184,7 @@ struct RuntimeMirrorBodyConfig {
     MirrorVelocityFrame velocity_frame {MirrorVelocityFrame::World};
     std::string mjcf_freejoint;
     std::vector<RuntimeMirrorContactBodyBinding> contact_bodies;
+    bool has_input {true};
 };
 
 #if defined(HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE) && HAKONIWA_ROBOT_RUNTIME_ENABLE_PLANT_DIRECTIVE

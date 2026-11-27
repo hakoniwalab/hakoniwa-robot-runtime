@@ -38,6 +38,43 @@ bool pdu_entry(
     return true;
 }
 
+bool load_mirror_input(
+    RuntimeParseContext& context,
+    const json& component,
+    const json& input,
+    RuntimeMirrorBodyConfig& mirror,
+    std::string* error)
+{
+    std::optional<std::string> pose;
+    if (!required_string(component, "pdu_robot", mirror.pdu_robot,
+            error, "Mirror component")
+        || !pdu_entry(input, "pose", true, pose, error)
+        || !pdu_entry(input, "velocity", false, mirror.velocity_pdu_name, error)) {
+        return false;
+    }
+    mirror.pose_pdu_name = *pose;
+    if (mirror.velocity_pdu_name.has_value()) {
+        std::string velocity_frame;
+        if (!required_string(input.at("velocity"), "frame",
+                velocity_frame, error, "Mirror velocity input")) {
+            return false;
+        }
+        if (velocity_frame == "body") {
+            mirror.velocity_frame = MirrorVelocityFrame::Body;
+        } else if (velocity_frame == "world") {
+            mirror.velocity_frame = MirrorVelocityFrame::World;
+        } else {
+            return fail(error,
+                "Mirror velocity frame must be body or world");
+        }
+    }
+    return verify_pdu_binding(context, mirror.pdu_robot,
+            mirror.pose_pdu_name, "geometry_msgs/Twist", 72, error)
+        && (!mirror.velocity_pdu_name.has_value()
+            || verify_pdu_binding(context, mirror.pdu_robot,
+                *mirror.velocity_pdu_name, "geometry_msgs/Twist", 72, error));
+}
+
 bool finite_number(
     const json& object,
     const char* field,
@@ -71,8 +108,6 @@ bool load_mirror_definitions(
         if (!required_string(component, "id", mirror.component_id,
                 error, "Mirror component")
             || !required_string(component, "config", config_value,
-                error, "Mirror component")
-            || !required_string(component, "pdu_robot", mirror.pdu_robot,
                 error, "Mirror component")) {
             return false;
         }
@@ -85,7 +120,7 @@ bool load_mirror_definitions(
         json root;
         if (!read_json(config_path, root, error)
             || !root.contains("spec") || !root.at("spec").is_object()
-            || !root.contains("input") || !root.at("input").is_object()
+            || (root.contains("input") && !root.at("input").is_object())
             || !root.contains("mjcf_binding")
             || !root.at("mjcf_binding").is_object()) {
             return fail(error,
@@ -101,35 +136,9 @@ bool load_mirror_definitions(
             return fail(error, "duplicate Mirror ID: " + mirror.mirror_id);
         }
 
-        std::optional<std::string> pose;
-        std::optional<std::string> velocity;
-        if (!pdu_entry(root.at("input"), "pose", true, pose, error)
-            || !pdu_entry(root.at("input"), "velocity", false, velocity, error)) {
-            return false;
-        }
-        mirror.pose_pdu_name = *pose;
-        mirror.velocity_pdu_name = velocity;
-        if (mirror.velocity_pdu_name.has_value()) {
-            std::string velocity_frame;
-            if (!required_string(root.at("input").at("velocity"), "frame",
-                    velocity_frame, error, "Mirror velocity input")) {
-                return false;
-            }
-            if (velocity_frame == "body") {
-                mirror.velocity_frame = MirrorVelocityFrame::Body;
-            } else if (velocity_frame == "world") {
-                mirror.velocity_frame = MirrorVelocityFrame::World;
-            } else {
-                return fail(error,
-                    "Mirror velocity frame must be body or world");
-            }
-        }
-        if (!verify_pdu_binding(context, mirror.pdu_robot,
-                mirror.pose_pdu_name, "geometry_msgs/Twist", 72, error)
-            || (mirror.velocity_pdu_name.has_value()
-                && !verify_pdu_binding(context, mirror.pdu_robot,
-                    *mirror.velocity_pdu_name,
-                    "geometry_msgs/Twist", 72, error))) {
+        mirror.has_input = root.contains("input");
+        if (mirror.has_input
+            && !load_mirror_input(context, component, root.at("input"), mirror, error)) {
             return false;
         }
 

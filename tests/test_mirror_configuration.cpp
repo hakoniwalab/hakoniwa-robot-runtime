@@ -78,7 +78,7 @@ void test_mirror_configuration_contract()
         }},
     });
     const auto mirror_path = root / "mirror.json";
-    write_json(mirror_path, {
+    const json mirror_config = {
         {"spec", {{"mirror_id", "Drone-1"}}},
         {"input", {
             {"pose", {{"pdu_name", "pos"},
@@ -94,7 +94,8 @@ void test_mirror_configuration_contract()
                 {"mjcf_freejoint", "car_1_freejoint"},
             }})},
         }},
-    });
+    };
+    write_json(mirror_path, mirror_config);
     const auto impulse_path = root / "impulse.json";
     write_json(impulse_path, {
         {"spec", {{"mirror_component", "drone-1-mirror"}}},
@@ -151,6 +152,9 @@ void test_mirror_configuration_contract()
     assert(definition.person_vehicles[0].seats[0].offset.y == 0.4);
     assert(definition.mirror_bodies.size() == 1);
     assert(definition.mirror_bodies[0].mirror_id == "Drone-1");
+    assert(definition.mirror_bodies[0].has_input);
+    assert(definition.mirror_bodies[0].pdu_robot == "Drone-1");
+    assert(definition.mirror_bodies[0].pose_pdu_name == "pos");
     assert(definition.mirror_bodies[0].velocity_pdu_name == "velocity");
     assert(definition.mirror_bodies[0].velocity_frame
         == MirrorVelocityFrame::Body);
@@ -159,14 +163,60 @@ void test_mirror_configuration_contract()
     assert(definition.impulse_collision_outputs[0].mirror_id == "Drone-1");
     assert(definition.impulse_collision_outputs[0].cooldown_usec == 100'000);
 
+    auto components_without_mirror_pdu = components;
+    components_without_mirror_pdu[1].erase("pdu_robot");
+    auto input_without_mirror_pdu = input;
+    input_without_mirror_pdu.components_json = components_without_mirror_pdu.dump();
+    RuntimeDefinition rejected;
+    assert(!resolve_runtime_definition(input_without_mirror_pdu, rejected, &error));
+    assert(error.find("Mirror component field is missing or invalid: pdu_robot") != std::string::npos);
+
+    auto mirror_without_input = mirror_config;
+    mirror_without_input.erase("input");
+    write_json(mirror_path, mirror_without_input);
+    RuntimeDefinition registration_only;
+    error.clear();
+    assert(resolve_runtime_definition(input_without_mirror_pdu, registration_only, &error));
+    assert(error.empty());
+    assert(registration_only.mirror_bodies.size() == 1);
+    const auto& mirror = registration_only.mirror_bodies.front();
+    assert(!mirror.has_input);
+    assert(mirror.pdu_robot.empty());
+    assert(mirror.pose_pdu_name.empty());
+    assert(!mirror.velocity_pdu_name.has_value());
+    assert(mirror.mirror_id == "Drone-1");
+    assert(mirror.mjcf_freejoint == "drone_1_freejoint");
+    assert(mirror.contact_bodies.size() == 1);
+    assert(mirror.contact_bodies[0].body_id == "Car-1");
+    assert(mirror.contact_bodies[0].mjcf_freejoint == "car_1_freejoint");
+    assert(registration_only.impulse_collision_outputs.size() == 1);
+    assert(registration_only.impulse_collision_outputs[0].mirror_id == "Drone-1");
+
+    auto invalid_mirror = mirror_without_input;
+    invalid_mirror["mjcf_binding"]["freejoint"] = "";
+    write_json(mirror_path, invalid_mirror);
+    assert(!resolve_runtime_definition(input_without_mirror_pdu, rejected, &error));
+    assert(error.find("Mirror MJCF binding field is missing or invalid: freejoint") != std::string::npos);
+
+    invalid_mirror = mirror_config;
+    invalid_mirror["input"]["pose"]["pdu_name"] = "unknown-pose";
+    write_json(mirror_path, invalid_mirror);
+    assert(!resolve_runtime_definition(input, rejected, &error));
+    assert(error.find("unknown-pose") != std::string::npos);
+
+    invalid_mirror["input"] = json::object();
+    write_json(mirror_path, invalid_mirror);
+    assert(!resolve_runtime_definition(input, rejected, &error));
+    assert(error.find("Mirror input is missing: pose") != std::string::npos);
+
+    write_json(mirror_path, mirror_without_input);
     std::ifstream invalid_stream(impulse_path);
     assert(invalid_stream.is_open());
     json invalid_impulse;
     invalid_stream >> invalid_impulse;
     invalid_impulse["spec"]["mirror_component"] = "missing-mirror";
     write_json(impulse_path, invalid_impulse);
-    RuntimeDefinition rejected;
-    assert(!resolve_runtime_definition(input, rejected, &error));
+    assert(!resolve_runtime_definition(input_without_mirror_pdu, rejected, &error));
     assert(error.find("unknown Mirror component") != std::string::npos);
 
     fs::remove_all(root);

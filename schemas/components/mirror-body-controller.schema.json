@@ -4,7 +4,7 @@
   "title": "Hakoniwa Mirror body controller configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "schema_version", "spec", "input", "mjcf_binding"],
+  "required": ["$schema", "schema_version", "spec", "mjcf_binding"],
   "properties": {
     "$schema": {"type": "string"},
     "schema_version": {"const": 1},
