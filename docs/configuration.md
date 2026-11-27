@@ -73,7 +73,7 @@ manifestへ設定してください。Runtimeは拡張子とファイル存在�
 
 `$schema`、`schema_version`、`description` 等の metadata を付与しても構いませんが、現在の Runtime 実装が直接意味解釈する必須 field は上表です。
 
-任意の項目として `services` があります（2.4 節）。
+任意の項目として `robots` があります（2.4 節）。以前の `services` の一覧は `robots` に置き換わり、書くと起動を断ります。
 
 <a id="22-components"></a>
 

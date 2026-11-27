@@ -75,8 +75,13 @@ def prepare(urban, work, mujoco_library):
         assert urban_people.apply_rpc(work, composition, {}, "conductor") == [PERSON]
     for filename, lockstep in ((SERVICE_MANIFEST, True), (ASYNC_MANIFEST, False)):
         shutil.copyfile(car / MANIFEST, car / filename)
+        # A manifest reused from before stage 2c-5 may still carry the old services list.
+        stale = json.loads((car / filename).read_text())
+        stale["services"] = [{"name": "CarService/AckermannStep/stale", "type": "ackermann_step"}]
+        (car / filename).write_text(json.dumps(stale))
         multi_car.configure_step_services(
             car / filename, vehicles=CARS, people=[PERSON], lockstep=lockstep)
+        assert "services" not in json.loads((car / filename).read_text())
     return car
 
 
