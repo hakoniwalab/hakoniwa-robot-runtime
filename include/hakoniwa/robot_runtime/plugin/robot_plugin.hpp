@@ -1,6 +1,19 @@
 #ifndef HAKONIWA_ROBOT_RUNTIME_PLUGIN_ROBOT_PLUGIN_HPP
 #define HAKONIWA_ROBOT_RUNTIME_PLUGIN_ROBOT_PLUGIN_HPP
 
+/*
+ * C++ layer over the C robot service plugin table (service_plugin.h).
+ *
+ * The framework calls the C table; detail::PluginTable implements it and
+ * forwards to the author's class:
+ *   create   -> constructs Class, which binds each service type to two of its
+ *               own functions (request and response, any names)
+ *   on_request  -> decode the PDU, call the bound request function
+ *   on_step     -> wrap state/slots/output in StepView, call Class::step
+ *   on_response -> call the bound response function, encode the reply
+ * The walkthrough with a figure is docs/plugin-internals.md.
+ */
+
 #include "hakoniwa/robot_runtime/plugin/service_plugin.h"
 
 #include <algorithm>
@@ -262,8 +275,8 @@ public:
 
 protected:
     template <class Service, class Self>
-    std::size_t bind(bool (Self::*on_request)(const typename Service::Request&),
-        typename Service::Response (Self::*on_response)(const StateView&))
+    std::size_t bind(bool (Self::*request_handler)(const typename Service::Request&),
+        typename Service::Response (Self::*response_handler)(const StateView&))
     {
         const auto& services = context_.services;
         const auto matches = [](const ServiceInfo& service) { return service.type == Service::type; };
@@ -276,14 +289,14 @@ protected:
             throw std::invalid_argument("robot " + context_.robot + " has multiple services of type "
                 + std::string(Service::type) + "; use the index overload of bind");
         }
-        return bind<Service>(static_cast<std::size_t>(first - services.begin()), on_request, on_response);
+        return bind<Service>(static_cast<std::size_t>(first - services.begin()), request_handler, response_handler);
     }
 
     // Use an index when a robot has multiple services of the same type.
     template <class Service, class Self>
     std::size_t bind(std::size_t service,
-        bool (Self::*on_request)(const typename Service::Request&),
-        typename Service::Response (Self::*on_response)(const StateView&))
+        bool (Self::*request_handler)(const typename Service::Request&),
+        typename Service::Response (Self::*response_handler)(const StateView&))
     {
         if (service >= handlers_.size()) {
             throw std::invalid_argument("service index out of range: " + std::to_string(service));
@@ -298,7 +311,7 @@ protected:
                 + context_.services[service].name + " is already bound");
         }
         handlers_[service] = {
-            [on_request](RobotPlugin& plugin, const HakoServiceRequestV1& request) {
+            [request_handler](RobotPlugin& plugin, const HakoServiceRequestV1& request) {
                 using WirePacket = typename Service::WireRequestPacket;
                 if (!detail::valid_packet<Service, WirePacket>(request.data, request.size, sizeof(WirePacket))) {
                     return false;
@@ -307,9 +320,13 @@ protected:
                 typename Service::RequestConverter converter;
                 // The generated decoder reads the packet through a mutable pointer.
                 auto* bytes = const_cast<char*>(static_cast<const char*>(request.data));
-                return converter.pdu2cpp(bytes, packet) && (static_cast<Self&>(plugin).*on_request)(packet.body);
+                if (!converter.pdu2cpp(bytes, packet)) {
+                    return false;
+                }
+                // Call the author's request function (for example on_goal) with the body only.
+                return (static_cast<Self&>(plugin).*request_handler)(packet.body);
             },
-            [on_response](RobotPlugin& plugin, const StateView& state, const HakoServiceResponseV1& response) {
+            [response_handler](RobotPlugin& plugin, const StateView& state, const HakoServiceResponseV1& response) {
                 using WirePacket = typename Service::WireResponsePacket;
                 if (response.size > static_cast<std::size_t>(std::numeric_limits<int>::max())
                     || !detail::valid_packet<Service, WirePacket>(
@@ -326,7 +343,8 @@ protected:
                 if (!converter.pdu2cpp(bytes, packet)) {
                     return false;
                 }
-                packet.body = (static_cast<Self&>(plugin).*on_response)(state);
+                // Call the author's response function (for example reply_goal) with post-physics state.
+                packet.body = (static_cast<Self&>(plugin).*response_handler)(state);
                 return converter.cpp2pdu(packet, bytes, static_cast<int>(response.size)) > 0;
             },
         };
