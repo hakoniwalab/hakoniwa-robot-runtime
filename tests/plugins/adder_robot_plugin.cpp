@@ -1,16 +1,12 @@
 // Test fixture for the C++ template layer (stage 2c-4): a robot written as a
 // C++ class with HakoCpp types. One service, hako_srv_msgs/AddTwoInts:
 // the request sets a joint target to a + b (tenths of a radian); the reply
-// carries the sum. Built as a shared library. Variant ADDER_WRONG_TYPE binds a
-// type the robot does not have; ADDER_THROWING_STEP fails in step().
+// carries the sum. ADDER_UNLISTED omits the declared type and
+// ADDER_THROWING_STEP fails in step().
 #include "hakoniwa/robot_runtime/plugin/robot_plugin.hpp"
 
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
-#ifdef ADDER_WRONG_TYPE
-#include "hako_srv_msgs/pdu_cpptype_conv_GetWorldTimeRequestPacket.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_GetWorldTimeResponsePacket.hpp"
-#endif
 
 #include <stdexcept>
 
@@ -19,9 +15,6 @@ namespace {
 namespace plugin = hakoniwa::robot_runtime::plugin;
 
 HAKO_ROBOT_SERVICE(hako_srv_msgs, AddTwoInts);
-#ifdef ADDER_WRONG_TYPE
-HAKO_ROBOT_SERVICE(hako_srv_msgs, GetWorldTime);
-#endif
 
 class Adder final : public plugin::RobotPlugin {
 public:
@@ -30,12 +23,21 @@ public:
         if (context.actuators.size() != 1) {
             throw std::invalid_argument("adder needs exactly one actuator");
         }
-#ifdef ADDER_WRONG_TYPE
-        bind<GetWorldTimeService>(0, &Adder::on_get_world_time, &Adder::reply_get_world_time);
-#else
-        bind<AddTwoIntsService>(0, &Adder::on_add, &Adder::reply_add);
-#endif
+        if (context.config_json == R"("unbound")") {
+            return;
+        }
+        if (context.config_json == R"("indexed")") {
+            bind<AddTwoIntsService>(0, &Adder::on_add, &Adder::reply_add);
+            bind<AddTwoIntsService>(1, &Adder::on_add, &Adder::reply_add);
+            return;
+        }
+        bind<AddTwoIntsService>(&Adder::on_add, &Adder::reply_add);
+        if (context.config_json == R"("double")") {
+            bind<AddTwoIntsService>(&Adder::on_add, &Adder::reply_add);
+        }
     }
+
+    static constexpr std::string_view plant_operations = R"(["body_motion"])";
 
     void step(plugin::StepView& step) override
     {
@@ -76,15 +78,14 @@ private:
         return response;
     }
 
-#ifdef ADDER_WRONG_TYPE
-    bool on_get_world_time(const HakoCpp_GetWorldTimeRequest&) { return true; }
-    HakoCpp_GetWorldTimeResponse reply_get_world_time(const plugin::StateView&) { return {}; }
-#endif
-
     long long sum_ {0};
     bool commanding_ {false};
 };
 
 } // namespace
 
+#ifdef ADDER_UNLISTED
 HAKO_ROBOT_PLUGIN(Adder, adder)
+#else
+HAKO_ROBOT_PLUGIN(Adder, adder, AddTwoIntsService)
+#endif

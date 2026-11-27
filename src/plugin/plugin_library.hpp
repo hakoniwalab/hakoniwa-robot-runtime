@@ -5,7 +5,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 
@@ -14,7 +13,6 @@ namespace hakoniwa::robot_runtime::plugin {
 struct BuiltinPlugin {
     const char* name;
     HakoRobotRuntimePluginEntryV1 entry;
-    const char* declaration_json {nullptr};
 };
 
 [[nodiscard]] std::span<const BuiltinPlugin> builtin_plugins();
@@ -50,8 +48,6 @@ public:
     PluginLibrary& operator=(const PluginLibrary&) = delete;
 
     [[nodiscard]] const std::string& path() const noexcept;
-    [[nodiscard]] bool is_builtin() const noexcept;
-    [[nodiscard]] const std::optional<std::string>& builtin_declaration_json() const noexcept;
     /** plugin_id from the header, or "unknown" when the plugin gave none. */
     [[nodiscard]] const std::string& plugin_id() const noexcept;
     [[nodiscard]] const HakoPluginHeaderV1& header() const noexcept;
@@ -75,7 +71,6 @@ private:
 
     std::string path_;
     std::string plugin_id_;
-    std::optional<std::string> builtin_declaration_json_;
     void* handle_ {nullptr};
     const HakoPluginHeaderV1* header_ {nullptr};
 };

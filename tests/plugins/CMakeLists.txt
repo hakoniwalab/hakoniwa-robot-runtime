@@ -182,7 +182,7 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/old-services-manifest.json"
 add_test(NAME hako-manifest-root-test COMMAND hako-manifest-root-test
     "${CMAKE_CURRENT_BINARY_DIR}/old-services-manifest.json")
 
-# Stage 2c-3: the declaration JSON next to a plugin and the startup validator.
+# Plugin declaration JSON and the startup validator.
 add_robot_plugin_test(hako-robot-plugin-declaration-test ${RUNTIME_ROOT}/tests/test_robot_plugin_declaration.cpp)
 add_test(NAME hako-robot-plugin-declaration-test COMMAND hako-robot-plugin-declaration-test)
 
@@ -202,9 +202,9 @@ function(add_adder_plugin name)
     target_compile_definitions(${name} PRIVATE ${ARGN})
 endfunction()
 add_adder_plugin(adder_robot)
-add_adder_plugin(adder_wrong_type ADDER_WRONG_TYPE)
+add_adder_plugin(adder_unlisted ADDER_UNLISTED)
 add_adder_plugin(adder_throwing_step ADDER_THROWING_STEP)
 add_robot_plugin_test(hako-robot-plugin-template-test ${RUNTIME_ROOT}/tests/test_robot_plugin_template.cpp)
 target_include_directories(hako-robot-plugin-template-test PRIVATE ${HAKO_PDU_REGISTRY_TYPES})
 add_test(NAME hako-robot-plugin-template-test COMMAND hako-robot-plugin-template-test
-    "$<TARGET_FILE:adder_robot>" "$<TARGET_FILE:adder_wrong_type>" "$<TARGET_FILE:adder_throwing_step>")
+    "$<TARGET_FILE:adder_robot>" "$<TARGET_FILE:adder_unlisted>" "$<TARGET_FILE:adder_throwing_step>")

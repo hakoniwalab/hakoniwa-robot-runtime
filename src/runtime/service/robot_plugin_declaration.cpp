@@ -3,8 +3,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <fstream>
-#include <iterator>
 #include <stdexcept>
 
 namespace hakoniwa::robot_runtime::runtime {
@@ -36,18 +34,6 @@ std::vector<std::string> read_strings(const json& values, std::string_view field
         result.push_back(value.get<std::string>());
     }
     return result;
-}
-
-std::string read_declaration_file(const std::filesystem::path& path)
-{
-    if (!std::filesystem::is_regular_file(path)) {
-        throw std::runtime_error("missing robot plugin declaration file: " + path.string());
-    }
-    std::ifstream stream(path);
-    if (!stream) {
-        throw std::runtime_error("failed to open robot plugin declaration file: " + path.string());
-    }
-    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
 }
 
 } // namespace
@@ -85,12 +71,6 @@ RobotPluginDeclaration parse_robot_plugin_declaration(std::string_view text)
     return declaration;
 }
 
-std::filesystem::path robot_plugin_declaration_path(const std::filesystem::path& library)
-{
-    auto path = library;
-    return path.replace_extension(".plugin.json");
-}
-
 std::vector<std::string> validate_robot_plugin(std::string_view robot, const RobotPluginDeclaration& declaration,
     const std::vector<RobotServiceSpec>& services, const PlantCapabilities& plant)
 {
@@ -112,11 +92,11 @@ std::vector<std::string> validate_robot_plugin(std::string_view robot, const Rob
 void require_robot_plugin_declaration(const plugin::PluginLibrary& library, const ServicePluginConfig& config,
     const PlantCapabilities& plant)
 {
-    if (library.is_builtin() && !library.builtin_declaration_json()) {
-        return;
+    const auto& source = library.path();
+    const auto* text = library.service_table().declaration_json;
+    if (text == nullptr) {
+        throw std::invalid_argument(source + ": missing robot plugin declaration in service table");
     }
-    const auto source = library.is_builtin() ? library.path() : robot_plugin_declaration_path(library.path()).string();
-    const auto text = library.is_builtin() ? *library.builtin_declaration_json() : read_declaration_file(source);
     RobotPluginDeclaration declaration;
     try {
         declaration = parse_robot_plugin_declaration(text);

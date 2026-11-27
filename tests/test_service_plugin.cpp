@@ -64,7 +64,7 @@ RuntimeServiceConfig parse_manifest(std::filesystem::path path, const char* wron
                 {"plugin", {{"library", library}, {"config", {{"mode", "test"}}}}},
                 {"services", json::array({
                     {{"name", "any/route"}},
-                    {{"name", "any/stop"}, {"lockstep", false}},
+                    {{"name", "any/stop"}, {"lockstep", false}, {"type", "t/Stop"}},
                 })}},
             {{"name", "car"}, {"builtin", "ackermann_step"},
                 {"services", json::array({{{"name", "CarService/AckermannStep/car"}, {"lockstep", true}}})}},
@@ -119,7 +119,7 @@ RuntimeServiceConfig parse_manifest(std::filesystem::path path, const char* wron
     expect_refused(invalid, "car");  // robot names are unique
     invalid = robots(path.filename().string());
     invalid[0]["services"][0]["type"] = "plugin";
-    expect_refused(invalid, "type");  // the old per-service fields are gone
+    expect_refused(invalid, "type");  // only a package/Service hint is accepted
     return config;
 }
 

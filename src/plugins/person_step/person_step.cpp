@@ -191,6 +191,7 @@ void reset(HakoRobotPlugin* robot)
 const HakoServicePluginV1 table {
     {sizeof(HakoServicePluginV1), HAKO_SERVICE_PLUGIN_ABI_VERSION, HAKO_PLUGIN_KIND_SERVICE,
         HAKO_SERVICE_PLUGIN_INTERFACE_REVISION, "person_step"},
+    R"({"service_types":["hako_srv_msgs/PersonStep"],"plant_operations":["humanoid_motion"]})",
     create, destroy, on_request, nullptr, on_step, on_response, reset,
 };
 

@@ -160,6 +160,7 @@ pub/sub だけのロボットは `components` で設定し、`robots` は省略�
 | `name` | 一意なロボット名。PDU のロボット名と同じ |
 | `builtin` / `plugin` | どちらか一方を指定。組み込みは `ackermann_step`（車）または `person_step`（人） |
 | `services[].name` | core-pro に登録するサービス名。全ロボットで一意 |
+| `services[].type` | 生成器に渡す RPC 型（任意）。形式は `package/Service` |
 | `services[].lockstep` | `true` ならロックステップ（既定 `false`） |
 
 組み込みのサービス名は `CarService/AckermannStep/<ロボット名>` または
@@ -177,7 +178,11 @@ pub/sub だけのロボットは `components` で設定し、`robots` は省略�
 ```json
 "robots": [
   { "name": "SO101", "plugin": { "library": "libmy_servoj.so" }, "priority": 16,
-    "services": [{ "name": "ArmService/ServoJ/SO101", "lockstep": false }] }
+    "services": [
+      { "name": "ArmService/ServoJ/SO101" },
+      { "name": "ArmService/Stop/SO101" },
+      { "name": "ArmService/GetAngle/SO101" }
+    ] }
 ]
 ```
 
@@ -185,15 +190,7 @@ pub/sub だけのロボットは `components` で設定し、`robots` は省略�
 `plugin.config` はプラグインに渡す JSON 値で、既定は `{}` です。
 `priority` は共有ライブラリのロボットだけに指定できる 32 ビット符号付き整数で、既定は `16` です。
 
-共有ライブラリと同じ場所に、拡張子を `.plugin.json` に替えた宣言ファイルを置きます。
-`libmy_servoj.so` や `libmy_servoj.dylib` なら、宣言ファイルは `libmy_servoj.plugin.json` です。
-
-```json
-{
-  "service_types": ["my_robot_srvs_msgs/ServoJ"]
-}
-```
-
+宣言 JSON は関数テーブルの `declaration_json` に入ります。
 `service_types` は、Core の `service.json` で各サービスの `type` に指定する RPC 型の配列です。
 Plant 操作を出すプラグインは、`plant_operations` に `surface_friction`、`body_motion`、`humanoid_motion` のうち使うものを並べます。
 宣言が無い場合、対応する RPC 型が無い場合、または Plant が宣言された操作を扱えない場合は起動が止まります。

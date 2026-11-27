@@ -1,11 +1,9 @@
-// Stage 2c-3: the plugin declaration JSON (next to the shared library) and the
-// startup validator. Written before the implementation (notes 2026-11-27).
+// Robot plugin declaration JSON and the startup validator.
 #undef NDEBUG
 
 #include "runtime/service/robot_plugin_declaration.hpp"
 
 #include <cassert>
-#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -40,15 +38,6 @@ const std::vector<RobotServiceSpec> kServices {
     {"ArmService/ServoJ/SO101", "my_robot_srvs_msgs/ServoJ", false},
     {"ArmService/Stop/SO101", "my_robot_srvs_msgs/Stop", false},
 };
-
-// The declaration sits next to the library: the library's extension becomes ".plugin.json".
-void declaration_path_replaces_the_library_extension()
-{
-    using std::filesystem::path;
-    assert(robot_plugin_declaration_path("/opt/x/libmy_servoj.so") == path("/opt/x/libmy_servoj.plugin.json"));
-    assert(robot_plugin_declaration_path("/opt/x/libmy_servoj.dylib") == path("/opt/x/libmy_servoj.plugin.json"));
-    assert(robot_plugin_declaration_path("C:/x/my_servoj.dll") == path("C:/x/my_servoj.plugin.json"));
-}
 
 // A declaration lists the service types it handles and the Plant operations it emits.
 void a_full_declaration_is_read()
@@ -133,7 +122,6 @@ void all_problems_are_reported_together()
 
 int main()
 {
-    declaration_path_replaces_the_library_extension();
     a_full_declaration_is_read();
     plant_operations_are_optional();
     malformed_declarations_are_refused();

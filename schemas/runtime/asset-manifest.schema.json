@@ -85,7 +85,12 @@
           "$ref": "#/$defs/nonempty_string",
           "description": "Registered Core service name, unique across all robots."
         },
-        "lockstep": { "type": "boolean", "default": false }
+        "lockstep": { "type": "boolean", "default": false },
+        "type": {
+          "type": "string",
+          "pattern": "^[^/]+/[^/]+$",
+          "description": "Optional package/Service type hint for the Core service.json generator."
+        }
       }
     }
   }

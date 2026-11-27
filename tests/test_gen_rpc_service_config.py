@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from hakoniwa_pdu.pdu_msgs.pdu_size import PDU_SIZE
 
@@ -83,6 +86,62 @@ class RpcServiceConfigTest(unittest.TestCase):
             GENERATOR.build_service_json(
                 [], "pdu.json", ["Alice", "Alice"]
             )
+
+    def test_builtin_manifest_matches_legacy_output(self) -> None:
+        with TemporaryDirectory() as directory:
+            manifest = Path(directory) / "manifest.json"
+            manifest.write_text(json.dumps({"robots": [
+                {"name": "Car-1", "builtin": "ackermann_step",
+                 "services": [{"name": "CarService/AckermannStep/Car-1"}]},
+                {"name": "Alice", "builtin": "person_step",
+                 "services": [{"name": "PersonService/PersonStep/Alice"}]},
+            ]}), encoding="utf-8")
+            actual = GENERATOR.build_manifest_service_json(manifest, pdu_config=Path("pdu.json"))
+        self.assertEqual(
+            json.dumps(actual, indent=2),
+            json.dumps(GENERATOR.build_service_json(["Car-1"], "pdu.json", ["Alice"]), indent=2),
+        )
+
+    def test_so101_uses_generated_packet_sizes_and_client(self) -> None:
+        packet_sizes = {"ServoJ": (328, 272), "Stop": (272, 272), "GetAngle": (272, 328)}
+        package = "my_robot_srvs_msgs"
+        clients = [{"name": "ServoJClient", "client_endpoint": {"protocol": "shm"}}]
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            size_dir = root / "pdu_size" / package
+            size_dir.mkdir(parents=True)
+            for name, (request, response) in packet_sizes.items():
+                (size_dir / f"{name}RequestPacket.txt").write_text(str(request), encoding="utf-8")
+                (size_dir / f"{name}ResponsePacket.txt").write_text(str(response), encoding="utf-8")
+            manifest.write_text(json.dumps({"robots": [{
+                "name": "SO101", "plugin": {"library": "servo.so"},
+                "services": [
+                    {"name": "ArmService/ServoJ/SO101"},
+                    {"name": "ArmService/Stop/SO101"},
+                    {"name": "custom-angle-route", "type": f"{package}/GetAngle"},
+                ],
+            }]}), encoding="utf-8")
+            with patch.object(GENERATOR, "library_service_types",
+                              return_value=[f"{package}/{name}" for name in packet_sizes]) as read:
+                config = GENERATOR.build_manifest_service_json(
+                    manifest, root, clients=clients, heap_sizes={f"{package}/Stop": {"server": 32}}
+                )
+                read.assert_called_once_with(root.resolve() / "servo.so")
+        self.assertEqual([row["type"] for row in config["services"]], [f"{package}/{name}" for name in packet_sizes])
+        self.assertEqual(
+            [(row["pduSize"]["server"]["baseSize"], row["pduSize"]["client"]["baseSize"])
+             for row in config["services"]],
+            [(336, 280), (280, 280), (280, 336)],
+        )
+        self.assertEqual([row["pduSize"]["server"]["heapSize"] for row in config["services"]], [0, 32, 0])
+        self.assertEqual([row["clients"] for row in config["services"]], [clients] * 3)
+
+    def test_inference_requires_one_matching_type(self) -> None:
+        for declared in (["a/Other"], ["a/Stop", "b/Stop"]):
+            with self.subTest(declared=declared), self.assertRaisesRegex(ValueError, "set type in the manifest"):
+                GENERATOR._infer_type("ArmService/Stop/SO101", declared)
+
 
 if __name__ == "__main__":
     unittest.main()

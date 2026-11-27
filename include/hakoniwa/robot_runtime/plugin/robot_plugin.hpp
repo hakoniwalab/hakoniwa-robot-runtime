@@ -3,6 +3,8 @@
 
 #include "hakoniwa/robot_runtime/plugin/service_plugin.h"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +13,7 @@
 #include <exception>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -56,7 +59,7 @@ enum class ServiceResult {
 
 namespace detail {
 
-template <class Class>
+template <class Class, class... Services>
 struct PluginTable;
 
 inline void check_index(std::size_t index, std::size_t count, const char* message)
@@ -135,7 +138,7 @@ protected:
     StateView(const HakoTickV1& tick, const HakoRobotStateV1& state) : tick_(tick), state_(state) {}
 
 private:
-    template <class Class>
+    template <class Class, class... Services>
     friend struct detail::PluginTable;
 
     const HakoTickV1& tick_;
@@ -201,7 +204,7 @@ public:
     }
 
 private:
-    template <class Class>
+    template <class Class, class... Services>
     friend struct detail::PluginTable;
 
     StepView(const HakoTickV1& tick, const HakoRobotStateV1& state, HakoServiceSlotV1* slots,
@@ -259,7 +262,26 @@ public:
 
 protected:
     template <class Service, class Self>
-    void bind(std::size_t service,
+    std::size_t bind(bool (Self::*on_request)(const typename Service::Request&),
+        typename Service::Response (Self::*on_response)(const StateView&))
+    {
+        const auto& services = context_.services;
+        const auto matches = [](const ServiceInfo& service) { return service.type == Service::type; };
+        const auto first = std::find_if(services.begin(), services.end(), matches);
+        if (first == services.end()) {
+            throw std::invalid_argument("robot " + context_.robot + " has no service of type "
+                + std::string(Service::type));
+        }
+        if (std::find_if(first + 1, services.end(), matches) != services.end()) {
+            throw std::invalid_argument("robot " + context_.robot + " has multiple services of type "
+                + std::string(Service::type) + "; use the index overload of bind");
+        }
+        return bind<Service>(static_cast<std::size_t>(first - services.begin()), on_request, on_response);
+    }
+
+    // Use an index when a robot has multiple services of the same type.
+    template <class Service, class Self>
+    std::size_t bind(std::size_t service,
         bool (Self::*on_request)(const typename Service::Request&),
         typename Service::Response (Self::*on_response)(const StateView&))
     {
@@ -270,6 +292,10 @@ protected:
         if (type != Service::type) {
             throw std::invalid_argument("service " + context_.services[service].name + " has type " + type
                 + ", cannot bind " + std::string(Service::type));
+        }
+        if (handlers_[service].request) {
+            throw std::invalid_argument("robot " + context_.robot + " service "
+                + context_.services[service].name + " is already bound");
         }
         handlers_[service] = {
             [on_request](RobotPlugin& plugin, const HakoServiceRequestV1& request) {
@@ -304,10 +330,11 @@ protected:
                 return converter.cpp2pdu(packet, bytes, static_cast<int>(response.size)) > 0;
             },
         };
+        return service;
     }
 
 private:
-    template <class Class>
+    template <class Class, class... Services>
     friend struct detail::PluginTable;
 
     struct Handlers {
@@ -361,23 +388,85 @@ inline void write_error(char* error, std::size_t size, const char* message) noex
     }
 }
 
-template <class Class>
+template <class Class, class... Services>
 struct PluginTable {
     static constexpr HakoServicePluginV1 make(const char* name)
     {
         return {
             {sizeof(HakoServicePluginV1), HAKO_SERVICE_PLUGIN_ABI_VERSION, HAKO_PLUGIN_KIND_SERVICE,
                 HAKO_SERVICE_PLUGIN_INTERFACE_REVISION, name},
+            declaration_json.data(),
             create, destroy, on_request, on_cancel, on_step, on_response, reset,
         };
     }
 
 private:
+    static constexpr std::array<std::string_view, sizeof...(Services)> types {Services::type...};
+
+    static consteval auto make_declaration()
+    {
+        constexpr std::string_view start = R"({"service_types":[)";
+        constexpr std::string_view operations = [] {
+            if constexpr (requires { Class::plant_operations; }) {
+                return std::string_view(Class::plant_operations);
+            }
+            return std::string_view("[]");
+        }();
+        constexpr std::string_view middle = R"(],"plant_operations":)";
+        // Space for the final brace, NUL and a comma between adjacent types.
+        constexpr auto size = start.size() + middle.size() + operations.size() + 2
+            + (std::size_t {0} + ... + (std::string_view(Services::type).size() + 2))
+            + (types.empty() ? 0 : types.size() - 1);
+        std::array<char, size> json {};
+        auto out = std::copy(start.begin(), start.end(), json.begin());
+        for (const auto& type : types) {
+            if (out != json.begin() + start.size()) {
+                *out++ = ',';
+            }
+            *out++ = '"';
+            out = std::copy(type.begin(), type.end(), out);
+            *out++ = '"';
+        }
+        out = std::copy(middle.begin(), middle.end(), out);
+        out = std::copy(operations.begin(), operations.end(), out);
+        *out = '}';
+        return json;
+    }
+
+    static constexpr auto declaration_json = make_declaration();
+
+    static void check_bindings(const RobotPlugin& plugin)
+    {
+        const auto& context = plugin.context_;
+        const auto prefix = "robot " + context.robot;
+        for (std::size_t index = 0; index < context.services.size(); ++index) {
+            const auto& type = context.services[index].type;
+            if (plugin.handlers_[index].request && std::find(types.begin(), types.end(), type) == types.end()) {
+                throw std::invalid_argument(prefix + " bound undeclared service type " + type);
+            }
+        }
+        for (const auto type : types) {
+            bool bound = false;
+            for (std::size_t index = 0; index < context.services.size(); ++index) {
+                if (context.services[index].type == type && plugin.handlers_[index].request) {
+                    bound = true;
+                    break;
+                }
+            }
+            if (!bound) {
+                throw std::invalid_argument(prefix + " declared service type " + std::string(type)
+                    + " but did not bind it");
+            }
+        }
+    }
+
     static HakoRobotPlugin* create(const HakoRobotCreateV1* args, char* error, std::size_t size) noexcept
     {
         try {
             const auto context = robot_context(*args);
-            return reinterpret_cast<HakoRobotPlugin*>(new Class(context));
+            auto plugin = std::make_unique<Class>(context);
+            check_bindings(*plugin);
+            return reinterpret_cast<HakoRobotPlugin*>(plugin.release());
         } catch (const std::exception& exception) {
             write_error(error, size, exception.what());
         } catch (...) {
@@ -478,9 +567,9 @@ private:
         static bool valid_metadata(const Metadata& metadata) { return !HAKO_PDU_METADATA_IS_INVALID(&metadata); } \
     }
 
-#define HAKO_ROBOT_PLUGIN(Class, name) \
+#define HAKO_ROBOT_PLUGIN(Class, name, ...) \
     static constexpr HakoServicePluginV1 hako_robot_plugin_table_##name = \
-        ::hakoniwa::robot_runtime::plugin::detail::PluginTable<Class>::make(#name); \
+        ::hakoniwa::robot_runtime::plugin::detail::PluginTable<Class __VA_OPT__(,) __VA_ARGS__>::make(#name); \
     HAKO_ROBOT_PLUGIN_ENTRY(name, hako_robot_plugin_table_##name)
 
 #endif // HAKONIWA_ROBOT_RUNTIME_PLUGIN_ROBOT_PLUGIN_HPP

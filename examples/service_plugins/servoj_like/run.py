@@ -9,8 +9,7 @@ import sys
 import time
 
 
-# Manifest order and generated request/response packet sizes in bytes.
-SERVICES = (("ServoJ", 328, 272), ("Stop", 272, 272), ("GetAngle", 272, 328))
+SERVICE_NAMES = ("ArmService/ServoJ/SO101", "ArmService/Stop/SO101", "ArmService/GetAngle/SO101")
 
 
 def write_json(path, data):
@@ -33,29 +32,25 @@ def prepare(run_dir, recipe):
         manifest[key] = str(recipe / manifest[key])
     for component in manifest["components"]:
         component["config"] = str(recipe / component["config"])
-    services = [(f"ArmService/{kind}/SO101", kind, request_size, response_size)
-                for kind, request_size, response_size in SERVICES]
     manifest["robots"] = [{
         "name": "SO101",
         "plugin": {"library": os.environ["PLUGIN"]},
         "priority": 16,
-        "services": [{"name": name, "lockstep": False} for name, _, _, _ in services],
+        "services": [{"name": name, "lockstep": False} for name in SERVICE_NAMES],
     }]
-    write_json(run_dir / "asset-manifest.json", manifest)
-    write_json(run_dir / "service.json", {
-        "pduMetaDataSize": 24,
-        "services": [{
-            "name": name, "type": f"my_robot_srvs_msgs/{kind}", "maxClients": 1,
-            "pduSize": {
-                "server": {"baseSize": request_size + 8, "heapSize": 0},
-                "client": {"baseSize": response_size + 8, "heapSize": 0},
-            },
-            "clients": [{"name": "ServoJClient", "client_endpoint": {
-                "nodeId": "servoj-python", "protocol": "shm", "assetName": "ServoJClientAsset",
-                "deltaTimeUsec": 2000, "coreConfig": str(core_config),
-            }}],
-        } for name, kind, request_size, response_size in services],
-    })
+    manifest_path = run_dir / "asset-manifest.json"
+    write_json(manifest_path, manifest)
+    clients = run_dir / "clients.json"
+    write_json(clients, [{"name": "ServoJClient", "client_endpoint": {
+        "nodeId": "servoj-python", "protocol": "shm", "assetName": "ServoJClientAsset",
+        "deltaTimeUsec": 2000, "coreConfig": str(core_config),
+    }}])
+    generator = Path(__file__).resolve().parents[3] / "tools" / "gen_rpc_service_config.py"
+    subprocess.run([
+        sys.executable, str(generator), "--manifest", str(manifest_path),
+        "--pdu-out", os.environ["PDU_OUT"], "--clients", str(clients),
+        "--output", str(run_dir / "service.json"),
+    ], check=True)
 
 
 def wait_until(ready, children, description):
