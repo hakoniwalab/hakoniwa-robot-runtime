@@ -208,8 +208,8 @@ private:
 サンプルのように `cancel` を使わない場合は、その宣言を省きます。
 ファイルの末尾で `HAKO_ROBOT_PLUGIN(ServoJRobot, servoj_like)` を無名名前空間の外に書き、読み込み口を公開します。
 
-Runtime は `pdu_robot` ごとにインスタンスを 1 つ作ります。
-サービス番号は、マニフェストの `services` のうち、同じ `pdu_robot` の行を上から数えた順です。
+Runtime は、マニフェストの `robots` の 1 項目（ロボット 1 台）ごとに、インスタンスを 1 つ作ります。
+サービス番号は、そのロボットの `services` の一覧を上から数えた順です。
 先頭は 0 です。この順に `RobotContext::services` に入ります。
 サービスが複数ある場合は、各 `bind` に対応する番号を渡します。
 `bind` で指定した型は、`service.json` の `type` とそろえます。
