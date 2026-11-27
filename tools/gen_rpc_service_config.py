@@ -173,9 +173,11 @@ def build_service_json(
     return _service_config(services, pdu_config_path)
 
 
-def _infer_type(name: str, declared_types: list[str]) -> str:
-    parts = name.split("/")
-    operation = parts[1] if len(parts) == 3 and all(parts) else None
+def _infer_type(name: str, robot_name: str, declared_types: list[str]) -> str:
+    service_prefix = name.removesuffix(f"/{robot_name}")
+    parts = service_prefix.split("/")
+    expected_parts = 3 if service_prefix == name else 2
+    operation = parts[1] if len(parts) == expected_parts and all(parts) else None
     matches = {value for value in declared_types if value.split("/")[1] == operation}
     if len(matches) != 1:
         raise ValueError(f"{name}: expected one declared type matching the service name; set type in the manifest")
@@ -209,10 +211,10 @@ def build_manifest_service_json(
             if "type" in service:
                 service_type = _service_type(service["type"])
             elif "builtin" in robot:
-                service_type = _infer_type(name, [BUILTIN_TYPES[robot["builtin"]]])
+                service_type = _infer_type(name, robot["name"], [BUILTIN_TYPES[robot["builtin"]]])
             else:
                 library = (manifest_path.parent / robot["plugin"]["library"]).resolve()
-                service_type = _infer_type(name, read_library_types(library))
+                service_type = _infer_type(name, robot["name"], read_library_types(library))
             services.append(_service_json(name, service_type, pdu_out, clients, heap_sizes.get(service_type)))
     return _service_config(services, pdu_config)
 
